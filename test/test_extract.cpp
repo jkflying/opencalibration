@@ -1,4 +1,4 @@
-#include <opencalibration/oc_extract/extract_features.hpp>
+#include <opencalibration/extract/extract_features.hpp>
 
 #include <gtest/gtest.h>
 
@@ -17,7 +17,11 @@ TEST(extract, gives_points)
     EXPECT_GT(res.size(), 100);
 
     // AND: they should be overlaid in nice locations (visual inspection)
-    if (/* DISABLES CODE */ (false))
+    bool visual_inspection = false;
+#if defined(VISUAL_INSPECTION)
+    visual_inspection = true;
+#endif
+    if (visual_inspection)
     {
         cv::Mat img = cv::imread(path);
 
@@ -29,7 +33,7 @@ TEST(extract, gives_points)
         };
         for (const feature_2d &f : res)
         {
-            cv::circle(img, toPoint(f.location), 30, cv::Scalar(0, 0, 255), 10);
+            cv::circle(img, toPoint(f.location), 30, cv::Scalar(0, 0, 255), 5);
         }
         std::string output_path = TEST_DATA_OUTPUT_DIR "features_overlay.jpg";
         cv::imwrite(output_path, img);

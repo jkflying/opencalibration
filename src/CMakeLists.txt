@@ -1,3 +1,4 @@
 
-add_subdirectory(oc_extract)
-add_subdirectory(oc_pipeline)
+add_subdirectory(extract)
+add_subdirectory(match)
+add_subdirectory(pipeline)

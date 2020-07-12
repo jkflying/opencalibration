@@ -8,11 +8,11 @@ namespace opencalibration
 
 struct feature_2d
 {
-    static constexpr int DESCRIPTOR_BITS = 128;
+    static constexpr int DESCRIPTOR_BITS = 256;
 
-    Eigen::Vector2d location;
-    std::bitset<DESCRIPTOR_BITS> descriptor;
-    float strength;
+    Eigen::Vector2d location = {NAN, NAN};
+    std::bitset<DESCRIPTOR_BITS> descriptor {};
+    float strength = 0;
 };
 
 } // namespace opencalibration

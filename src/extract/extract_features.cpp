@@ -1,4 +1,4 @@
-#include <opencalibration/oc_extract/extract_features.hpp>
+#include <opencalibration/extract/extract_features.hpp>
 
 #include <opencv2/features2d.hpp>
 #include <opencv2/imgcodecs.hpp>
@@ -14,7 +14,7 @@ namespace opencalibration
 std::vector<feature_2d> extract_features(const std::string &path)
 {
     int max_length_pixels = 800;
-    double nms_pixel_radius = 30;
+    double nms_pixel_radius = 10;
 
     cv::Mat image = cv::imread(path);
     cv::cvtColor(image, image, cv::COLOR_BGR2GRAY);
