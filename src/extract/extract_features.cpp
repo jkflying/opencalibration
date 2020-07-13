@@ -20,7 +20,8 @@ std::vector<feature_2d> extract_features(const std::string &path)
     cv::cvtColor(image, image, cv::COLOR_BGR2GRAY);
 
     double scale = std::min(1.f, float(max_length_pixels) / std::max(image.size().width, image.size().height));
-    cv::resize(image, image, cv::Size(0, 0), scale, scale);
+    cv::Mat image_scaled;
+    cv::resize(image, image_scaled, cv::Size(0, 0), scale, scale);
 
     std::vector<cv::KeyPoint> keypoints;
     cv::Mat descriptors;
@@ -28,7 +29,7 @@ std::vector<feature_2d> extract_features(const std::string &path)
     // TODO: tuning
     auto akaze = cv::AKAZE::create(cv::AKAZE::DESCRIPTOR_MLDB, feature_2d::DESCRIPTOR_BITS, 3, 0.0001f);
 
-    akaze->detectAndCompute(image, cv::noArray(), keypoints, descriptors);
+    akaze->detectAndCompute(image_scaled, cv::noArray(), keypoints, descriptors);
 
     std::vector<feature_2d> oc_keypoints;
     oc_keypoints.reserve(keypoints.size());
@@ -51,16 +52,21 @@ std::vector<feature_2d> extract_features(const std::string &path)
     results.reserve(std::min(keypoints.size(), static_cast<size_t>(image.size().width / nms_pixel_radius *
                                                                    image.size().height / nms_pixel_radius)));
 
-    auto toArray = [](const Eigen::Vector2d& v) -> std::array<double, 2> { return {v.x(), v.y()};};
+    auto toArray = [](const Eigen::Vector2d &v) -> std::array<double, 2> { return {v.x(), v.y()}; };
     jk::tree::KDTree<size_t, 2, 8> tree;
-    if (oc_keypoints.size() > 0) {
+    if (oc_keypoints.size() > 0)
+    {
         tree.addPoint(toArray(oc_keypoints[0].location), 0);
         results.push_back(oc_keypoints[0]);
     }
+
+    auto sqr = [](double d) { return d * d; };
     auto searcher = tree.searcher();
-    for (const feature_2d& f : oc_keypoints) {
-        const auto& nn = searcher.search(toArray(f.location), std::numeric_limits<double>::infinity(), 1);
-        if (nn[0].distance*scale*scale > nms_pixel_radius*nms_pixel_radius) {
+    for (const feature_2d &f : oc_keypoints)
+    {
+        const auto &nn = searcher.search(toArray(f.location), std::numeric_limits<double>::infinity(), 1);
+        if (nn[0].distance * sqr(scale) > sqr(nms_pixel_radius))
+        {
             tree.addPoint(toArray(f.location), 0);
             results.push_back(f);
         }

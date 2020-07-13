@@ -10,8 +10,8 @@ using namespace opencalibration;
 TEST(match, finds_correspondences)
 {
     // GIVEN: two sets of match_features
-    std::string path1 = TEST_DATA_DIR "P2530253.JPG";
-    std::string path2 = TEST_DATA_DIR "P2540254.JPG";
+    std::string path1 = TEST_DATA_DIR "P2540254.JPG";
+    std::string path2 = TEST_DATA_DIR "P2530253.JPG";
 
     std::vector<feature_2d> feat1 = opencalibration::extract_features(path1);
     std::vector<feature_2d> feat2 = opencalibration::extract_features(path2);

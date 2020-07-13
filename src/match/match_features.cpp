@@ -40,12 +40,14 @@ std::vector<feature_match> match_features(const std::vector<feature_2d> &set_1, 
                 }
             }
         }
-        if (best_match.distance * 1.5 < second_best_distance)
+        if (best_match.distance < 0.8 * second_best_distance)
         {
             results.push_back(best_match);
         }
     }
 
+    std::sort(results.begin(), results.end(),
+              [](const feature_match &f1, const feature_match &f2) -> bool { return f1.distance < f2.distance; });
     return results;
 }
 } // namespace opencalibration

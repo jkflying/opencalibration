@@ -1,4 +1,5 @@
-
+add_subdirectory(distort)
 add_subdirectory(extract)
+add_subdirectory(model_inliers)
 add_subdirectory(match)
 add_subdirectory(pipeline)
