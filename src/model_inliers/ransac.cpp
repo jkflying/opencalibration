@@ -29,8 +29,6 @@ void homography_model::fit(const std::array<correspondence, MINIMUM_POINTS> &cor
 
     Eigen::Matrix<double, 9, 1> rhs = P.bottomRows<1>();
 
-    P.bottomRows<1>() = rhs.transpose();
-
     rhs = P.lu().solve(rhs);
     homography.row(0) = rhs.topRows<3>();
     homography.row(1) = rhs.middleRows<3>(3);
@@ -110,8 +108,7 @@ double ransac(const std::vector<correspondence> &matches, Model &model, std::vec
         size_t inlier_count = 0;
         for (size_t j = 0; j < matches.size(); j++)
         {
-            double error = model.error(matches[j]);
-            inlier_count += error < INLIER_THRESHOLD;
+            inlier_count += model.error(matches[j]) < INLIER_THRESHOLD;
         }
 
         if (inlier_count > best_inlier_count)
@@ -119,7 +116,7 @@ double ransac(const std::vector<correspondence> &matches, Model &model, std::vec
             best_model = model;
             best_inlier_count = inlier_count;
 
-            double omega = (double)inlier_count / matches.size();
+            double omega = static_cast<double>(best_inlier_count) / matches.size();
             double omega_n = fast_pow<Model::MINIMUM_POINTS>(omega);
             double log_1m_omega_n = std::log(1 - omega_n);
             probability_iterations = std::min(MAX_ITERATIONS, static_cast<size_t>(log_1m_p / log_1m_omega_n));
@@ -129,12 +126,13 @@ double ransac(const std::vector<correspondence> &matches, Model &model, std::vec
     model = best_model;
     for (size_t j = 0; j < matches.size(); j++)
     {
-        double error = model.error(matches[j]);
-        inliers[j] = error < INLIER_THRESHOLD;
+        inliers[j] = model.error(matches[j]) < INLIER_THRESHOLD;
     }
     return (double)best_inlier_count / matches.size();
 }
 
-template double ransac<homography_model>(const std::vector<correspondence> &, homography_model &, std::vector<bool> &);
+template double ransac(const std::vector<correspondence> &, homography_model &, std::vector<bool> &);
+// template double ransac(const std::vector<correspondence> &, essential_matrix_model &, std::vector<bool> &);
+// template double ransac(const std::vector<correspondence> &, fundamental_matrix_model &, std::vector<bool> &);
 
 } // namespace opencalibration
