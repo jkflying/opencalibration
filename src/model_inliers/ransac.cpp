@@ -6,10 +6,48 @@
 namespace opencalibration
 {
 
-void homography_model::fit(const std::array<correspondence, MINIMUM_POINTS> &corrs)
+void homography_model::fit(const std::vector<correspondence> &corrs,
+                           const std::array<size_t, MINIMUM_POINTS> &initial_indices)
 {
     Eigen::Matrix<double, 9, 9> P;
-    Eigen::Matrix<double, 2, 9> p_i;
+
+    auto x = [&initial_indices, &corrs](size_t i) {
+        return corrs[initial_indices[i]].measurement1.x() / corrs[i].measurement1.z();
+    };
+    auto y = [&initial_indices, &corrs](size_t i) {
+        return corrs[initial_indices[i]].measurement1.y() / corrs[i].measurement1.z();
+    };
+
+    auto x_ = [&initial_indices, &corrs](size_t i) {
+        return corrs[initial_indices[i]].measurement2.x() / corrs[i].measurement2.z();
+    };
+    auto y_ = [&initial_indices, &corrs](size_t i) {
+        return corrs[initial_indices[i]].measurement2.y() / corrs[i].measurement2.z();
+    };
+
+    for (size_t i = 0; i < 4; i++)
+    {
+        P.row(i * 2) << -x(i), -y(i), -1, 0, 0, 0, x(i) * x_(i), y(i) * x_(i), x_(i);
+        P.row(i * 2 + 1) << 0, 0, 0, -x(i), -y(i), -1, x(i) * y_(i), y(i) * y_(i), y_(i);
+    }
+
+    // add constraint that bottom right corner is 1
+    P.bottomRows<1>().setZero();
+    P.bottomRightCorner<1, 1>() << 1;
+    Eigen::Matrix<double, 9, 1> rhs;
+    rhs.setZero();
+    rhs.bottomRows<1>() << 1;
+
+    Eigen::Matrix<double, 9, 1> H_ = P.fullPivLu().solve(rhs);
+    homography.row(0) = H_.topRows<3>().transpose();
+    homography.row(1) = H_.middleRows<3>(3).transpose();
+    homography.row(2) = H_.bottomRows<3>().transpose();
+}
+
+void homography_model::fitInliers(const std::vector<correspondence> &corrs, const std::vector<bool> &inliers)
+{
+    size_t num_inliers = std::count(inliers.begin(), inliers.end(), true);
+    Eigen::Matrix<double, Eigen::Dynamic, 9> P(num_inliers * 2 + 1, 9);
 
     auto x = [&corrs](size_t i) { return corrs[i].measurement1.x() / corrs[i].measurement1.z(); };
     auto y = [&corrs](size_t i) { return corrs[i].measurement1.y() / corrs[i].measurement1.z(); };
@@ -17,22 +55,27 @@ void homography_model::fit(const std::array<correspondence, MINIMUM_POINTS> &cor
     auto x_ = [&corrs](size_t i) { return corrs[i].measurement2.x() / corrs[i].measurement2.z(); };
     auto y_ = [&corrs](size_t i) { return corrs[i].measurement2.y() / corrs[i].measurement2.z(); };
 
-    for (size_t i = 0; i < 4; i++)
+    for (size_t i = 0, j = 0; i < corrs.size(); i++)
     {
-        // clang-format off
-        p_i << -x(i), -y(i), -1, 0, 0, 0, x(i)*x_(i), y(i)*x_(i), x_(i),
-               0, 0, 0, -x(i), -y(i), -1, x(i)*y_(i), y(i)*y_(i), y_(i);
-        // clang-format on
-        P.block<2, 9>(i * 2, 0) = p_i;
+        if (inliers[i])
+        {
+            P.row(j * 2) << -x(i), -y(i), -1, 0, 0, 0, x(i) * x_(i), y(i) * x_(i), x_(i);
+            P.row(j * 2 + 1) << 0, 0, 0, -x(i), -y(i), -1, x(i) * y_(i), y(i) * y_(i), y_(i);
+            j++;
+        }
     }
+
+    // add constraint that bottom right corner is 1
     P.bottomRows<1>() << 0, 0, 0, 0, 0, 0, 0, 0, 1;
+    Eigen::Matrix<double, Eigen::Dynamic, 1> rhs(num_inliers * 2 + 1, 1);
+    rhs.setZero();
+    rhs.bottomRows<1>() << 1;
 
-    Eigen::Matrix<double, 9, 1> rhs = P.bottomRows<1>();
-
-    rhs = P.lu().solve(rhs);
-    homography.row(0) = rhs.topRows<3>();
-    homography.row(1) = rhs.middleRows<3>(3);
-    homography.row(2) = rhs.bottomRows<3>();
+    Eigen::Matrix<double, 9, 1> H_ = P.fullPivLu().solve(rhs);
+    homography.row(0) = H_.topRows<3>().transpose();
+    homography.row(1) = H_.middleRows<3>(3).transpose();
+    homography.row(2) = H_.bottomRows<3>().transpose();
+    homography /= homography(2, 2); // renormalize in case that constraint wasn't enough
 }
 
 double homography_model::error(const correspondence &corr)
@@ -40,6 +83,17 @@ double homography_model::error(const correspondence &corr)
     return ((homography * corr.measurement1.hnormalized().homogeneous()).hnormalized() -
             corr.measurement2.hnormalized())
         .norm();
+}
+size_t homography_model::evaluate(const std::vector<correspondence> &corrs, std::vector<bool> &inliers)
+{
+    size_t num_inliers = 0;
+    for (size_t i = 0; i < inliers.size(); i++)
+    {
+        bool in = error(corrs[i]) < inlier_threshold;
+        inliers[i] = in;
+        num_inliers += in;
+    }
+    return num_inliers;
 }
 
 template <int n> double fast_pow(double d);
@@ -52,8 +106,10 @@ template <> inline double fast_pow<4>(double d)
 template <typename Model>
 double ransac(const std::vector<correspondence> &matches, Model &model, std::vector<bool> &inliers)
 {
-    const double INLIER_THRESHOLD = 0.01;
+
+    const size_t MIN_ITERATIONS = 10;
     const size_t MAX_ITERATIONS = 500;
+    const size_t MAX_INNER_ITERATIONS = 5;
     const double PROBABILITY = 0.999;
 
     const double log_1m_p = std::log(1 - PROBABILITY);
@@ -69,21 +125,17 @@ double ransac(const std::vector<correspondence> &matches, Model &model, std::vec
     double best_inlier_count = 0;
 
     std::default_random_engine generator;
-    std::uniform_int_distribution<int> distribution(0, matches.size());
 
-    int probability_iterations = MAX_ITERATIONS;
-
-    for (size_t i = 0; i < probability_iterations; i++)
-    {
-        std::array<size_t, Model::MINIMUM_POINTS> initial_indices;
-
+    auto random_k_from_n = [&generator](int n) {
+        std::array<size_t, Model::MINIMUM_POINTS> indices;
+        std::uniform_int_distribution<int> distribution(0, n);
         for (size_t j = 0; j < Model::MINIMUM_POINTS; j++)
         {
             int candidate = distribution(generator);
             bool unique = true;
             for (size_t k = 0; k < j; k++)
             {
-                if (initial_indices[k] == candidate)
+                if (indices[k] == candidate)
                 {
                     unique = false;
                     break;
@@ -91,48 +143,57 @@ double ransac(const std::vector<correspondence> &matches, Model &model, std::vec
             }
             if (unique)
             {
-                initial_indices[j] = candidate;
+                indices[j] = candidate;
             }
             else
             {
                 j--;
             }
         }
+        return indices;
+    };
 
-        std::array<correspondence, Model::MINIMUM_POINTS> initial_values;
-        for (size_t j = 0; j < Model::MINIMUM_POINTS; j++)
-        {
-            initial_values[j] = matches[initial_indices[j]];
-        }
-        model.fit(initial_values);
-        size_t inlier_count = 0;
-        for (size_t j = 0; j < matches.size(); j++)
-        {
-            inlier_count += model.error(matches[j]) < INLIER_THRESHOLD;
-        }
+    int probability_iterations = MAX_ITERATIONS;
+
+    for (size_t i = 0; i < probability_iterations; i++)
+    {
+        std::array<size_t, Model::MINIMUM_POINTS> initial_indices = random_k_from_n(matches.size());
+
+        model.fit(matches, initial_indices);
+        size_t inlier_count = model.evaluate(matches, inliers);
 
         if (inlier_count > best_inlier_count)
         {
             best_model = model;
             best_inlier_count = inlier_count;
 
+            for (size_t j = 0; j < MAX_INNER_ITERATIONS; j++)
+            {
+                model.fitInliers(matches, inliers);
+                inlier_count = model.evaluate(matches, inliers);
+                if (inlier_count > best_inlier_count)
+                {
+                    best_model = model;
+                    best_inlier_count = inlier_count;
+                }
+                else
+                {
+                    break;
+                }
+            }
+
             double omega = static_cast<double>(best_inlier_count) / matches.size();
             double omega_n = fast_pow<Model::MINIMUM_POINTS>(omega);
             double log_1m_omega_n = std::log(1 - omega_n);
-            probability_iterations = std::min(MAX_ITERATIONS, static_cast<size_t>(log_1m_p / log_1m_omega_n));
+            probability_iterations =
+                std::max(MIN_ITERATIONS, std::min(MAX_ITERATIONS, static_cast<size_t>(log_1m_p / log_1m_omega_n)));
         }
     }
 
     model = best_model;
-    for (size_t j = 0; j < matches.size(); j++)
-    {
-        inliers[j] = model.error(matches[j]) < INLIER_THRESHOLD;
-    }
-    return (double)best_inlier_count / matches.size();
+    return (double)model.evaluate(matches, inliers) / matches.size();
 }
 
 template double ransac(const std::vector<correspondence> &, homography_model &, std::vector<bool> &);
-// template double ransac(const std::vector<correspondence> &, essential_matrix_model &, std::vector<bool> &);
-// template double ransac(const std::vector<correspondence> &, fundamental_matrix_model &, std::vector<bool> &);
 
 } // namespace opencalibration

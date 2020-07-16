@@ -33,7 +33,6 @@ TEST(ransac, homography_filter_correspondences)
 
     // THEN: there should be roughly the right number
     EXPECT_GT(score, 0.5);
-    std::cout << "s: " << score << " m: " << std::endl << model.homography << std::endl;
 
     // AND: they should correspond (visual inspection)
     bool visual_inspection = false;

@@ -17,33 +17,15 @@ struct homography_model
 {
     static constexpr size_t MINIMUM_POINTS = 4;
 
-    void fit(const std::array<correspondence, MINIMUM_POINTS> &corrs);
+    void fit(const std::vector<correspondence> &corrs, const std::array<size_t, MINIMUM_POINTS> &initial_indices);
+    void fitInliers(const std::vector<correspondence> &corrs, const std::vector<bool> &inliers);
+
+    size_t evaluate(const std::vector<correspondence> &corrs, std::vector<bool> &inliers);
 
     double error(const correspondence &cor);
 
+    double inlier_threshold = 0.02;
     Eigen::Matrix3d homography;
-};
-
-struct essential_matrix_model
-{
-    static constexpr size_t MINIMUM_POINTS = 5;
-
-    void fit(const std::array<correspondence, MINIMUM_POINTS> &corrs);
-
-    double error(const correspondence &cor);
-
-    Eigen::Matrix3d essential_matrix;
-};
-
-struct fundamental_matrix_model
-{
-    static constexpr size_t MINIMUM_POINTS = 8;
-
-    void fit(const std::array<correspondence, MINIMUM_POINTS> &corrs);
-
-    double error(const correspondence &cor);
-
-    Eigen::Matrix3d fundamental_matrix;
 };
 
 template <typename Model>

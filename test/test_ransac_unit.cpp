@@ -40,5 +40,5 @@ TEST(ransac, homography_fits_identity)
     // AND: the model should be correct, and all the points inliers, and the model an identity
     EXPECT_EQ(inliers.size(), 4);
     EXPECT_EQ(std::count(inliers.begin(), inliers.end(), true), 4);
-    EXPECT_DOUBLE_EQ((model.homography - Eigen::Matrix3d::Identity()).norm(), 0);
+    EXPECT_NEAR((model.homography - Eigen::Matrix3d::Identity()).norm(), 0, 1e-14);
 }
