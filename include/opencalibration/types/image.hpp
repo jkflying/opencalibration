@@ -2,6 +2,8 @@
 
 #include <opencalibration/types/feature_2d.hpp>
 
+#include <eigen3/Eigen/Geometry>
+
 #include <memory>
 #include <vector>
 
@@ -14,21 +16,16 @@ struct image_metadata
 
 struct image_pixeldata
 {
-    enum Format {
-
-
-    } format;
-    std::vector<unsigned char> data;
 };
 
 struct image
 {
-
     std::string path;
 
-    std::unique_ptr<image_metadata> metadata;
-    std::unique_ptr<image_pixeldata> pixeldata;
-
+    image_metadata metadata;
     std::vector<feature_2d> descriptors;
+
+    Eigen::Vector3d position {NAN, NAN, NAN};
+    Eigen::Quaterniond orientation {NAN, NAN, NAN, NAN};
 };
 } // namespace opencalibration

@@ -2,6 +2,7 @@ find_package(GTest REQUIRED)
 
 add_executable(functional_tests test_distort.cpp
                                 test_extract.cpp
+                                test_pipeline.cpp
                                 test_ransac_functional.cpp
                                 test_match.cpp)
 
