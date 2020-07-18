@@ -1,6 +1,7 @@
 #include <opencalibration/pipeline/pipeline.hpp>
 
 #include <opencalibration/extract/extract_features.hpp>
+#include <opencalibration/extract/extract_metadata.hpp>
 
 #include <chrono>
 #include <iostream>
@@ -12,7 +13,7 @@ namespace opencalibration
 Pipeline::Pipeline(size_t threads)
 {
     _keep_running = true;
-    auto get_path = [this](std::string &path, ThreadStatus& status) -> bool {
+    auto get_path = [this](std::string &path, ThreadStatus &status) -> bool {
         std::lock_guard<std::mutex> guard(_queue_mutex);
         if (_add_queue.size() > 0)
         {
@@ -66,7 +67,7 @@ bool Pipeline::process_image(const std::string &path)
 
     image img;
     img.path = path;
-    //     img.metadata = extract_metadata(img.path);
+    img.metadata = extract_metadata(img.path);
     img.descriptors = extract_features(img.path);
 
     // find N nearest

@@ -5,7 +5,7 @@
 #include <opencv2/opencv.hpp>
 
 using namespace opencalibration;
-TEST(extract, gives_points)
+TEST(extract_features, gives_points)
 {
     // GIVEN: a path
     std::string path = TEST_DATA_DIR "P2530253.JPG";

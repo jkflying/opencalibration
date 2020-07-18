@@ -1,7 +1,12 @@
 find_package(GTest REQUIRED)
 
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test_data/LICENSE")
+    message(ERROR "Test data not available, git submodule update --init --recursive to load")
+endif()
+
 add_executable(functional_tests test_distort.cpp
-                                test_extract.cpp
+                                test_extract_features.cpp
+                                test_extract_metadata.cpp
                                 test_pipeline.cpp
                                 test_ransac_functional.cpp
                                 test_match.cpp)
