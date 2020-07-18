@@ -5,8 +5,8 @@ namespace opencalibration
 {
 std::vector<correspondence> distort_keypoints(const std::vector<feature_2d> &features1,
                                               const std::vector<feature_2d> &features2,
-                                              const std::vector<feature_match> &matches,
-                                              const CameraModel<double> &model1, const CameraModel<double> &model2)
+                                              const std::vector<feature_match> &matches, const CameraModel &model1,
+                                              const CameraModel &model2)
 {
     std::vector<correspondence> distorted;
     distorted.reserve(matches.size());
@@ -21,7 +21,7 @@ std::vector<correspondence> distort_keypoints(const std::vector<feature_2d> &fea
     return distorted;
 }
 
-Eigen::Vector3d image_to_3d(const Eigen::Vector2d &keypoint, const CameraModel<double> &model)
+Eigen::Vector3d image_to_3d(const Eigen::Vector2d &keypoint, const CameraModel &model)
 {
     // TODO: once we have real distortion, minimize:
     // Eigen::Vector2d error = keypoint - image_from_3d(guess, model);
@@ -29,7 +29,7 @@ Eigen::Vector3d image_to_3d(const Eigen::Vector2d &keypoint, const CameraModel<d
     Eigen::Vector3d ray;
     switch (model.projection_type)
     {
-    case CameraModel<double>::ProjectionType::PLANAR: {
+    case CameraModel::ProjectionType::PLANAR: {
         ray = ((keypoint - model.principle_point) / model.focal_length_pixels).homogeneous().normalized();
     }
     }

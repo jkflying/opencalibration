@@ -7,8 +7,8 @@
 namespace opencalibration
 {
 
-template <typename T = double>
-struct CameraModel
+template <typename T>
+struct DifferentiableCameraModel
 {
     size_t pixels_rows = 0;
     size_t pixels_cols = 0;
@@ -24,4 +24,6 @@ struct CameraModel
         PLANAR
     } projection_type = ProjectionType::PLANAR;
 };
+
+using CameraModel = DifferentiableCameraModel<double>;
 } // namespace opencalibration

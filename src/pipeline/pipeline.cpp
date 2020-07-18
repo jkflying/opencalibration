@@ -1,7 +1,10 @@
 #include <opencalibration/pipeline/pipeline.hpp>
 
+#include <opencalibration/distort/distort_keypoints.hpp>
 #include <opencalibration/extract/extract_features.hpp>
 #include <opencalibration/extract/extract_metadata.hpp>
+#include <opencalibration/match/match_features.hpp>
+#include <opencalibration/model_inliers/ransac.hpp>
 
 #include <chrono>
 #include <iostream>
@@ -71,15 +74,80 @@ bool Pipeline::process_image(const std::string &path)
     img.descriptors = extract_features(img.path);
 
     // find N nearest
+    std::vector<size_t> nearest;
+    {
+        std::lock_guard<std::mutex> kdtree_lock(_kdtree_mutex);
+        auto knn =
+            _imageGPSLocations.searchKnn({img.metadata.latitude, img.metadata.longitude, img.metadata.altitude}, 10);
+        nearest.reserve(knn.size());
+        for (const auto &nn : knn)
+        {
+            nearest.push_back(nn.payload);
+        }
+    }
 
-    // match
+    // match & distort
+    std::vector<std::tuple<size_t, CameraModel, std::vector<feature_2d>>> nearest_descriptors;
+    nearest_descriptors.reserve(nearest.size());
+    {
+        std::lock_guard<std::mutex> graph_lock(_graph_structure_mutex);
+        for (size_t node_id : nearest)
+        {
+            const auto *node = _graph.getNode(node_id);
+            if (node != nullptr)
+            {
+                nearest_descriptors.emplace_back(node_id, node->payload.model, node->payload.descriptors);
+            }
+        }
+    }
+    std::vector<std::pair<size_t, camera_relations>> inlier_measurements;
+    inlier_measurements.reserve(nearest_descriptors.size());
+    for (const auto &node_descriptors : nearest_descriptors)
+    {
+        // match
+        auto matches = match_features(img.descriptors, std::get<2>(node_descriptors));
 
-    // ransac
+        // distort
+        auto correspondences = distort_keypoints(img.descriptors, std::get<2>(node_descriptors), matches, img.model,
+                                                 std::get<1>(node_descriptors));
 
-    // add correspondences
+        // ransac
+        homography_model h;
+        std::vector<bool> inliers;
+        ransac(correspondences, h, inliers);
 
-    std::lock_guard<std::mutex> img_lock(_graph_structure_mutex);
-    size_t node_id = _graph.addNode(std::move(img));
+        camera_relations relations;
+        relations.ransac_relation = h.homography;
+        relations.relationType = camera_relations::RelationType::HOMOGRAPHY;
+
+        relations.inlier_matches.reserve(std::count(inliers.begin(), inliers.end(), true));
+        for (size_t i = 0; i < inliers.size(); i++)
+        {
+            if (inliers[i])
+            {
+                feature_match_denormalized fmd;
+                fmd.pixel_1 = img.descriptors[matches[i].feature_index_1].location;
+                fmd.pixel_2 = std::get<2>(node_descriptors)[matches[i].feature_index_2].location;
+                relations.inlier_matches.push_back(fmd);
+            }
+        }
+        inlier_measurements.emplace_back(std::get<0>(node_descriptors), std::move(relations));
+    }
+
+    size_t node_id;
+    {
+        std::lock_guard<std::mutex> graph_lock(_graph_structure_mutex);
+        node_id = _graph.addNode(std::move(img));
+
+        for (auto &node_measurements : inlier_measurements)
+        {
+            _graph.addEdge(std::move(node_measurements.second), node_id, node_measurements.first);
+        }
+    }
+    {
+        std::lock_guard<std::mutex> kdtree_lock(_kdtree_mutex);
+        _imageGPSLocations.addPoint({img.metadata.latitude, img.metadata.longitude, img.metadata.altitude}, node_id);
+    }
 
     return true;
 }

@@ -26,7 +26,7 @@ struct image
     std::vector<feature_2d> descriptors;
 
     // Things to discover and optimize
-    CameraModel<> model;
+    CameraModel model;
     Eigen::Vector3d position {NAN, NAN, NAN};
     Eigen::Quaterniond orientation {NAN, NAN, NAN, NAN};
 };

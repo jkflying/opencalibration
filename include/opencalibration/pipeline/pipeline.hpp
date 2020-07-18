@@ -1,8 +1,11 @@
 #pragma once
 
+
 #include <opencalibration/relax/graph.hpp>
-#include <opencalibration/types/correspondence.hpp>
+#include <opencalibration/types/camera_relations.hpp>
 #include <opencalibration/types/image.hpp>
+
+#include <jk/KDTree.h>
 
 #include <atomic>
 #include <condition_variable>
@@ -54,6 +57,9 @@ class Pipeline
     std::vector<Runner> _runners;
 
     std::mutex _graph_structure_mutex;
-    DirectedGraph<image, std::vector<correspondence>> _graph;
+    DirectedGraph<image, camera_relations> _graph;
+
+    std::mutex _kdtree_mutex;
+    jk::tree::KDTree<size_t, 3> _imageGPSLocations;
 };
 } // namespace opencalibration
