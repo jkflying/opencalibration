@@ -1,7 +1,10 @@
 #pragma once
 
+#include <opencalibration/relax/graph.hpp>
+#include <opencalibration/types/correspondence.hpp>
 #include <opencalibration/types/image.hpp>
 
+#include <atomic>
 #include <condition_variable>
 #include <deque>
 #include <memory>
@@ -27,10 +30,10 @@ class Pipeline
     Status getStatus();
 
     void add(const std::string &filename);
-    bool process_image();
 
   private:
 
+    bool process_image(const std::string &filename);
     std::condition_variable _queue_condition_variable;
     std::mutex _queue_mutex;
     std::deque<std::string> _add_queue;
@@ -42,9 +45,15 @@ class Pipeline
         IDLE
     };
 
-    std::vector<std::pair<std::unique_ptr<std::thread>,ThreadStatus>> _runners;
+    struct Runner
+    {
+        std::unique_ptr<std::thread> thread;
+        ThreadStatus status{ThreadStatus::IDLE};
+    };
 
-    std::mutex _images_mutex;
-    std::vector<image> _images;
+    std::vector<Runner> _runners;
+
+    std::mutex _graph_structure_mutex;
+    DirectedGraph<image, std::vector<correspondence>> _graph;
 };
 } // namespace opencalibration

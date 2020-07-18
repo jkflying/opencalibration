@@ -16,7 +16,8 @@ target_compile_definitions(functional_tests PUBLIC TEST_DATA_DIR=\"${CMAKE_CURRE
                                                    TEST_DATA_OUTPUT_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/test_output/\"
                                                    VISUAL_INSPECTION=1)
 
-add_executable(unit_tests test_ransac_unit.cpp)
+add_executable(unit_tests test_ransac_unit.cpp
+                          test_graph.cpp)
 
 target_link_libraries(unit_tests PUBLIC gtest_main gtest pthread oc_model_inliers)
 
