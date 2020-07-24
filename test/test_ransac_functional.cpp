@@ -34,6 +34,10 @@ TEST(ransac, homography_filter_correspondences)
     // THEN: there should be roughly the right number
     EXPECT_GT(score, 0.5);
 
+    Eigen::Quaterniond R;
+    Eigen::Vector3d T;
+    EXPECT_EQ(model.decompose(correspondences, inliers, R, T), true);
+
     // AND: they should correspond (visual inspection)
     bool visual_inspection = false;
 #if defined(VISUAL_INSPECTION)
@@ -56,9 +60,9 @@ TEST(ransac, homography_filter_correspondences)
             return cvp;
         };
 
-        for (size_t i = 0; i < matches.size(); i++) //const feature_match &m : matches)
+        for (size_t i = 0; i < matches.size(); i++) // const feature_match &m : matches)
         {
-            const feature_match& m = matches[i];
+            const feature_match &m = matches[i];
             const feature_2d &f1 = feat1[m.feature_index_1];
             const feature_2d &f2 = feat2[m.feature_index_2];
 

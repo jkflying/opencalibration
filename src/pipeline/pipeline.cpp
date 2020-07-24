@@ -120,18 +120,24 @@ bool Pipeline::process_image(const std::string &path)
         relations.ransac_relation = h.homography;
         relations.relationType = camera_relations::RelationType::HOMOGRAPHY;
 
-        relations.inlier_matches.reserve(std::count(inliers.begin(), inliers.end(), true));
-        for (size_t i = 0; i < inliers.size(); i++)
+        bool can_decompose =
+            h.decompose(correspondences, inliers, relations.relative_rotation, relations.relative_translation);
+
+        if (can_decompose)
         {
-            if (inliers[i])
+            relations.inlier_matches.reserve(std::count(inliers.begin(), inliers.end(), true));
+            for (size_t i = 0; i < inliers.size(); i++)
             {
-                feature_match_denormalized fmd;
-                fmd.pixel_1 = img.descriptors[matches[i].feature_index_1].location;
-                fmd.pixel_2 = std::get<2>(node_descriptors)[matches[i].feature_index_2].location;
-                relations.inlier_matches.push_back(fmd);
+                if (inliers[i])
+                {
+                    feature_match_denormalized fmd;
+                    fmd.pixel_1 = img.descriptors[matches[i].feature_index_1].location;
+                    fmd.pixel_2 = std::get<2>(node_descriptors)[matches[i].feature_index_2].location;
+                    relations.inlier_matches.push_back(fmd);
+                }
             }
+            inlier_measurements.emplace_back(std::get<0>(node_descriptors), std::move(relations));
         }
-        inlier_measurements.emplace_back(std::get<0>(node_descriptors), std::move(relations));
     }
 
     size_t node_id;

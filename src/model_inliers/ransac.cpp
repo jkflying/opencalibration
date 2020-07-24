@@ -3,7 +3,12 @@
 #include <eigen3/Eigen/Dense>
 #include <eigen3/Eigen/Geometry>
 
+#include <opencv2/calib3d.hpp>
+#include <opencv2/core/eigen.hpp>
+
 #include <random>
+
+#include <iostream>
 
 namespace opencalibration
 {
@@ -96,6 +101,53 @@ size_t homography_model::evaluate(const std::vector<correspondence> &corrs, std:
         num_inliers += in;
     }
     return num_inliers;
+}
+
+bool homography_model::decompose(const std::vector<correspondence> &corrs, const std::vector<bool> &inliers,
+                                 Eigen::Quaterniond &r, Eigen::Vector3d &t)
+{
+    std::vector<cv::Mat> Rs_decomp, Ts_decomp, normals_decomp;
+    cv::Mat h;
+    cv::eigen2cv(homography, h);
+    cv::Mat I;
+    cv::eigen2cv(Eigen::Matrix3d::Identity().eval(), I);
+    size_t solutions = cv::decomposeHomographyMat(h, I, Rs_decomp, Ts_decomp, normals_decomp);
+
+    size_t best_score = 0;
+    for (size_t i = 0; i < solutions; i++)
+    {
+        Eigen::Matrix3d R;
+        cv::cv2eigen(Rs_decomp[i], R);
+
+        Eigen::Vector3d T;
+        cv::cv2eigen(Ts_decomp[i], T);
+
+        Eigen::Vector3d N;
+        cv::cv2eigen(normals_decomp[i], N);
+
+        size_t score = 0;
+
+        for (size_t j = 0; j < corrs.size(); j++)
+        {
+            if (!inliers[j])
+            {
+                continue;
+            }
+            double dot1 = N.dot(corrs[j].measurement1);
+            double dot2 = (R * N).dot(corrs[j].measurement1);
+            if (dot1 > 0 && dot2 > 0)
+            {
+                score++;
+            }
+        }
+        if (score > best_score)
+        {
+            best_score = score;
+            r = Eigen::Quaterniond(R);
+            t = T;
+        }
+    }
+    return best_score > 0;
 }
 
 template <int n> double fast_pow(double d);

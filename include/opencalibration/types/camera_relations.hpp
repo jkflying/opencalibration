@@ -8,21 +8,22 @@
 
 namespace opencalibration
 {
-    struct feature_match_denormalized
+struct feature_match_denormalized
+{
+    Eigen::Vector2d pixel_1, pixel_2;
+};
+
+struct camera_relations
+{
+    std::vector<feature_match_denormalized> inlier_matches;
+
+    Eigen::Matrix3d ransac_relation;
+    enum class RelationType
     {
-        Eigen::Vector2d pixel_1, pixel_2;
-    };
+        HOMOGRAPHY
+    } relationType = RelationType::HOMOGRAPHY;
 
-    struct camera_relations
-    {
-        std::vector<feature_match_denormalized> inlier_matches;
-
-        Eigen::Matrix3d ransac_relation;
-        enum class RelationType
-        {
-            HOMOGRAPHY
-        } relationType = RelationType::HOMOGRAPHY;
-
-        Eigen::Quaterniond relative_rotation{NAN,NAN,NAN,NAN};
-    };
-}
+    Eigen::Quaterniond relative_rotation{NAN, NAN, NAN, NAN};
+    Eigen::Vector3d relative_translation{NAN, NAN, NAN};
+};
+} // namespace opencalibration
