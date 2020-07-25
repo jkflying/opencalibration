@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.13)
 project(opencalibration)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -11,7 +11,7 @@ include_directories(${EIGEN3_INCLUDE_DIR}/eigen3/)
 find_package(Ceres 1.14 REQUIRED )
 include_directories(${CERES_INCLUDE_DIRS})
 
-find_package(OpenCV 4.2 REQUIRED)
+find_package(OpenCV 3.2 REQUIRED)
 include_directories( ${OpenCV_INCLUDE_DIRS} )
 
 find_package(GDAL 2.4 REQUIRED)
