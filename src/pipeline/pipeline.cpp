@@ -73,6 +73,11 @@ bool Pipeline::process_image(const std::string &path)
     img.metadata = extract_metadata(img.path);
     img.descriptors = extract_features(img.path);
 
+    if (img.descriptors.size() == 0)
+    {
+        return false;
+    }
+
     // find N nearest
     std::vector<size_t> nearest;
     Eigen::Vector3d local_pos;

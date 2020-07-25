@@ -15,20 +15,25 @@ std::vector<feature_2d> extract_features(const std::string &path)
 {
     int max_length_pixels = 800;
     double nms_pixel_radius = 10;
+    std::vector<feature_2d> results;
 
     cv::Mat image = cv::imread(path);
-    cv::cvtColor(image, image, cv::COLOR_BGR2GRAY);
+    if (image.size().width == 0 && image.size().height == 0)
+    {
+        return results;
+    }
 
+    cv::cvtColor(image, image, cv::COLOR_BGR2GRAY);
     double scale = std::min(1.f, float(max_length_pixels) / std::max(image.size().width, image.size().height));
     cv::Mat image_scaled;
     cv::resize(image, image_scaled, cv::Size(0, 0), scale, scale);
 
-    std::vector<cv::KeyPoint> keypoints;
     cv::Mat descriptors;
 
     // TODO: tuning
     auto akaze = cv::AKAZE::create(cv::AKAZE::DESCRIPTOR_MLDB, feature_2d::DESCRIPTOR_BITS, 3, 0.0001f);
 
+    std::vector<cv::KeyPoint> keypoints;
     akaze->detectAndCompute(image_scaled, cv::noArray(), keypoints, descriptors);
 
     std::vector<feature_2d> oc_keypoints;
@@ -48,7 +53,7 @@ std::vector<feature_2d> extract_features(const std::string &path)
     std::sort(oc_keypoints.begin(), oc_keypoints.end(),
               [](const feature_2d &a, const feature_2d &b) -> bool { return a.strength > b.strength; });
 
-    std::vector<feature_2d> results;
+
     results.reserve(std::min(keypoints.size(), static_cast<size_t>(image.size().width / nms_pixel_radius *
                                                                    image.size().height / nms_pixel_radius)));
 
