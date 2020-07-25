@@ -77,6 +77,10 @@ bool Pipeline::process_image(const std::string &path)
     }
 
     img.metadata = extract_metadata(img.path);
+    img.model.focal_length_pixels = img.metadata.focal_length_px;
+    img.model.pixels_cols = img.metadata.width_px;
+    img.model.pixels_rows = img.metadata.height_px;
+    img.model.principle_point = Eigen::Vector2d(img.model.pixels_cols, img.model.pixels_rows)/2;
 
     // find N nearest
     std::vector<size_t> nearest;
@@ -120,7 +124,7 @@ bool Pipeline::process_image(const std::string &path)
         auto matches = match_features(img.descriptors, std::get<2>(node_descriptors));
 
         // distort
-        auto correspondences = distort_keypoints(img.descriptors, std::get<2>(node_descriptors), matches, img.model,
+        std::vector<correspondence> correspondences = distort_keypoints(img.descriptors, std::get<2>(node_descriptors), matches, img.model,
                                                  std::get<1>(node_descriptors));
 
         // ransac

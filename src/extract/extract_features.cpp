@@ -7,12 +7,17 @@
 #include <jk/KDTree.h>
 
 #include <iostream>
+#include <mutex>
 
 namespace opencalibration
 {
 
 std::vector<feature_2d> extract_features(const std::string &path)
 {
+    if (cv::getNumThreads() != 1)
+    {
+        cv::setNumThreads(1);
+    }
     int max_length_pixels = 800;
     double nms_pixel_radius = 10;
     std::vector<feature_2d> results;
@@ -31,9 +36,10 @@ std::vector<feature_2d> extract_features(const std::string &path)
     cv::Mat descriptors;
 
     // TODO: tuning
-    auto akaze = cv::AKAZE::create(cv::AKAZE::DESCRIPTOR_MLDB, feature_2d::DESCRIPTOR_BITS, 3, 0.0001f);
 
     std::vector<cv::KeyPoint> keypoints;
+
+    auto akaze = cv::AKAZE::create(cv::AKAZE::DESCRIPTOR_MLDB, feature_2d::DESCRIPTOR_BITS, 3, 0.0001f);
     akaze->detectAndCompute(image_scaled, cv::noArray(), keypoints, descriptors);
 
     std::vector<feature_2d> oc_keypoints;
@@ -52,7 +58,6 @@ std::vector<feature_2d> extract_features(const std::string &path)
     // non-maximal suppression (nearest-neighbor based)
     std::sort(oc_keypoints.begin(), oc_keypoints.end(),
               [](const feature_2d &a, const feature_2d &b) -> bool { return a.strength > b.strength; });
-
 
     results.reserve(std::min(keypoints.size(), static_cast<size_t>(image.size().width / nms_pixel_radius *
                                                                    image.size().height / nms_pixel_radius)));

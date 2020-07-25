@@ -147,7 +147,9 @@ bool homography_model::decompose(const std::vector<correspondence> &corrs, const
             t = T;
         }
     }
+
     return best_score > 0;
+
 }
 
 template <int n> double fast_pow(double d);
@@ -168,13 +170,13 @@ double ransac(const std::vector<correspondence> &matches, Model &model, std::vec
 
     const double log_1m_p = std::log(1 - PROBABILITY);
 
+    inliers.resize(matches.size());
+    std::fill(inliers.begin(), inliers.end(), false);
+
     if (matches.size() < Model::MINIMUM_POINTS)
     {
         return 0; // need at least this much score increase
     }
-
-    inliers.resize(matches.size());
-    std::fill(inliers.begin(), inliers.end(), false);
 
     Model best_model;
     double best_inlier_count = 0;
