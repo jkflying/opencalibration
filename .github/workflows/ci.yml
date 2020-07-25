@@ -2,20 +2,20 @@ name: C/C++ CI
 
 on:
   push:
-    branches: [ $default-branch ]
+    branches: master
   pull_request:
-    branches: [ $default-branch ]
+    branches: '**'
 
 jobs:
   build:
-
     runs-on: ubuntu-20.04
-
     steps:
     - uses: actions/checkout@v2
+    - name: install dependencies
+      run: sudo apt-get update && sudo apt-get install libeigen3-dev libopencv-dev libgdal-dev libceres-dev
     - name: cmake
       run: mkdir build && cd build && cmake ..
     - name: make
       run: make
-    - name: make check
+    - name: make test
       run: make test
