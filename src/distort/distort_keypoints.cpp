@@ -1,4 +1,4 @@
-#include <eigen3/Eigen/Geometry>
+#include <Eigen/Geometry>
 #include <opencalibration/distort/distort_keypoints.hpp>
 
 namespace opencalibration

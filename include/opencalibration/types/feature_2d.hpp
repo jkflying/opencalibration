@@ -1,7 +1,7 @@
 #pragma once
 
 #include <bitset>
-#include <eigen3/Eigen/Core>
+#include <Eigen/Core>
 
 namespace opencalibration
 {

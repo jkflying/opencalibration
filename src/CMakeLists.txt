@@ -1,5 +1,7 @@
 add_subdirectory(distort)
 add_subdirectory(extract)
+add_subdirectory(geo_coord)
 add_subdirectory(model_inliers)
 add_subdirectory(match)
 add_subdirectory(pipeline)
+add_subdirectory(relax)

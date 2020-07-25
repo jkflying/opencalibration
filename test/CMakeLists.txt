@@ -22,9 +22,10 @@ target_compile_definitions(functional_tests PUBLIC TEST_DATA_DIR=\"${CMAKE_CURRE
                                                    VISUAL_INSPECTION=1)
 
 add_executable(unit_tests test_ransac_unit.cpp
+                          test_geo_coord.cpp
                           test_graph.cpp)
 
-target_link_libraries(unit_tests PUBLIC gtest_main gtest pthread oc_model_inliers)
+target_link_libraries(unit_tests PUBLIC gtest_main gtest pthread oc_model_inliers oc_geo_coord)
 
 add_custom_target(test COMMAND ${CMAKE_BINARY_DIR}/test/functional_tests
                        COMMAND ${CMAKE_BINARY_DIR}/test/unit_tests

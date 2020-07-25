@@ -4,7 +4,7 @@
 #include <opencalibration/types/image_metadata.hpp>
 #include <opencalibration/types/camera_model.hpp>
 
-#include <eigen3/Eigen/Geometry>
+#include <Eigen/Geometry>
 
 #include <memory>
 #include <vector>

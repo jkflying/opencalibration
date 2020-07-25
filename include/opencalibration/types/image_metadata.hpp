@@ -1,7 +1,7 @@
 #pragma once
 
 #include <string>
-#include <eigen3/Eigen/Core>
+#include <Eigen/Core>
 
 namespace opencalibration
 {
@@ -27,7 +27,5 @@ struct image_metadata
     std::string datum;
     std::string timestamp;
     std::string datestamp;
-
-
 };
 }

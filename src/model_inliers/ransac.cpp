@@ -1,7 +1,7 @@
 #include <opencalibration/model_inliers/ransac.hpp>
 
-#include <eigen3/Eigen/Dense>
-#include <eigen3/Eigen/Geometry>
+#include <Eigen/Dense>
+#include <Eigen/Geometry>
 
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core/eigen.hpp>
@@ -174,6 +174,7 @@ double ransac(const std::vector<correspondence> &matches, Model &model, std::vec
     }
 
     inliers.resize(matches.size());
+    std::fill(inliers.begin(), inliers.end(), false);
 
     Model best_model;
     double best_inlier_count = 0;
@@ -182,7 +183,7 @@ double ransac(const std::vector<correspondence> &matches, Model &model, std::vec
 
     auto random_k_from_n = [&generator](int n) {
         std::array<size_t, Model::MINIMUM_POINTS> indices;
-        std::uniform_int_distribution<int> distribution(0, n);
+        std::uniform_int_distribution<int> distribution(0, n-1);
         for (size_t j = 0; j < Model::MINIMUM_POINTS; j++)
         {
             int candidate = distribution(generator);

@@ -1,9 +1,8 @@
 #pragma once
 
 
-#include <opencalibration/relax/graph.hpp>
-#include <opencalibration/types/camera_relations.hpp>
-#include <opencalibration/types/image.hpp>
+#include <opencalibration/relax/relax.hpp>
+#include <opencalibration/geo_coord/geo_coord.hpp>
 
 #include <jk/KDTree.h>
 
@@ -14,6 +13,8 @@
 #include <mutex>
 #include <thread>
 #include <vector>
+
+class OGRCoordinateTransformation;
 
 namespace opencalibration
 {
@@ -57,9 +58,11 @@ class Pipeline
     std::vector<Runner> _runners;
 
     std::mutex _graph_structure_mutex;
-    DirectedGraph<image, camera_relations> _graph;
+    MeasurementGraph _graph;
 
     std::mutex _kdtree_mutex;
     jk::tree::KDTree<size_t, 3> _imageGPSLocations;
+    GeoCoord _coordinate_system;
+
 };
 } // namespace opencalibration

@@ -75,10 +75,17 @@ bool Pipeline::process_image(const std::string &path)
 
     // find N nearest
     std::vector<size_t> nearest;
+    Eigen::Vector3d local_pos;
     {
         std::lock_guard<std::mutex> kdtree_lock(_kdtree_mutex);
+        if (!_coordinate_system.isInitialized())
+        {
+            _coordinate_system.setOrigin(img.metadata.latitude, img.metadata.longitude);
+        }
+        local_pos = _coordinate_system.toLocalCS(img.metadata.latitude, img.metadata.longitude, img.metadata.altitude);
+
         auto knn =
-            _imageGPSLocations.searchKnn({img.metadata.latitude, img.metadata.longitude, img.metadata.altitude}, 10);
+            _imageGPSLocations.searchKnn({local_pos.x(), local_pos.y(), local_pos.z()}, 10);
         nearest.reserve(knn.size());
         for (const auto &nn : knn)
         {
@@ -152,7 +159,7 @@ bool Pipeline::process_image(const std::string &path)
     }
     {
         std::lock_guard<std::mutex> kdtree_lock(_kdtree_mutex);
-        _imageGPSLocations.addPoint({img.metadata.latitude, img.metadata.longitude, img.metadata.altitude}, node_id);
+        _imageGPSLocations.addPoint({local_pos.x(), local_pos.y(), local_pos.z()}, node_id);
     }
 
     return true;
