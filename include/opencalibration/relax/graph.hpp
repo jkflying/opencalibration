@@ -68,7 +68,7 @@ template <typename NodePayload, typename EdgePayload> class DirectedGraph
     size_t addEdge(EdgePayload &&edge_payload, size_t source, size_t dest)
     {
         size_t identifier = distribution(generator);
-        Edge e (std::move(edge_payload), source, dest);
+        Edge e(std::move(edge_payload), source, dest);
         while (_edges.emplace(identifier, std::move(e)).second == false)
         {
             identifier = distribution(generator);

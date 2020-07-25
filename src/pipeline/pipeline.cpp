@@ -67,16 +67,16 @@ Pipeline::~Pipeline()
 
 bool Pipeline::process_image(const std::string &path)
 {
-
+    std::cout << "Processing " << path << std::endl;
     image img;
     img.path = path;
-    img.metadata = extract_metadata(img.path);
     img.descriptors = extract_features(img.path);
-
     if (img.descriptors.size() == 0)
     {
         return false;
     }
+
+    img.metadata = extract_metadata(img.path);
 
     // find N nearest
     std::vector<size_t> nearest;
