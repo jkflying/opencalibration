@@ -20,7 +20,7 @@ int main(int argc, char *argv[])
         }
     }
 
-    std::sort(files.begin(), files.end());
+    std::random_shuffle(files.begin(), files.end());
 
     for (const auto &file : files)
     {

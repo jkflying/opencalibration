@@ -39,6 +39,6 @@ TEST(graph, add_nodes_and_edge)
     EXPECT_EQ(edge_val->payload, 9001);
     EXPECT_EQ(edge_val->getSource(), node_id);
     EXPECT_EQ(edge_val->getDest(), node_id2);
-    EXPECT_EQ(g.getNode(node_id)->getEdges().count(edge_id), 1);
-    EXPECT_EQ(g.getNode(node_id2)->getEdges().count(edge_id), 1);
+    EXPECT_EQ(std::count(g.getNode(node_id)->getEdges().begin(), g.getNode(node_id)->getEdges().end(), edge_id), 1);
+    EXPECT_EQ(std::count(g.getNode(node_id2)->getEdges().begin(), g.getNode(node_id2)->getEdges().end(), edge_id), 1);
 }

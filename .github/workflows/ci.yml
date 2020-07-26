@@ -17,7 +17,7 @@ jobs:
       run: sudo apt-get update && sudo apt-get install libeigen3-dev libopencv-dev libgdal-dev libceres-dev libgtest-dev
     - name: cmake
       run: mkdir build && cd build && cmake ..
-    - name: make
+    - name: make -j4
       run: cd build && make
     - name: make test
       run: cd build && make test

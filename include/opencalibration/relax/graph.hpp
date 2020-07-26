@@ -1,10 +1,10 @@
 #pragma once
 
+#include <deque>
 #include <functional>
 #include <optional>
 #include <random>
 #include <unordered_map>
-#include <unordered_set>
 
 namespace opencalibration
 {
@@ -21,13 +21,13 @@ template <typename NodePayload, typename EdgePayload> class DirectedGraph
 
         NodePayload payload;
 
-        const std::unordered_set<size_t> &getEdges() const
+        const std::deque<size_t> &getEdges() const
         {
             return _edges;
         }
 
       private:
-        std::unordered_set<size_t> _edges;
+        std::deque<size_t> _edges;
         friend DirectedGraph;
     };
 
@@ -69,13 +69,13 @@ template <typename NodePayload, typename EdgePayload> class DirectedGraph
     {
         size_t identifier = distribution(generator);
         Edge e(std::move(edge_payload), source, dest);
-        while (_edges.emplace(identifier, std::move(e)).second == false)
+        while (_edges.emplace(identifier, e).second == false)
         {
             identifier = distribution(generator);
         }
 
-        _nodes.find(source)->second._edges.insert(identifier);
-        _nodes.find(dest)->second._edges.insert(identifier);
+        _nodes.find(source)->second._edges.push_back(identifier);
+        _nodes.find(dest)->second._edges.push_back(identifier);
 
         return identifier;
     }
