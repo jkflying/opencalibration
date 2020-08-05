@@ -23,11 +23,21 @@ struct image
 
     // Loaded / processed from image data
     image_metadata metadata;
-    std::vector<feature_2d> descriptors;
+    std::vector<feature_2d> features;
 
     // Things to discover and optimize
     CameraModel model;
     Eigen::Vector3d position {NAN, NAN, NAN};
     Eigen::Quaterniond orientation {NAN, NAN, NAN, NAN};
+
+    bool operator==(const image& other) const
+    {
+        return path == other.path &&
+               metadata == other.metadata &&
+               features == other.features &&
+               model == other.model &&
+               position == other.position &&
+               orientation.coeffs() == other.orientation.coeffs();
+    }
 };
 } // namespace opencalibration

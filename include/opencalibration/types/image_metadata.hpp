@@ -27,5 +27,24 @@ struct image_metadata
     std::string datum;
     std::string timestamp;
     std::string datestamp;
+
+    bool operator==(const image_metadata& other) const
+    {
+        return width_px == other.width_px &&
+                height_px == other.height_px &&
+                focal_length_px == other.focal_length_px &&
+                latitude == other.latitude &&
+                longitude == other.longitude &&
+                altitude == other.altitude &&
+                relativeAltitude == other.relativeAltitude &&
+                rollDegree == other.rollDegree &&
+                pitchDegree == other.pitchDegree &&
+                yawDegree == other.yawDegree &&
+                accuracyXY == other.accuracyXY &&
+                accuracyZ == other.accuracyZ &&
+                datum == other.datum &&
+                timestamp == other.timestamp &&
+                datestamp == other.datestamp;
+    }
 };
 }

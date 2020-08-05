@@ -26,6 +26,12 @@ template <typename NodePayload, typename EdgePayload> class DirectedGraph
             return _edges;
         }
 
+        bool operator==(const Node& other) const
+        {
+            return _edges == other._edges &&
+                    payload == other.payload;
+        }
+
       private:
         std::deque<size_t> _edges;
         friend DirectedGraph;
@@ -47,6 +53,13 @@ template <typename NodePayload, typename EdgePayload> class DirectedGraph
         size_t getDest() const
         {
             return _dest;
+        }
+
+        bool operator==(const Edge& other) const
+        {
+            return _source == other._source &&
+                    _dest == other._dest &&
+                    payload == other.payload;
         }
 
       private:
@@ -122,6 +135,21 @@ template <typename NodePayload, typename EdgePayload> class DirectedGraph
 
     bool removeNode(size_t identifier);
     bool removeEdge(size_t identifier);
+
+
+    using NodeIterator = typename std::unordered_map<size_t, Node>::const_iterator;
+    NodeIterator nodebegin() const {return _nodes.cbegin();}
+    NodeIterator nodeend() const {return _nodes.cend(); }
+
+    using EdgeIterator = typename std::unordered_map<size_t, Edge>::const_iterator;
+    EdgeIterator edgebegin() const {return _edges.cbegin();}
+    EdgeIterator edgeend() const {return _edges.cend();}
+
+    bool operator==(const DirectedGraph& other) const
+    {
+        return _nodes == other._nodes &&
+                _edges == other._edges;
+    }
 
   private:
     std::default_random_engine generator;

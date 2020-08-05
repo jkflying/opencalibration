@@ -35,6 +35,8 @@ class Pipeline
 
     void add(const std::string &filename);
 
+    const MeasurementGraph& getGraph(); // warning - not threadsafe
+
   private:
 
     bool process_image(const std::string &filename);

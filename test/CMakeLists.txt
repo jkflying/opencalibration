@@ -9,13 +9,15 @@ add_executable(functional_tests test_distort.cpp
                                 test_extract_metadata.cpp
                                 test_pipeline.cpp
                                 test_ransac_functional.cpp
-                                test_match.cpp)
+                                test_match.cpp
+                                test_serialize_deserialize.cpp)
 
 target_link_libraries(functional_tests PUBLIC gtest_main gtest pthread oc_distort
                                                                        oc_extract
                                                                        oc_match
                                                                        oc_model_inliers
-                                                                       oc_pipeline)
+                                                                       oc_pipeline
+                                                                       oc_io)
 
 target_compile_definitions(functional_tests PUBLIC TEST_DATA_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/test_data/\"
                                                    TEST_DATA_OUTPUT_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/test_output/\"

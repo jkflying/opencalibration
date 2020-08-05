@@ -1,14 +1,18 @@
 #include <opencalibration/pipeline/pipeline.hpp>
 
+#include <opencalibration/io/serialize.hpp>
+
 #include <filesystem>
 #include <thread>
+
+#include <iostream>
 
 using namespace opencalibration;
 using namespace std::chrono_literals;
 
 int main(int argc, char *argv[])
 {
-    Pipeline p(4);
+    Pipeline p(1);
     std::vector<std::string> files;
 
     if (argc > 1)
@@ -31,4 +35,8 @@ int main(int argc, char *argv[])
     {
         std::this_thread::sleep_for(1ms);
     }
+
+    std::string out = serialize(p.getGraph());
+
+    std::cout << out << std::endl;
 }

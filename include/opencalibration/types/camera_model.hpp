@@ -23,6 +23,14 @@ struct DifferentiableCameraModel
     {
         PLANAR
     } projection_type = ProjectionType::PLANAR;
+
+    bool operator==(const DifferentiableCameraModel& other) const {
+        return pixels_rows == other.pixels_rows &&
+                pixels_cols == other.pixels_cols &&
+                focal_length_pixels == other.focal_length_pixels &&
+                principle_point == other.principle_point &&
+                projection_type == other.projection_type;
+    }
 };
 
 using CameraModel = DifferentiableCameraModel<double>;

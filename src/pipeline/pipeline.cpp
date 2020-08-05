@@ -70,8 +70,8 @@ bool Pipeline::process_image(const std::string &path)
     std::cout << "Processing " << path << std::endl;
     image img;
     img.path = path;
-    img.descriptors = extract_features(img.path);
-    if (img.descriptors.size() == 0)
+    img.features = extract_features(img.path);
+    if (img.features.size() == 0)
     {
         return false;
     }
@@ -112,7 +112,7 @@ bool Pipeline::process_image(const std::string &path)
             const auto *node = _graph.getNode(node_id);
             if (node != nullptr)
             {
-                nearest_descriptors.emplace_back(node_id, node->payload.model, node->payload.descriptors);
+                nearest_descriptors.emplace_back(node_id, node->payload.model, node->payload.features);
             }
         }
     }
@@ -121,10 +121,10 @@ bool Pipeline::process_image(const std::string &path)
     for (const auto &node_descriptors : nearest_descriptors)
     {
         // match
-        auto matches = match_features(img.descriptors, std::get<2>(node_descriptors));
+        auto matches = match_features(img.features, std::get<2>(node_descriptors));
 
         // distort
-        std::vector<correspondence> correspondences = distort_keypoints(img.descriptors, std::get<2>(node_descriptors), matches, img.model,
+        std::vector<correspondence> correspondences = distort_keypoints(img.features, std::get<2>(node_descriptors), matches, img.model,
                                                  std::get<1>(node_descriptors));
 
         // ransac
@@ -147,7 +147,7 @@ bool Pipeline::process_image(const std::string &path)
                 if (inliers[i])
                 {
                     feature_match_denormalized fmd;
-                    fmd.pixel_1 = img.descriptors[matches[i].feature_index_1].location;
+                    fmd.pixel_1 = img.features[matches[i].feature_index_1].location;
                     fmd.pixel_2 = std::get<2>(node_descriptors)[matches[i].feature_index_2].location;
                     relations.inlier_matches.push_back(fmd);
                 }
@@ -194,5 +194,9 @@ Pipeline::Status Pipeline::getStatus()
                                       [](const Runner &runner) -> bool { return runner.status == ThreadStatus::IDLE; })
                ? Status::COMPLETE
                : Status::PROCESSING;
+}
+
+const MeasurementGraph& Pipeline::getGraph(){
+    return _graph;
 }
 } // namespace opencalibration
