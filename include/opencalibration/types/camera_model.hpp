@@ -21,7 +21,8 @@ struct DifferentiableCameraModel
 
     enum class ProjectionType
     {
-        PLANAR
+        PLANAR,
+        UNKNOWN
     } projection_type = ProjectionType::PLANAR;
 
     bool operator==(const DifferentiableCameraModel& other) const {

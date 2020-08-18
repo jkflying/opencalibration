@@ -8,23 +8,14 @@
 
 namespace
 {
-template <size_t N> std::string bitset_to_string(const std::bitset<N> &bits)
+
+template <size_t N> std::string bitset_to_bytes(const std::bitset<N> &bs)
 {
-    static_assert(N % CHAR_BIT == 0, L"bitset size must be multiple of char");
-    std::string toReturn;
-    for (size_t j = 0; j < N / CHAR_BIT; ++j)
-    {
-        char next = 0;
-        for (size_t i = 0; i < CHAR_BIT; ++i)
-        {
-            size_t index = N - (CHAR_BIT * j) - i - 1;
-            size_t pos = CHAR_BIT - i - 1;
-            if (bits[index])
-                next |= (1 << pos);
-        }
-        toReturn.push_back(next);
-    }
-    return toReturn;
+    std::string result;
+    result.resize((N + 7) >> 3, '\0');
+    for (int j = 0; j < int(N); j++)
+        result[j >> 3] |= (bs[j] << (j & 7));
+    return result;
 }
 
 } // namespace
@@ -37,6 +28,7 @@ std::string serialize(const MeasurementGraph &graph)
     rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(buffer);
 
     writer.SetFormatOptions(rapidjson::PrettyFormatOptions::kFormatSingleLineArray);
+    //     writer.SetMaxDecimalPlaces(11);
     writer.StartObject();
 
     writer.Key("version");
@@ -74,8 +66,12 @@ std::string serialize(const MeasurementGraph &graph)
         writer.Key("projection");
         switch (iter->second.payload.model.projection_type)
         {
-            case CameraModel::ProjectionType::PLANAR:
-                writer.String("planar");
+        case CameraModel::ProjectionType::PLANAR:
+            writer.String("planar");
+            break;
+        case CameraModel::ProjectionType::UNKNOWN:
+            writer.String("UNKNOWN");
+            break;
         }
 
         writer.EndObject();
@@ -89,6 +85,8 @@ std::string serialize(const MeasurementGraph &graph)
             writer.String(edge_id.c_str(), edge_id.size());
         }
         writer.EndArray();
+
+        // TODO: metadata
 
         writer.Key("features");
         writer.StartArray();
@@ -107,11 +105,12 @@ std::string serialize(const MeasurementGraph &graph)
             writer.Double(feature.strength);
 
             writer.Key("descriptor");
-            std::string descriptor = bitset_to_string(feature.descriptor);
+            std::string descriptor = bitset_to_bytes(feature.descriptor);
             std::string base64_descriptor;
             base64_descriptor.resize(Base64encode_len(descriptor.size()));
-            int actual_size = Base64encode(const_cast<char *>(base64_descriptor.c_str()), descriptor.c_str(), descriptor.size());
-            writer.String(base64_descriptor.c_str(), actual_size-1);
+            int actual_size =
+                Base64encode(const_cast<char *>(base64_descriptor.c_str()), descriptor.c_str(), descriptor.size());
+            writer.String(base64_descriptor.c_str(), actual_size - 1);
 
             writer.EndObject();
         }

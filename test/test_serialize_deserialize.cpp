@@ -33,5 +33,7 @@ TEST(serialize_graph, one_image)
     std::string serialized = serialize(p.getGraph());
     MeasurementGraph g;
     deserialize(serialized, g);
-    EXPECT_EQ(g, p.getGraph());
+    std::string dedeserialized = serialize(g);
+    EXPECT_TRUE(g == p.getGraph());
+    EXPECT_EQ(serialized, dedeserialized);
 }
