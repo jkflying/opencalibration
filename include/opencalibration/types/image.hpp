@@ -1,10 +1,12 @@
 #pragma once
 
+#include <opencalibration/types/camera_model.hpp>
 #include <opencalibration/types/feature_2d.hpp>
 #include <opencalibration/types/image_metadata.hpp>
-#include <opencalibration/types/camera_model.hpp>
 
 #include <Eigen/Geometry>
+
+#include <iostream>
 
 #include <memory>
 #include <vector>
@@ -27,17 +29,21 @@ struct image
 
     // Things to discover and optimize
     CameraModel model;
-    Eigen::Vector3d position {NAN, NAN, NAN};
-    Eigen::Quaterniond orientation {NAN, NAN, NAN, NAN};
+    Eigen::Vector3d position{NAN, NAN, NAN};
+    Eigen::Quaterniond orientation{NAN, NAN, NAN, NAN};
 
-    bool operator==(const image& other) const
+    bool operator==(const image &other) const
     {
-        return path == other.path &&
-               metadata == other.metadata &&
-               features == other.features &&
-               model == other.model &&
-               position == other.position &&
-               orientation.coeffs() == other.orientation.coeffs();
+        bool pat = path == other.path;
+        bool met = metadata == other.metadata;
+        bool feat = features == other.features;
+        bool mod = model == other.model;
+        bool pos =
+            position == other.position || (position.array().isNaN().all() && other.position.array().isNaN().all());
+        bool ori = orientation.coeffs() == other.orientation.coeffs() ||
+                   (orientation.coeffs().array().isNaN().all() && other.orientation.coeffs().array().isNaN().all());
+
+        return pat && met && feat && mod && pos && ori;
     }
 };
 } // namespace opencalibration

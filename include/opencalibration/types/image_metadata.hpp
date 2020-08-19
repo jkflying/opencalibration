@@ -30,18 +30,19 @@ struct image_metadata
 
     bool operator==(const image_metadata& other) const
     {
+        auto double_eq = [](double a, double b){return a == b || (std::isnan(a) && std::isnan(b));};
         return width_px == other.width_px &&
                 height_px == other.height_px &&
-                focal_length_px == other.focal_length_px &&
-                latitude == other.latitude &&
-                longitude == other.longitude &&
-                altitude == other.altitude &&
-                relativeAltitude == other.relativeAltitude &&
-                rollDegree == other.rollDegree &&
-                pitchDegree == other.pitchDegree &&
-                yawDegree == other.yawDegree &&
-                accuracyXY == other.accuracyXY &&
-                accuracyZ == other.accuracyZ &&
+                double_eq(focal_length_px , other.focal_length_px) &&
+                double_eq(latitude, other.latitude) &&
+                double_eq(longitude, other.longitude) &&
+                double_eq(altitude, other.altitude) &&
+                double_eq(relativeAltitude, other.relativeAltitude) &&
+                double_eq(rollDegree, other.rollDegree) &&
+                double_eq(pitchDegree, other.pitchDegree) &&
+                double_eq(yawDegree, other.yawDegree) &&
+                double_eq(accuracyXY, other.accuracyXY) &&
+                double_eq(accuracyZ, other.accuracyZ) &&
                 datum == other.datum &&
                 timestamp == other.timestamp &&
                 datestamp == other.datestamp;
