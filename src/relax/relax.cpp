@@ -37,9 +37,8 @@ struct RayIntersectionAngleError
         const Matrix3T ray1_nearest_point = pos1 + (pos2 - pos1).dot(n2) / ray1.dot(n2) * ray1;
         const Matrix3T ray2_nearest_point = pos2 + (pos1 - pos2).dot(n) / ray2.dot(n) * ray2;
 
-        const Matrix3T ray_angle_error =
-            (ray1_nearest_point - ray2_nearest_point) /
-            ((ray1_nearest_point - pos1).norm() + (ray2_nearest_point - pos2).norm());
+        const Matrix3T ray_angle_error = (ray1_nearest_point - ray2_nearest_point) /
+                                         ((ray1_nearest_point - pos1).norm() + (ray2_nearest_point - pos2).norm());
 
         Eigen::Map<Matrix3T> residual(r);
         residual = ray_angle_error;
@@ -55,6 +54,19 @@ struct RayIntersectionAngleError
 
 namespace opencalibration
 {
+
+void initializeOrientation(const std::vector<size_t> &node_ids, MeasurementGraph &graph)
+{
+    for (size_t node_id : node_ids)
+    {
+        MeasurementGraph::Node *node1 = graph.getNode(node_id);
+        if (node1 == nullptr)
+            return;
+
+        // TODO: get connections, use relative orientations from RANSAC to initialize orientations
+        node1->payload.orientation = Eigen::Quaterniond::Identity();
+    }
+}
 
 void relaxSubset(const std::vector<size_t> &node_ids, MeasurementGraph &graph, std::mutex &graph_mutex)
 {

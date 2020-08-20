@@ -51,6 +51,18 @@ template <> class Deserializer<MeasurementGraph>
                     image img;
                     img.path = niter->value.GetObject()["path"].GetString();
 
+                    const auto& position = niter->value.GetObject()["position"].GetArray();
+                    for (int i = 0; i < 3; i++)
+                    {
+                        img.position[i] = position[i].GetDouble();
+                    }
+
+                    const auto& orientation = niter->value.GetObject()["orientation"].GetArray();
+                    for (int i = 0; i < 4; i++)
+                    {
+                        img.orientation.coeffs()[i] = orientation[i].GetDouble();
+                    }
+
                     const auto &model = niter->value.GetObject()["model"].GetObject();
                     img.model.pixels_cols = model["dimensions"].GetArray()[0].GetInt64();
                     img.model.pixels_rows = model["dimensions"].GetArray()[1].GetInt64();
@@ -69,30 +81,32 @@ template <> class Deserializer<MeasurementGraph>
                         node._edges.push_back(std::strtoull(edge_id.GetString(), &end, 10));
                     }
 
-                    const auto &metadata = niter->value.GetObject()["metadata"].GetObject();
-                    node.payload.metadata.width_px = metadata["dimensions"].GetArray()[0].GetInt64();
-                    node.payload.metadata.height_px = metadata["dimensions"].GetArray()[1].GetInt64();
+                    {
+                        const auto &metadata = niter->value.GetObject()["metadata"].GetObject();
+                        node.payload.metadata.width_px = metadata["dimensions"].GetArray()[0].GetInt64();
+                        node.payload.metadata.height_px = metadata["dimensions"].GetArray()[1].GetInt64();
 
-                    node.payload.metadata.focal_length_px = metadata["focal_length_px"].GetDouble();
+                        node.payload.metadata.focal_length_px = metadata["focal_length_px"].GetDouble();
 
-                    node.payload.metadata.principal_point_px[0] = metadata["principal"].GetArray()[0].GetDouble();
-                    node.payload.metadata.principal_point_px[1] = metadata["principal"].GetArray()[1].GetDouble();
+                        node.payload.metadata.principal_point_px[0] = metadata["principal"].GetArray()[0].GetDouble();
+                        node.payload.metadata.principal_point_px[1] = metadata["principal"].GetArray()[1].GetDouble();
 
-                    node.payload.metadata.latitude = metadata["latitude"].GetDouble();
-                    node.payload.metadata.longitude = metadata["longitude"].GetDouble();
-                    node.payload.metadata.altitude = metadata["altitude"].GetDouble();
-                    node.payload.metadata.relativeAltitude = metadata["relative_altitude"].GetDouble();
+                        node.payload.metadata.latitude = metadata["latitude"].GetDouble();
+                        node.payload.metadata.longitude = metadata["longitude"].GetDouble();
+                        node.payload.metadata.altitude = metadata["altitude"].GetDouble();
+                        node.payload.metadata.relativeAltitude = metadata["relative_altitude"].GetDouble();
 
-                    node.payload.metadata.rollDegree = metadata["roll"].GetDouble();
-                    node.payload.metadata.pitchDegree = metadata["pitch"].GetDouble();
-                    node.payload.metadata.yawDegree = metadata["yaw"].GetDouble();
+                        node.payload.metadata.rollDegree = metadata["roll"].GetDouble();
+                        node.payload.metadata.pitchDegree = metadata["pitch"].GetDouble();
+                        node.payload.metadata.yawDegree = metadata["yaw"].GetDouble();
 
-                    node.payload.metadata.accuracyXY = metadata["accuracy_xy"].GetDouble();
-                    node.payload.metadata.accuracyZ = metadata["accuracy_z"].GetDouble();
+                        node.payload.metadata.accuracyXY = metadata["accuracy_xy"].GetDouble();
+                        node.payload.metadata.accuracyZ = metadata["accuracy_z"].GetDouble();
 
-                    node.payload.metadata.datum = metadata["datum"].GetString();
-                    node.payload.metadata.timestamp = metadata["timestamp"].GetString();
-                    node.payload.metadata.datestamp = metadata["datestamp"].GetString();
+                        node.payload.metadata.datum = metadata["datum"].GetString();
+                        node.payload.metadata.timestamp = metadata["timestamp"].GetString();
+                        node.payload.metadata.datestamp = metadata["datestamp"].GetString();
+                    }
 
                     const auto &features = niter->value.GetObject()["features"].GetArray();
                     std::string descriptor;
@@ -139,7 +153,7 @@ template <> class Deserializer<MeasurementGraph>
                     {
                         for (int j = 0; j < 3; j++)
                         {
-                            relations.ransac_relation(i, j) = relation[i*3 + j].GetDouble();
+                            relations.ransac_relation(i, j) = relation[i * 3 + j].GetDouble();
                         }
                     }
 
@@ -153,13 +167,13 @@ template <> class Deserializer<MeasurementGraph>
                         relations.relationType = camera_relations::RelationType::UNKNOWN;
                     }
 
-                    const auto& rel_rot = eiter->value.GetObject()["relative_rotation"].GetArray();
+                    const auto &rel_rot = eiter->value.GetObject()["relative_rotation"].GetArray();
                     for (int i = 0; i < 4; i++)
                     {
                         relations.relative_rotation.coeffs()(i) = rel_rot[i].GetDouble();
                     }
 
-                    const auto& rel_trans = eiter->value.GetObject()["relative_translation"].GetArray();
+                    const auto &rel_trans = eiter->value.GetObject()["relative_translation"].GetArray();
                     for (int i = 0; i < 3; i++)
                     {
                         relations.relative_translation(i) = rel_trans[i].GetDouble();

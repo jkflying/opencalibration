@@ -92,6 +92,7 @@ bool Pipeline::process_image(const std::string &path)
             _coordinate_system.setOrigin(img.metadata.latitude, img.metadata.longitude);
         }
         local_pos = _coordinate_system.toLocalCS(img.metadata.latitude, img.metadata.longitude, img.metadata.altitude);
+        img.position = local_pos;
 
         auto knn =
             _imageGPSLocations.searchKnn({local_pos.x(), local_pos.y(), local_pos.z()}, 10);
@@ -165,11 +166,13 @@ bool Pipeline::process_image(const std::string &path)
         {
             _graph.addEdge(std::move(node_measurements.second), node_id, node_measurements.first);
         }
+        initializeOrientation({node_id}, _graph);
     }
     {
         std::lock_guard<std::mutex> kdtree_lock(_kdtree_mutex);
         _imageGPSLocations.addPoint({local_pos.x(), local_pos.y(), local_pos.z()}, node_id);
     }
+
 
     return true;
 }
