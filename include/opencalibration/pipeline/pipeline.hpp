@@ -33,7 +33,7 @@ class Pipeline
 
     Status getStatus();
 
-    void add(const std::string &filename);
+    void add(const std::vector<std::string> &filename);
 
     const MeasurementGraph& getGraph(); // warning - not threadsafe
 

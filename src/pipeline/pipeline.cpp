@@ -177,12 +177,12 @@ bool Pipeline::process_image(const std::string &path)
     return true;
 }
 
-void Pipeline::add(const std::string &path)
+void Pipeline::add(const std::vector<std::string> &paths)
 {
     {
         std::lock_guard<std::mutex> guard(_queue_mutex);
-        _add_queue.push_back(path);
-        _queue_condition_variable.notify_one();
+        _add_queue.insert(_add_queue.end(), paths.begin(), paths.end());
+        _queue_condition_variable.notify_all();
     }
 }
 

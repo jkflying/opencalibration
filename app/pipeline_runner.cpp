@@ -25,11 +25,7 @@ int main(int argc, char *argv[])
     }
 
     std::random_shuffle(files.begin(), files.end());
-
-    for (const auto &file : files)
-    {
-        p.add(file);
-    }
+    p.add(files);
 
     while (p.getStatus() != Pipeline::Status::COMPLETE)
     {

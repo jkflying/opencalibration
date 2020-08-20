@@ -7,12 +7,10 @@
 using namespace opencalibration;
 using namespace std::chrono_literals;
 
-
 TEST(pipeline, constructs_with_lots_of_threads)
 {
     Pipeline p(100);
     std::this_thread::sleep_for(1ms);
-
 }
 
 TEST(pipeline, processes_4_images)
@@ -26,10 +24,7 @@ TEST(pipeline, processes_4_images)
     std::string path4 = TEST_DATA_DIR "P2560256.JPG";
 
     // WHEN: we add the paths
-    p.add(path1);
-    p.add(path2);
-    p.add(path3);
-    p.add(path4);
+    p.add({path1, path2, path3, path4});
 
     // THEN: after some time they should all be processed
 
@@ -37,5 +32,4 @@ TEST(pipeline, processes_4_images)
     {
         std::this_thread::sleep_for(1ms);
     }
-
 }
