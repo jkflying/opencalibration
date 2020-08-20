@@ -17,7 +17,6 @@ Pipeline::Pipeline(size_t threads)
 {
     _keep_running = true;
     auto get_path = [this](std::string &path, ThreadStatus &status) -> bool {
-        std::lock_guard<std::mutex> guard(_queue_mutex);
         if (_add_queue.size() > 0)
         {
             path = _add_queue.front();
@@ -31,37 +30,32 @@ Pipeline::Pipeline(size_t threads)
             return false;
         }
     };
-    _runners.resize(threads);
-    for (size_t i = 0; i < threads; i++)
-    {
-        _runners[i].thread.reset(new std::thread(
-            [this, get_path](size_t index) {
-                std::mutex sleep_mutex;
-                while (_keep_running)
-                {
-                    std::string path;
-                    if (get_path(path, _runners[index].status))
-                    {
-                        process_image(path);
-                    }
-                    else
-                    {
-                        std::unique_lock<std::mutex> lck(sleep_mutex);
-                        _queue_condition_variable.wait_for(lck, 1s);
-                    }
-                }
-            },
-            i));
-    }
+
+    _runner.thread.reset(new std::thread([this, get_path]() {
+        std::mutex sleep_mutex;
+        while (_keep_running)
+        {
+            std::string path;
+            if (get_path(path, _runner.status))
+            {
+                process_image(path);
+            }
+            else
+            {
+                std::unique_lock<std::mutex> lck(sleep_mutex);
+                _queue_condition_variable.wait_for(lck, 1s);
+            }
+        }
+    }));
 }
 
 Pipeline::~Pipeline()
 {
     _keep_running = false;
     _queue_condition_variable.notify_all();
-    for (auto &runner : _runners)
+    if (_runner.thread != nullptr)
     {
-        runner.thread->join();
+        _runner.thread->join();
     }
 }
 
@@ -80,7 +74,7 @@ bool Pipeline::process_image(const std::string &path)
     img.model.focal_length_pixels = img.metadata.focal_length_px;
     img.model.pixels_cols = img.metadata.width_px;
     img.model.pixels_rows = img.metadata.height_px;
-    img.model.principle_point = Eigen::Vector2d(img.model.pixels_cols, img.model.pixels_rows)/2;
+    img.model.principle_point = Eigen::Vector2d(img.model.pixels_cols, img.model.pixels_rows) / 2;
 
     // find N nearest
     std::vector<size_t> nearest;
@@ -94,8 +88,7 @@ bool Pipeline::process_image(const std::string &path)
         local_pos = _coordinate_system.toLocalCS(img.metadata.latitude, img.metadata.longitude, img.metadata.altitude);
         img.position = local_pos;
 
-        auto knn =
-            _imageGPSLocations.searchKnn({local_pos.x(), local_pos.y(), local_pos.z()}, 10);
+        auto knn = _imageGPSLocations.searchKnn({local_pos.x(), local_pos.y(), local_pos.z()}, 10);
         nearest.reserve(knn.size());
         for (const auto &nn : knn)
         {
@@ -125,8 +118,8 @@ bool Pipeline::process_image(const std::string &path)
         auto matches = match_features(img.features, std::get<2>(node_descriptors));
 
         // distort
-        std::vector<correspondence> correspondences = distort_keypoints(img.features, std::get<2>(node_descriptors), matches, img.model,
-                                                 std::get<1>(node_descriptors));
+        std::vector<correspondence> correspondences = distort_keypoints(
+            img.features, std::get<2>(node_descriptors), matches, img.model, std::get<1>(node_descriptors));
 
         // ransac
         homography_model h;
@@ -173,7 +166,6 @@ bool Pipeline::process_image(const std::string &path)
         _imageGPSLocations.addPoint({local_pos.x(), local_pos.y(), local_pos.z()}, node_id);
     }
 
-
     return true;
 }
 
@@ -193,13 +185,11 @@ Pipeline::Status Pipeline::getStatus()
         std::lock_guard<std::mutex> guard(_queue_mutex);
         queue_empty = _add_queue.size() == 0;
     }
-    return queue_empty && std::all_of(_runners.begin(), _runners.end(),
-                                      [](const Runner &runner) -> bool { return runner.status == ThreadStatus::IDLE; })
-               ? Status::COMPLETE
-               : Status::PROCESSING;
+    return queue_empty && _runner.status == ThreadStatus::IDLE ? Status::COMPLETE : Status::PROCESSING;
 }
 
-const MeasurementGraph& Pipeline::getGraph(){
+const MeasurementGraph &Pipeline::getGraph()
+{
     return _graph;
 }
 } // namespace opencalibration

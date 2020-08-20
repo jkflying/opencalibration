@@ -57,7 +57,7 @@ class Pipeline
         ThreadStatus status{ThreadStatus::IDLE};
     };
 
-    std::vector<Runner> _runners;
+    Runner _runner;
 
     std::mutex _graph_structure_mutex;
     MeasurementGraph _graph;
