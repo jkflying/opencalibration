@@ -28,7 +28,7 @@ class Pipeline
         COMPLETE
     };
 
-    Pipeline(size_t threads = 1);
+    Pipeline(size_t batch_size = 1);
     ~Pipeline();
 
     Status getStatus();
@@ -39,7 +39,7 @@ class Pipeline
 
   private:
 
-    bool process_image(const std::string &filename);
+    bool process_images(const std::vector<std::string> &paths);
     std::condition_variable _queue_condition_variable;
     std::mutex _queue_mutex;
     std::deque<std::string> _add_queue;
