@@ -11,6 +11,14 @@
 
 using namespace std::chrono_literals;
 
+namespace
+{
+std::array<double, 3> to_array(const Eigen::Vector3d &v)
+{
+    return {v.x(), v.y(), v.z()};
+}
+} // namespace
+
 namespace opencalibration
 {
 Pipeline::Pipeline(size_t batch_size)
@@ -66,15 +74,40 @@ Pipeline::~Pipeline()
 
 void Pipeline::process_images(const std::vector<std::string> &paths)
 {
-    auto to_array = [](Eigen::Vector3d v) -> std::array<double, 3> { return {v.x(), v.y(), v.z()}; };
+    std::cout << "Loading paths: " << std::endl;
+    for (const auto &path : paths)
+        std::cout << path << std::endl;
+    std::cout << std::endl;
+    const std::vector<size_t> node_ids = build_nodes(paths);
+    std::cout << "Processing links: " << std::endl;
+    const std::vector<NodeLinks> links = find_links(node_ids);
+    for (const auto &link : links)
+    {
+        std::cout << "Node " << link.node_id << ":" << std::endl;
+        for (const auto &neighbor : link.link_ids)
+            std::cout << "    " << neighbor << std::endl;
+    }
+    process_links(links);
+    std::cout << std::endl;
 
+    // in serial to keep graph optimization deterministic
+    for (size_t node_id : node_ids)
+    {
+        initializeOrientation({node_id}, _graph);
+    }
+
+    // TODO:
+    // relaxSubset(node_ids, _graph, _graph_structure_mutex);
+}
+std::vector<size_t> Pipeline::build_nodes(const std::vector<std::string> &paths)
+{
     std::vector<size_t> node_ids;
     node_ids.reserve(paths.size());
 
 #pragma omp parallel for
     for (int i = 0; i < (int)paths.size(); i++)
     {
-        const std::string& path = paths[i];
+        const std::string &path = paths[i];
         image img;
         img.path = path;
         img.features = extract_features(img.path);
@@ -89,6 +122,9 @@ void Pipeline::process_images(const std::vector<std::string> &paths)
         img.model.pixels_rows = img.metadata.height_px;
         img.model.principle_point = Eigen::Vector2d(img.model.pixels_cols, img.model.pixels_rows) / 2;
 
+        std::cout << "camera model: dims: " << img.model.pixels_cols << "x" << img.model.pixels_rows
+                  << "  focal: " << img.model.focal_length_pixels << std::endl;
+
         std::lock_guard<std::mutex> graph_lock(_graph_structure_mutex);
         if (!_coordinate_system.isInitialized())
         {
@@ -102,37 +138,54 @@ void Pipeline::process_images(const std::vector<std::string> &paths)
         node_ids.push_back(node_id);
     }
 
-    // TODO: sort node_ids by the path, since they may be out of order now
-
+    std::lock_guard<std::mutex> graph_lock(_graph_structure_mutex);
+    // sort node_ids by the path, since they may be out of order now
     std::sort(node_ids.begin(), node_ids.end(), [this](size_t node_id_1, size_t node_id_2) -> int {
         const auto &path1 = _graph.getNode(node_id_1)->payload.path;
         const auto &path2 = _graph.getNode(node_id_2)->payload.path;
         return path1 < path2;
     });
 
-    // build nearest in serial, since it keeps graph structure deterministic
-    std::vector<std::pair<size_t, std::vector<size_t>>> batch_nearest;
+    return node_ids;
+}
+
+std::vector<Pipeline::NodeLinks> Pipeline::find_links(const std::vector<size_t> &node_ids)
+{
+    // build nearest in serial, since it is really fast
+    std::vector<NodeLinks> batch_nearest;
     batch_nearest.reserve(node_ids.size());
+
+    std::lock_guard<std::mutex> graph_lock(_graph_structure_mutex);
     for (size_t node_id : node_ids)
     {
         const auto &img = _graph.getNode(node_id)->payload;
-        std::vector<size_t> nearest;
+
         auto knn = _imageGPSLocations.searchKnn(to_array(img.position), 10);
-        nearest.reserve(knn.size());
+        NodeLinks link;
+        link.node_id = node_id;
+        link.link_ids.reserve(knn.size());
         for (const auto &nn : knn)
         {
-            nearest.push_back(nn.payload);
+            if (nn.payload != node_id)
+            {
+                link.link_ids.push_back(nn.payload);
+            }
         }
-        batch_nearest.emplace_back(node_id, std::move(nearest));
+        batch_nearest.emplace_back(std::move(link));
     }
+    return batch_nearest;
+}
+
+void Pipeline::process_links(const std::vector<NodeLinks> &links)
+{
 
 #pragma omp parallel for
-    for (int i = 0; i < (int)batch_nearest.size(); i++)
+    for (int i = 0; i < (int)links.size(); i++)
     {
-        const auto &node_nearest = batch_nearest[i];
-        size_t node_id = node_nearest.first;
+        const auto &node_nearest = links[i];
+        size_t node_id = node_nearest.node_id;
         const auto &img = _graph.getNode(node_id)->payload;
-        const auto &nearest = node_nearest.second;
+        const auto &nearest = node_nearest.link_ids;
 
         // match & distort
         std::vector<std::tuple<size_t, CameraModel, std::vector<feature_2d>>> nearest_descriptors;
@@ -168,9 +221,13 @@ void Pipeline::process_images(const std::vector<std::string> &paths)
             bool can_decompose =
                 h.decompose(correspondences, inliers, relations.relative_rotation, relations.relative_translation);
 
-            if (can_decompose)
+            size_t num_inliers = std::count(inliers.begin(), inliers.end(), true);
+
+            std::cout << "Matches: " << matches.size() << " inliers: " << num_inliers << " decompose: " << can_decompose
+                      << std::endl;
+            if (can_decompose && num_inliers > h.MINIMUM_POINTS * 2)
             {
-                relations.inlier_matches.reserve(std::count(inliers.begin(), inliers.end(), true));
+                relations.inlier_matches.reserve(num_inliers);
                 for (size_t i = 0; i < inliers.size(); i++)
                 {
                     if (inliers[i])
@@ -186,20 +243,12 @@ void Pipeline::process_images(const std::vector<std::string> &paths)
         }
 
         std::lock_guard<std::mutex> graph_lock(_graph_structure_mutex);
+        std::cout << "Adding " << inlier_measurements.size() << " edges to node " << node_id << std::endl;
         for (auto &node_measurements : inlier_measurements)
         {
             _graph.addEdge(std::move(node_measurements.second), node_id, node_measurements.first);
         }
     }
-
-    // in serial to keep graph optimization deterministic
-    for (size_t node_id : node_ids)
-    {
-        initializeOrientation({node_id}, _graph);
-    }
-
-    // TODO:
-    // relaxSubset(node_ids, _graph);
 }
 
 void Pipeline::add(const std::vector<std::string> &paths)

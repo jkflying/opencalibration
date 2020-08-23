@@ -33,5 +33,5 @@ int main(int argc, char *argv[])
 
     std::string out = serialize(p.getGraph());
 
-    std::cout << out << std::endl;
+//     std::cout << out << std::endl;
 }

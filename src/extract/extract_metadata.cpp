@@ -89,6 +89,19 @@ image_metadata extract_metadata(const std::string &path)
 
         res.focal_length_px = imageEXIF.LensInfo.FocalLengthIn35mm / 43.27 * std::hypot(res.width_px, res.height_px);
     }
+    else if (imageEXIF.FocalLength > 0 && imageEXIF.LensInfo.FocalPlaneXResolution > 0)
+    {
+        /*
+         * Use sensor and lens physical size to determine focal length in pixels
+         */
+        double scale = 25.4;
+        if(imageEXIF.LensInfo.FocalPlaneResolutionUnit == 3)
+        {
+            scale = 10;
+        }
+        double pixel_size_mm = scale / imageEXIF.LensInfo.FocalPlaneXResolution;
+        res.focal_length_px = imageEXIF.FocalLength / pixel_size_mm;
+    }
     if (imageEXIF.Calibration.OpticalCenterX > 0 && imageEXIF.Calibration.OpticalCenterY > 0)
     {
         res.principal_point_px =
