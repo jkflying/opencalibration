@@ -96,10 +96,8 @@ void relaxSubset(const std::vector<size_t> &node_ids, MeasurementGraph &graph, s
                 if (node2 == nullptr)
                     continue;
 
-                bool added = false;
                 for (const auto &match : edge->payload.inlier_matches)
                 {
-                    added = true;
                     problem.AddResidualBlock(new ceres::AutoDiffCostFunction<RayIntersectionAngleError, 3, 4, 4>(
                                                  new RayIntersectionAngleError(match, node1->payload, node2->payload)),
                                              nullptr, &(node1->payload.orientation.coeffs()[0]),

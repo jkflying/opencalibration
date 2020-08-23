@@ -20,6 +20,14 @@ include_directories(${GDAL_INCLUDE_DIRS})
 find_package(RapidJSON 1.1 REQUIRED)
 include_directories(${RAPIDJSON_INCLUDE_DIRS})
 
+find_package(OpenMP REQUIRED)
+
+if(MSVC)
+    set (CMAKE_CXX_FLAGS " /W4 /WX")
+else()
+    set (CMAKE_CXX_FLAGS " -Wall -Wextra -pedantic -Werror")
+endif()
+
 include_directories(include)
 
 add_subdirectory(src)

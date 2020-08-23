@@ -610,8 +610,15 @@ void XMLUtil::ToStr( uint64_t v, char* buffer, int bufferSize )
 
 bool XMLUtil::ToInt(const char* str, int* value)
 {
-    if (TIXML_SSCANF(str, IsPrefixHex(str) ? "%x" : "%d", value) == 1) {
-        return true;
+    if (IsPrefixHex(str)) {
+        if (TIXML_SSCANF(str,  "%x", (unsigned int*)value) == 1) {
+            return true;
+        }
+    }
+    else {
+        if (TIXML_SSCANF(str, "%d", value) == 1) {
+            return true;
+        }
     }
     return false;
 }
@@ -670,12 +677,20 @@ bool XMLUtil::ToDouble( const char* str, double* value )
 
 bool XMLUtil::ToInt64(const char* str, int64_t* value)
 {
-	long long v = 0;	// horrible syntax trick to make the compiler happy about %lld
-	if (TIXML_SSCANF(str, IsPrefixHex(str) ? "%llx" : "%lld", &v) == 1) {
-		*value = static_cast<int64_t>(v);
-		return true;
-	}
-	return false;
+    long long v = 0;	// horrible syntax trick to make the compiler happy about %lld
+    if (IsPrefixHex(str)){
+        if (TIXML_SSCANF(str, "%llx", (unsigned long long*)&v) == 1) {
+            *value = static_cast<int64_t>(v);
+            return true;
+        }
+    }
+    else {
+        if (TIXML_SSCANF(str, "%lld", &v) == 1) {
+            *value = static_cast<int64_t>(v);
+            return true;
+        }
+    }
+    return false;
 }
 
 
@@ -1070,10 +1085,10 @@ char* XMLNode::ParseDeep( char* p, StrPair* parentEndTag, int* curLineNumPtr )
             // Declarations are only allowed at document level
             //
             // Multiple declarations are allowed but all declarations
-            // must occur before anything else. 
+            // must occur before anything else.
             //
-            // Optimized due to a security test case. If the first node is 
-            // a declaration, and the last node is a declaration, then only 
+            // Optimized due to a security test case. If the first node is
+            // a declaration, and the last node is a declaration, then only
             // declarations have so far been added.
             bool wellLocated = false;
 

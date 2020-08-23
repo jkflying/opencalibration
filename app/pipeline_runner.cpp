@@ -4,7 +4,6 @@
 
 #include <filesystem>
 #include <thread>
-
 #include <iostream>
 
 using namespace opencalibration;
@@ -12,7 +11,7 @@ using namespace std::chrono_literals;
 
 int main(int argc, char *argv[])
 {
-    Pipeline p(1);
+    Pipeline p(4);
     std::vector<std::string> files;
 
     if (argc > 1)
@@ -24,7 +23,7 @@ int main(int argc, char *argv[])
         }
     }
 
-    std::random_shuffle(files.begin(), files.end());
+    std::sort(files.begin(), files.end());
     p.add(files);
 
     while (p.getStatus() != Pipeline::Status::COMPLETE)

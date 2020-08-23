@@ -185,10 +185,10 @@ double ransac(const std::vector<correspondence> &matches, Model &model, std::vec
 
     auto random_k_from_n = [&generator](int n) {
         std::array<size_t, Model::MINIMUM_POINTS> indices;
-        std::uniform_int_distribution<int> distribution(0, n-1);
+        std::uniform_int_distribution<size_t> distribution(0, n-1);
         for (size_t j = 0; j < Model::MINIMUM_POINTS; j++)
         {
-            int candidate = distribution(generator);
+            size_t candidate = distribution(generator);
             bool unique = true;
             for (size_t k = 0; k < j; k++)
             {
@@ -210,7 +210,7 @@ double ransac(const std::vector<correspondence> &matches, Model &model, std::vec
         return indices;
     };
 
-    int probability_iterations = MAX_ITERATIONS;
+    size_t probability_iterations = MAX_ITERATIONS;
 
     for (size_t i = 0; i < probability_iterations; i++)
     {

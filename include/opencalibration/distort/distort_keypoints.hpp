@@ -29,6 +29,9 @@ Eigen::Matrix<T, 2, 1> image_from_3d(const Eigen::Matrix<T, 3, 1> &ray, const Di
         pixel_location = on_plane * model.focal_length_pixels + model.principle_point;
         break;
     }
+    case DifferentiableCameraModel<T>::ProjectionType::UNKNOWN:
+        pixel_location.fill(NAN);
+        break;
     }
     return pixel_location;
 }

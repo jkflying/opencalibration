@@ -39,7 +39,7 @@ class Pipeline
 
   private:
 
-    bool process_images(const std::vector<std::string> &paths);
+    void process_images(const std::vector<std::string> &paths);
     std::condition_variable _queue_condition_variable;
     std::mutex _queue_mutex;
     std::deque<std::string> _add_queue;
@@ -62,7 +62,6 @@ class Pipeline
     std::mutex _graph_structure_mutex;
     MeasurementGraph _graph;
 
-    std::mutex _kdtree_mutex;
     jk::tree::KDTree<size_t, 3> _imageGPSLocations;
     GeoCoord _coordinate_system;
 
