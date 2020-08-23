@@ -28,34 +28,34 @@ bool GeoCoord::setOrigin(double latitude, double longitude)
                                          SRS_WGS84_SEMIMAJOR, SRS_WGS84_INVFLATTENING, "Greenwich", 0.0);
 
     std::ostringstream dest_wkt_stream;
-    dest_wkt_stream << "PROJCS[\"Custom Transverse Mercator\","
-                       "    GEOGCS[\"WGS 84\","
-                       "        DATUM[\"WGS_1984\","
-                       "            SPHEROID[\"WGS 84\",6378137,298.257223563,"
-                       "                AUTHORITY[\"EPSG\",\"7030\"]],"
-                       "            AUTHORITY[\"EPSG\",\"6326\"]],"
-                       "        PRIMEM[\"Greenwich\",0,"
-                       "            AUTHORITY[\"EPSG\",\"8901\"]],"
-                       "        UNIT[\"degree\",0.0174532925199433,"
-                       "            AUTHORITY[\"EPSG\",\"9122\"]],"
-                       "        AUTHORITY[\"EPSG\",\"4326\"]],"
-                       "    PROJECTION[\"Transverse_Mercator\"],"
-                       "    PARAMETER[\"latitude_of_origin\","
+    dest_wkt_stream << "PROJCS[\"Custom Transverse Mercator\",\n"
+                       "    GEOGCS[\"WGS 84\",\n"
+                       "        DATUM[\"WGS_1984\",\n"
+                       "            SPHEROID[\"WGS 84\",6378137,298.257223563,\n"
+                       "                AUTHORITY[\"EPSG\",\"7030\"]],\n"
+                       "            AUTHORITY[\"EPSG\",\"6326\"]],\n"
+                       "        PRIMEM[\"Greenwich\",0,\n"
+                       "            AUTHORITY[\"EPSG\",\"8901\"]],\n"
+                       "        UNIT[\"degree\",0.0174532925199433,\n"
+                       "            AUTHORITY[\"EPSG\",\"9122\"]],\n"
+                       "        AUTHORITY[\"EPSG\",\"4326\"]],\n"
+                       "    PROJECTION[\"Transverse_Mercator\"],\n"
+                       "    PARAMETER[\"latitude_of_origin\",\n"
                     << latitude
-                    << "],"
-                       "    PARAMETER[\"central_meridian\","
+                    << "],\n"
+                       "    PARAMETER[\"central_meridian\",\n"
                     << longitude
-                    << "],"
-                       "    PARAMETER[\"scale_factor\",1],"
-                       "    PARAMETER[\"false_easting\",0],"
-                       "    PARAMETER[\"false_northing\",0],"
-                       "    UNIT[\"metre\",1,"
-                       "        AUTHORITY[\"EPSG\",\"9001\"]],"
-                       "    AXIS[\"Easting\",EAST],"
+                    << "],\n"
+                       "    PARAMETER[\"scale_factor\",1],\n"
+                       "    PARAMETER[\"false_easting\",0],\n"
+                       "    PARAMETER[\"false_northing\",0],\n"
+                       "    UNIT[\"metre\",1,\n"
+                       "        AUTHORITY[\"EPSG\",\"9001\"]],\n"
+                       "    AXIS[\"Easting\",EAST],\n"
                        "    AXIS[\"Northing\",NORTH]]";
 
     std::string dest_wkt_str = dest_wkt_stream.str();
-    spdlog::info("Dest WKT: {}", dest_wkt_str);
+    spdlog::info("Dest WKT:  \n{}", dest_wkt_str);
 
     const OGRErr errD = dest.importFromWkt(dest_wkt_str.c_str());
     if (errS == OGRERR_NONE && errD == OGRERR_NONE)
@@ -74,10 +74,10 @@ bool GeoCoord::setOrigin(double latitude, double longitude)
 Eigen::Vector3d GeoCoord::toLocalCS(double latitude, double longitude, double altitude)
 {
     Eigen::Vector3d res{latitude, longitude, altitude};
-    int success = 0;
+    bool success = false;
     if (_transform != nullptr)
     {
-        success = _transform->Transform(1, &res[0], &res[1], &res[2]);
+        success = TRUE == _transform->Transform(1, &res[0], &res[1], &res[2]);
     }
     if (success)
     {
@@ -86,7 +86,7 @@ Eigen::Vector3d GeoCoord::toLocalCS(double latitude, double longitude, double al
     }
     else
     {
-        spdlog::warn("unable to transform global coord {},{},{} to local {}, {}, {}", latitude, longitude, altitude,
+        spdlog::warn("unable to transform global coord {},{},{} to local {},{},{}", latitude, longitude, altitude,
                      res.x(), res.y(), res.z());
         res = Eigen::Vector3d(NAN, NAN, NAN);
     }
@@ -95,13 +95,16 @@ Eigen::Vector3d GeoCoord::toLocalCS(double latitude, double longitude, double al
 
 std::string GeoCoord::getWKT()
 {
-    std::string res;
+    std::string res = "UNKNOWN";
 
     if (_transform != nullptr)
     {
         char *str;
-        _transform->GetTargetCS()->exportToPrettyWkt(&str);
-        res = std::string(str);
+        OGRErr err = _transform->GetTargetCS()->exportToPrettyWkt(&str);
+        if (err == OGRERR_NONE)
+        {
+            res = std::string(str);
+        }
         CPLFree(str);
     }
 
