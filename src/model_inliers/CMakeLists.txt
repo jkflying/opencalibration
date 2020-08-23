@@ -1,2 +1,2 @@
 add_library(oc_model_inliers ransac.cpp)
-target_link_libraries(oc_model_inliers PRIVATE opencv_calib3d)
+target_link_libraries(oc_model_inliers PUBLIC opencv_calib3d)

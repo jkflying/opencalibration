@@ -14,8 +14,6 @@
 #include <thread>
 #include <vector>
 
-class OGRCoordinateTransformation;
-
 namespace opencalibration
 {
 

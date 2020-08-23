@@ -1,6 +1,7 @@
 #include <opencalibration/extract/extract_metadata.hpp>
 
 #include <gtest/gtest.h>
+#include <spdlog/spdlog.h>
 
 #include <opencv2/opencv.hpp>
 
@@ -13,12 +14,6 @@ TEST(extract_metadata, gives_exif)
     // WHEN: we extract the features
     image_metadata d = opencalibration::extract_metadata(path);
 
-    std::cout << d.width_px << " " << d.height_px << " " << d.focal_length_px << " " << d.principal_point_px.transpose()
-              << "\n"
-              << d.latitude << " " << d.longitude << " " << d.altitude << " " << d.relativeAltitude << "\n"
-              << d.rollDegree << " " << d.pitchDegree << " " << d.yawDegree << "\n"
-              << d.accuracyXY << " " << d.accuracyZ << "\n"
-              << d.datum << " " << d.timestamp << " " << d.datestamp << std::endl;
     // THEN: it should be these values for the file specified:
     EXPECT_EQ(d.width_px, 5344);
     EXPECT_EQ(d.height_px, 4016);

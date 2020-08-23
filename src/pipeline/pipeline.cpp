@@ -6,6 +6,8 @@
 #include <opencalibration/match/match_features.hpp>
 #include <opencalibration/model_inliers/ransac.hpp>
 
+#include <spdlog/spdlog.h>
+
 #include <chrono>
 #include <iostream>
 
@@ -74,21 +76,21 @@ Pipeline::~Pipeline()
 
 void Pipeline::process_images(const std::vector<std::string> &paths)
 {
-    std::cout << "Loading paths: " << std::endl;
+    spdlog::info("Loading batch of {}", paths.size());
     for (const auto &path : paths)
-        std::cout << path << std::endl;
-    std::cout << std::endl;
+        spdlog::debug(path);
+
     const std::vector<size_t> node_ids = build_nodes(paths);
-    std::cout << "Processing links: " << std::endl;
+    spdlog::info("Building links");
     const std::vector<NodeLinks> links = find_links(node_ids);
     for (const auto &link : links)
     {
-        std::cout << "Node " << link.node_id << ":" << std::endl;
-        for (const auto &neighbor : link.link_ids)
-            std::cout << "    " << neighbor << std::endl;
+        spdlog::debug("Node: {}", link.node_id);
+        spdlog::debug("Links to:");
+        for (size_t neighbor : link.link_ids)
+            spdlog::debug("{:>30}", neighbor);
     }
     process_links(links);
-    std::cout << std::endl;
 
     // in serial to keep graph optimization deterministic
     for (size_t node_id : node_ids)
@@ -122,8 +124,8 @@ std::vector<size_t> Pipeline::build_nodes(const std::vector<std::string> &paths)
         img.model.pixels_rows = img.metadata.height_px;
         img.model.principle_point = Eigen::Vector2d(img.model.pixels_cols, img.model.pixels_rows) / 2;
 
-        std::cout << "camera model: dims: " << img.model.pixels_cols << "x" << img.model.pixels_rows
-                  << "  focal: " << img.model.focal_length_pixels << std::endl;
+        spdlog::debug("camera model: dims: {}x{} focal: {}", img.model.pixels_cols, img.model.pixels_rows,
+                      img.model.focal_length_pixels);
 
         std::lock_guard<std::mutex> graph_lock(_graph_structure_mutex);
         if (!_coordinate_system.isInitialized())
@@ -223,8 +225,7 @@ void Pipeline::process_links(const std::vector<NodeLinks> &links)
 
             size_t num_inliers = std::count(inliers.begin(), inliers.end(), true);
 
-            std::cout << "Matches: " << matches.size() << " inliers: " << num_inliers << " decompose: " << can_decompose
-                      << std::endl;
+            spdlog::debug("Matches: {}  inliers: {}  can_decompose: {}", matches.size(), num_inliers, can_decompose);
             if (can_decompose && num_inliers > h.MINIMUM_POINTS * 2)
             {
                 relations.inlier_matches.reserve(num_inliers);
@@ -243,7 +244,7 @@ void Pipeline::process_links(const std::vector<NodeLinks> &links)
         }
 
         std::lock_guard<std::mutex> graph_lock(_graph_structure_mutex);
-        std::cout << "Adding " << inlier_measurements.size() << " edges to node " << node_id << std::endl;
+        spdlog::debug("Adding {} edges to node {}", inlier_measurements.size(), node_id);
         for (auto &node_measurements : inlier_measurements)
         {
             _graph.addEdge(std::move(node_measurements.second), node_id, node_measurements.first);

@@ -21,6 +21,7 @@ find_package(RapidJSON 1.1 REQUIRED)
 include_directories(${RAPIDJSON_INCLUDE_DIRS})
 
 find_package(OpenMP REQUIRED)
+find_package(spdlog REQUIRED)
 
 if(MSVC)
     set (CMAKE_CXX_FLAGS " /W4 /WX")

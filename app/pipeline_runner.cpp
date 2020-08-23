@@ -2,6 +2,8 @@
 
 #include <opencalibration/io/serialize.hpp>
 
+#include <spdlog/spdlog.h>
+
 #include <filesystem>
 #include <thread>
 #include <iostream>
@@ -11,6 +13,7 @@ using namespace std::chrono_literals;
 
 int main(int argc, char *argv[])
 {
+    spdlog::set_level(spdlog::level::debug);
     Pipeline p(4);
     std::vector<std::string> files;
 
