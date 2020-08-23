@@ -9,7 +9,7 @@ TEST(geo_coord, instantiates)
     GeoCoord g;
 }
 
-TEST(geo_coord, intializes)
+TEST(geo_coord, works)
 {
     // GIVEN: an empty GeoCoord
     GeoCoord g;
@@ -24,7 +24,8 @@ TEST(geo_coord, intializes)
     EXPECT_TRUE(g.isInitialized());
 
     // AND: the origin should translate to zero
-    EXPECT_EQ(g.toLocalCS(-34, 18.23, 0), Eigen::Vector3d::Zero().eval()) << g.toLocalCS(-34, 18.23, 0).transpose();
+    Eigen::Vector3d local = g.toLocalCS(-34, 18.23, 0);
+    EXPECT_EQ(local, Eigen::Vector3d::Zero().eval()) << local.transpose();
 
     std::string WKT = "PROJCS[\"Custom Transverse Mercator\",\n"
                       "    GEOGCS[\"WGS 84\",\n"

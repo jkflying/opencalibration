@@ -19,13 +19,13 @@ bool GeoCoord::isInitialized()
     return _transform != nullptr;
 }
 
-void GeoCoord::setOrigin(double latitude, double longitude)
+bool GeoCoord::setOrigin(double latitude, double longitude)
 {
     _transform.reset();
 
     OGRSpatialReference source, dest;
     const OGRErr errS = source.SetGeogCS("Standard WGS84", "World Geodetic System 1984", "WGS84 Spheroid",
-                                   SRS_WGS84_SEMIMAJOR, SRS_WGS84_INVFLATTENING, "Greenwich", 0.0);
+                                         SRS_WGS84_SEMIMAJOR, SRS_WGS84_INVFLATTENING, "Greenwich", 0.0);
 
     std::ostringstream dest_wkt_stream;
     dest_wkt_stream << "PROJCS[\"Custom Transverse Mercator\","
@@ -67,14 +67,28 @@ void GeoCoord::setOrigin(double latitude, double longitude)
     {
         spdlog::error("Unabled to generate transform: errS {}  errD {}", errS, errD);
     }
+
+    return _transform != nullptr;
 }
 
 Eigen::Vector3d GeoCoord::toLocalCS(double latitude, double longitude, double altitude)
 {
     Eigen::Vector3d res{latitude, longitude, altitude};
+    int success = 0;
     if (_transform != nullptr)
     {
-        _transform->Transform(1, &res.x(), &res.y(), &res.z());
+        success = _transform->Transform(1, &res[0], &res[1], &res[2]);
+    }
+    if (success)
+    {
+        spdlog::debug("transformed global coordinate {},{},{} to local {}, {}, {}", latitude, longitude, altitude,
+                      res.x(), res.y(), res.z());
+    }
+    else
+    {
+        spdlog::warn("unable to transform global coord {},{},{} to local {}, {}, {}", latitude, longitude, altitude,
+                     res.x(), res.y(), res.z());
+        res = Eigen::Vector3d(NAN, NAN, NAN);
     }
     return res;
 }

@@ -18,7 +18,7 @@ class GeoCoord
 
     bool isInitialized();
 
-    void setOrigin(double latitude, double longitude);
+    bool setOrigin(double latitude, double longitude);
 
     Eigen::Vector3d toLocalCS(double latitude, double longitude, double altitude);
 
