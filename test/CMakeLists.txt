@@ -27,7 +27,8 @@ target_compile_definitions(functional_tests PUBLIC TEST_DATA_DIR=\"${CMAKE_CURRE
 add_executable(unit_tests gtest_main.cpp
                           test_ransac_unit.cpp
                           test_geo_coord.cpp
-                          test_graph.cpp)
+                          test_graph.cpp
+                          test_tree.cpp)
 
 target_link_libraries(unit_tests PUBLIC gtest pthread oc_model_inliers oc_geo_coord)
 
