@@ -40,10 +40,10 @@ bool GeoCoord::setOrigin(double latitude, double longitude)
                        "            AUTHORITY[\"EPSG\",\"9122\"]],\n"
                        "        AUTHORITY[\"EPSG\",\"4326\"]],\n"
                        "    PROJECTION[\"Transverse_Mercator\"],\n"
-                       "    PARAMETER[\"latitude_of_origin\",\n"
+                       "    PARAMETER[\"latitude_of_origin\","
                     << latitude
                     << "],\n"
-                       "    PARAMETER[\"central_meridian\",\n"
+                       "    PARAMETER[\"central_meridian\","
                     << longitude
                     << "],\n"
                        "    PARAMETER[\"scale_factor\",1],\n"
@@ -53,6 +53,12 @@ bool GeoCoord::setOrigin(double latitude, double longitude)
                        "        AUTHORITY[\"EPSG\",\"9001\"]],\n"
                        "    AXIS[\"Easting\",EAST],\n"
                        "    AXIS[\"Northing\",NORTH]]";
+
+    // necessary for GDAL 2.4 *and* 3.0+ compatibility
+#if (GDAL_VERSION_MAJOR >= 3)
+    source.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+    dest.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+#endif
 
     std::string dest_wkt_str = dest_wkt_stream.str();
     spdlog::info("Dest WKT:  \n{}", dest_wkt_str);
@@ -73,7 +79,7 @@ bool GeoCoord::setOrigin(double latitude, double longitude)
 
 Eigen::Vector3d GeoCoord::toLocalCS(double latitude, double longitude, double altitude)
 {
-    Eigen::Vector3d res{latitude, longitude, altitude};
+    Eigen::Vector3d res{longitude, latitude, altitude};
     bool success = false;
     if (_transform != nullptr)
     {

@@ -25,7 +25,7 @@ TEST(geo_coord, works)
 
     // AND: the origin should translate to zero
     Eigen::Vector3d local = g.toLocalCS(-34, 18.23, 0);
-    EXPECT_EQ(local, Eigen::Vector3d::Zero().eval()) << local.transpose();
+    EXPECT_LT(local.norm(), 1e-9) << local.transpose();
 
     std::string WKT = "PROJCS[\"Custom Transverse Mercator\",\n"
                       "    GEOGCS[\"WGS 84\",\n"
