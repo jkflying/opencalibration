@@ -1,6 +1,7 @@
 #include <opencalibration/geo_coord/geo_coord.hpp>
 
 #include <gdal/ogr_spatialref.h>
+#include <spdlog/spdlog.h>
 
 #include <sstream>
 
@@ -15,14 +16,16 @@ GeoCoord::GeoCoord()
 
 bool GeoCoord::isInitialized()
 {
-        return _transform != nullptr;
+    return _transform != nullptr;
 }
 
 void GeoCoord::setOrigin(double latitude, double longitude)
 {
+    _transform.reset();
+
     OGRSpatialReference source, dest;
-    source.SetGeogCS("Standard WGS84", "World Geodetic System 1984", "WGS84 Spheroid", SRS_WGS84_SEMIMAJOR,
-                     SRS_WGS84_INVFLATTENING, "Greenwich", 0.0);
+    const OGRErr errS = source.SetGeogCS("Standard WGS84", "World Geodetic System 1984", "WGS84 Spheroid",
+                                   SRS_WGS84_SEMIMAJOR, SRS_WGS84_INVFLATTENING, "Greenwich", 0.0);
 
     std::ostringstream dest_wkt_stream;
     dest_wkt_stream << "PROJCS[\"Custom Transverse Mercator\","
@@ -51,8 +54,19 @@ void GeoCoord::setOrigin(double latitude, double longitude)
                        "    AXIS[\"Easting\",EAST],"
                        "    AXIS[\"Northing\",NORTH]]";
 
-    dest.importFromWkt(dest_wkt_stream.str().c_str());
-    _transform.reset(OGRCreateCoordinateTransformation(&source, &dest));
+    std::string dest_wkt_str = dest_wkt_stream.str();
+    spdlog::info("Dest WKT: {}", dest_wkt_str);
+
+    const OGRErr errD = dest.importFromWkt(dest_wkt_str.c_str());
+    if (errS == OGRERR_NONE && errD == OGRERR_NONE)
+    {
+        _transform.reset(OGRCreateCoordinateTransformation(&source, &dest));
+    }
+
+    if (_transform == nullptr)
+    {
+        spdlog::error("Unabled to generate transform: errS {}  errD {}", errS, errD);
+    }
 }
 
 Eigen::Vector3d GeoCoord::toLocalCS(double latitude, double longitude, double altitude)
@@ -72,7 +86,7 @@ std::string GeoCoord::getWKT()
     if (_transform != nullptr)
     {
         char *str;
-          _transform->GetTargetCS()->exportToPrettyWkt(&str);
+        _transform->GetTargetCS()->exportToPrettyWkt(&str);
         res = std::string(str);
         CPLFree(str);
     }
