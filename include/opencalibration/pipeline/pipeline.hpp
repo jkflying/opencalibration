@@ -35,6 +35,8 @@ class Pipeline
 
     const MeasurementGraph& getGraph(); // warning - not threadsafe
 
+    const GeoCoord& getCoord() const { return _coordinate_system; }
+
   private:
 
     void process_images(const std::vector<std::string> &paths);

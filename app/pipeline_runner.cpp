@@ -13,7 +13,7 @@ using namespace std::chrono_literals;
 
 int main(int argc, char *argv[])
 {
-    spdlog::set_level(spdlog::level::debug);
+    spdlog::set_level(spdlog::level::critical);
     Pipeline p(4);
     std::vector<std::string> files;
 
@@ -34,7 +34,8 @@ int main(int argc, char *argv[])
         std::this_thread::sleep_for(1ms);
     }
 
-    std::string out = serialize(p.getGraph());
+    auto to_wgs84 = [&p](const Eigen::Vector3d& local) { return p.getCoord().toWGS84(local); };
+    std::string out = toVisualizedGeoJson(p.getGraph(), to_wgs84);
 
-//     std::cout << out << std::endl;
+    std::cout << out << std::endl;
 }

@@ -26,6 +26,143 @@ namespace opencalibration
 template <> class Serializer<MeasurementGraph>
 {
   public:
+    static std::string visualizeGeoJson(const MeasurementGraph &graph,
+                                        std::function<Eigen::Vector3d(const Eigen::Vector3d &)> toGlobalCoordinates)
+    {
+        rapidjson::StringBuffer buffer;
+
+        rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(buffer);
+
+        writer.SetFormatOptions(rapidjson::PrettyFormatOptions::kFormatSingleLineArray);
+        writer.StartObject();
+        writer.Key("type");
+        writer.String("FeatureCollection");
+
+        writer.Key("features");
+        writer.StartArray();
+
+        // sort nodes by id to make repeatable with unordered map
+        std::vector<size_t> node_ids;
+        node_ids.reserve(graph._nodes.size());
+        for (const auto &kv : graph._nodes)
+        {
+            node_ids.push_back(kv.first);
+        }
+        std::sort(node_ids.begin(), node_ids.end());
+        for (size_t node_id : node_ids)
+        {
+            writer.StartObject();
+            writer.Key("type");
+            writer.String("Feature");
+            std::string node_id_str = std::to_string(node_id);
+            const auto &node = graph._nodes.find(node_id)->second;
+
+            writer.Key("geometry");
+            writer.StartObject();
+            {
+                writer.Key("type");
+                writer.String("Point");
+                writer.Key("coordinates");
+                writer.StartArray();
+                Eigen::Vector3d wgs84 = toGlobalCoordinates(node.payload.position);
+                for (int i = 0; i < 3; i++)
+                {
+                    writer.Double(wgs84[i]);
+                }
+                writer.EndArray();
+            }
+            writer.EndObject();
+
+            writer.Key("properties");
+            writer.StartObject();
+            {
+                writer.Key("path");
+                writer.String(node.payload.path.c_str());
+                writer.Key("id");
+                writer.String(node_id_str.c_str(), node_id_str.size());
+            }
+            writer.EndObject();
+
+            writer.EndObject();
+        }
+
+        // sort edges by id to make repeatable with unordered map
+        std::vector<size_t> edge_ids;
+        edge_ids.reserve(graph._edges.size());
+        for (const auto &kv : graph._edges)
+        {
+            edge_ids.push_back(kv.first);
+        }
+        std::sort(edge_ids.begin(), edge_ids.end());
+        for (size_t edge_id : edge_ids)
+        {
+            std::string edge_id_str = std::to_string(edge_id);
+            const auto &edge = graph._edges.find(edge_id)->second;
+
+            writer.StartObject();
+            writer.Key("type");
+            writer.String("Feature");
+
+            writer.Key("geometry");
+            writer.StartObject();
+            {
+                writer.Key("type");
+                writer.String("LineString");
+                writer.Key("coordinates");
+                writer.StartArray();
+
+                Eigen::Vector3d source_wgs84 =
+                    toGlobalCoordinates(graph._nodes.find(edge.getSource())->second.payload.position);
+                writer.StartArray();
+                for (int i = 0; i < 3; i++)
+                {
+                    writer.Double(source_wgs84[i]);
+                }
+                writer.EndArray();
+
+                Eigen::Vector3d dest_wgs84 =
+                    toGlobalCoordinates(graph._nodes.find(edge.getDest())->second.payload.position);
+                writer.StartArray();
+                for (int i = 0; i < 3; i++)
+                {
+                    writer.Double(dest_wgs84[i]);
+                }
+                writer.EndArray();
+
+                writer.EndArray();
+            }
+
+            writer.EndObject();
+
+            writer.Key("properties");
+            writer.StartObject();
+            {
+                writer.Key("id");
+                writer.String(edge_id_str.c_str(), edge_id_str.size());
+
+                writer.Key("source_id");
+                std::string source_id = std::to_string(edge.getSource());
+                writer.String(source_id.c_str(), source_id.size());
+
+                writer.Key("dest_id");
+                std::string dest_id = std::to_string(edge.getDest());
+                writer.String(dest_id.c_str(), dest_id.size());
+
+                writer.Key("inliers");
+                writer.Int64(edge.payload.inlier_matches.size());
+            }
+            writer.EndObject();
+
+            writer.EndObject();
+        }
+
+        writer.EndArray();
+
+        writer.EndObject();
+
+        return buffer.GetString();
+    }
+
     static std::string to_json(const MeasurementGraph &graph)
     {
         rapidjson::StringBuffer buffer;
@@ -313,5 +450,11 @@ template <> class Serializer<MeasurementGraph>
 std::string serialize(const MeasurementGraph &graph)
 {
     return Serializer<MeasurementGraph>::to_json(graph);
+}
+
+std::string toVisualizedGeoJson(const MeasurementGraph &graph,
+                                std::function<Eigen::Vector3d(const Eigen::Vector3d &)> toGlobalCoordinates)
+{
+    return Serializer<MeasurementGraph>::visualizeGeoJson(graph, toGlobalCoordinates);
 }
 } // namespace opencalibration

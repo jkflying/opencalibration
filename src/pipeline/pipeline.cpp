@@ -92,11 +92,8 @@ void Pipeline::process_images(const std::vector<std::string> &paths)
     }
     process_links(links);
 
-    // in serial to keep graph optimization deterministic
-    for (size_t node_id : node_ids)
-    {
-        initializeOrientation({node_id}, _graph);
-    }
+    initializeOrientation(node_ids, _graph);
+
 
     // TODO:
     // relaxSubset(node_ids, _graph, _graph_structure_mutex);
@@ -226,7 +223,7 @@ void Pipeline::process_links(const std::vector<NodeLinks> &links)
             size_t num_inliers = std::count(inliers.begin(), inliers.end(), true);
 
             spdlog::debug("Matches: {}  inliers: {}  can_decompose: {}", matches.size(), num_inliers, can_decompose);
-            if (can_decompose && num_inliers > h.MINIMUM_POINTS * 2)
+            if (can_decompose && num_inliers > h.MINIMUM_POINTS * 1.5)
             {
                 relations.inlier_matches.reserve(num_inliers);
                 for (size_t i = 0; i < inliers.size(); i++)

@@ -14,14 +14,14 @@ GeoCoord::GeoCoord()
 {
 }
 
-bool GeoCoord::isInitialized()
+bool GeoCoord::isInitialized() const
 {
-    return _transform != nullptr;
+    return _to_local != nullptr && _to_wgs84 != nullptr;
 }
 
 bool GeoCoord::setOrigin(double latitude, double longitude)
 {
-    _transform.reset();
+    _to_local.reset();
 
     OGRSpatialReference source, dest;
     const OGRErr errS = source.SetGeogCS("Standard WGS84", "World Geodetic System 1984", "WGS84 Spheroid",
@@ -66,28 +66,29 @@ bool GeoCoord::setOrigin(double latitude, double longitude)
     const OGRErr errD = dest.importFromWkt(dest_wkt_str.c_str());
     if (errS == OGRERR_NONE && errD == OGRERR_NONE)
     {
-        _transform.reset(OGRCreateCoordinateTransformation(&source, &dest));
+        _to_local.reset(OGRCreateCoordinateTransformation(&source, &dest));
+        _to_wgs84.reset(OGRCreateCoordinateTransformation(&dest, &source));
     }
 
-    if (_transform == nullptr)
+    if (_to_local == nullptr || _to_wgs84 == nullptr)
     {
         spdlog::error("Unabled to generate transform: errS {}  errD {}", errS, errD);
     }
 
-    return _transform != nullptr;
+    return isInitialized();
 }
 
-Eigen::Vector3d GeoCoord::toLocalCS(double latitude, double longitude, double altitude)
+Eigen::Vector3d GeoCoord::toLocalCS(double latitude, double longitude, double altitude) const
 {
     Eigen::Vector3d res{longitude, latitude, altitude};
     bool success = false;
-    if (_transform != nullptr)
+    if (_to_local != nullptr)
     {
-        success = TRUE == _transform->Transform(1, &res[0], &res[1], &res[2]);
+        success = TRUE == _to_local->Transform(1, &res[0], &res[1], &res[2]);
     }
     if (success)
     {
-        spdlog::debug("transformed global coordinate {},{},{} to local {}, {}, {}", latitude, longitude, altitude,
+        spdlog::debug("transformed global coordinate {},{},{} to local {},{},{}", latitude, longitude, altitude,
                       res.x(), res.y(), res.z());
     }
     else
@@ -99,14 +100,36 @@ Eigen::Vector3d GeoCoord::toLocalCS(double latitude, double longitude, double al
     return res;
 }
 
-std::string GeoCoord::getWKT()
+Eigen::Vector3d GeoCoord::toWGS84(const Eigen::Vector3d &local) const
+{
+    Eigen::Vector3d res = local;
+    bool success = false;
+    if (_to_wgs84 != nullptr)
+    {
+        success = TRUE == _to_wgs84->Transform(1, &res[0], &res[1], &res[2]);
+    }
+    if (success)
+    {
+        spdlog::debug("transformed local coordinate {},{},{} to wgs84 {},{},{}", local.x(), local.y(), local.z(),
+                      res.x(), res.y(), res.z());
+    }
+    else
+    {
+        spdlog::warn("unable to transform global coord {},{},{} to wgs84 {},{},{}", local.x(), local.y(), local.z(),
+                     res.x(), res.y(), res.z());
+        res = Eigen::Vector3d(NAN, NAN, NAN);
+    }
+    return res;
+}
+
+std::string GeoCoord::getWKT() const
 {
     std::string res = "UNKNOWN";
 
-    if (_transform != nullptr)
+    if (_to_local != nullptr)
     {
         char *str;
-        OGRErr err = _transform->GetTargetCS()->exportToPrettyWkt(&str);
+        OGRErr err = _to_local->GetTargetCS()->exportToPrettyWkt(&str);
         if (err == OGRERR_NONE)
         {
             res = std::string(str);
