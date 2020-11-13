@@ -39,7 +39,7 @@ class Pipeline
 
   private:
 
-    void process_images(const std::vector<std::string> &paths);
+    void process_images(const std::vector<size_t> &loaded_ids, const std::vector<std::string> &paths_to_load, std::vector<size_t>& next_ids);
     std::vector<size_t> build_nodes(const std::vector<std::string> &paths);
 
     struct NodeLinks
