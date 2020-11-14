@@ -13,8 +13,8 @@ using namespace std::chrono_literals;
 
 int main(int argc, char *argv[])
 {
-    spdlog::set_level(spdlog::level::critical);
-    Pipeline p(4);
+    spdlog::set_level(spdlog::level::info);
+    Pipeline p(64);
     std::vector<std::string> files;
 
     if (argc > 1)
@@ -37,5 +37,5 @@ int main(int argc, char *argv[])
     auto to_wgs84 = [&p](const Eigen::Vector3d& local) { return p.getCoord().toWGS84(local); };
     std::string out = toVisualizedGeoJson(p.getGraph(), to_wgs84);
 
-    std::cout << out << std::endl;
+    std::cerr << out << std::endl;
 }

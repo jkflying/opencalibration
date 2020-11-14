@@ -6,8 +6,8 @@
 #include <opencalibration/match/match_features.hpp>
 #include <opencalibration/model_inliers/ransac.hpp>
 
-#include <spdlog/spdlog.h>
 #include <omp.h>
+#include <spdlog/spdlog.h>
 
 #include <chrono>
 #include <iostream>
@@ -81,15 +81,20 @@ Pipeline::~Pipeline()
     }
 }
 
-void Pipeline::process_images(const std::vector<size_t> &loaded_ids, const std::vector<std::string> &paths_to_load, std::vector<size_t>& next_ids)
+void Pipeline::process_images(const std::vector<size_t> &loaded_ids, const std::vector<std::string> &paths_to_load,
+                              std::vector<size_t> &next_ids)
 {
     spdlog::info("Building links");
     const std::vector<NodeLinks> links = find_links(loaded_ids);
-    
+
     std::vector<std::function<void()>> funcs;
     funcs.reserve(paths_to_load.size() + links.size());
 
-    { 
+    std::vector<std::tuple<size_t, size_t, camera_relations>> all_inlier_measurements;
+    all_inlier_measurements.reserve(links.size() * 10);
+    std::mutex measurement_mutex;
+
+    {
         for (const auto &link : links)
         {
             spdlog::debug("Node: {}", link.node_id);
@@ -97,10 +102,10 @@ void Pipeline::process_images(const std::vector<size_t> &loaded_ids, const std::
             for (size_t neighbor : link.link_ids)
                 spdlog::debug("{:>30}", neighbor);
         }
-//             process_links(links);
+        //             process_links(links);
         for (size_t i = 0; i < links.size(); i++)
         {
-            auto run_func = [&,i](){
+            auto run_func = [&, i]() {
                 const auto &node_nearest = links[i];
                 size_t node_id = node_nearest.node_id;
                 const auto &img = _graph.getNode(node_id)->payload;
@@ -117,8 +122,7 @@ void Pipeline::process_images(const std::vector<size_t> &loaded_ids, const std::
                         nearest_descriptors.emplace_back(match_node_id, node->payload.model, node->payload.features);
                     }
                 }
-                std::vector<std::pair<size_t, camera_relations>> inlier_measurements;
-                inlier_measurements.reserve(nearest_descriptors.size());
+
                 for (const auto &node_descriptors : nearest_descriptors)
                 {
                     // match
@@ -137,12 +141,13 @@ void Pipeline::process_images(const std::vector<size_t> &loaded_ids, const std::
                     relations.ransac_relation = h.homography;
                     relations.relationType = camera_relations::RelationType::HOMOGRAPHY;
 
-                    bool can_decompose =
-                        h.decompose(correspondences, inliers, relations.relative_rotation, relations.relative_translation);
+                    bool can_decompose = h.decompose(correspondences, inliers, relations.relative_rotation,
+                                                     relations.relative_translation);
 
                     size_t num_inliers = std::count(inliers.begin(), inliers.end(), true);
 
-                    spdlog::debug("Matches: {}  inliers: {}  can_decompose: {}", matches.size(), num_inliers, can_decompose);
+                    spdlog::debug("Matches: {}  inliers: {}  can_decompose: {}", matches.size(), num_inliers,
+                                  can_decompose);
                     if (can_decompose && num_inliers > h.MINIMUM_POINTS * 1.5)
                     {
                         relations.inlier_matches.reserve(num_inliers);
@@ -156,15 +161,10 @@ void Pipeline::process_images(const std::vector<size_t> &loaded_ids, const std::
                                 relations.inlier_matches.push_back(fmd);
                             }
                         }
-                        inlier_measurements.emplace_back(std::get<0>(node_descriptors), std::move(relations));
+                        std::lock_guard<std::mutex> lock(measurement_mutex);
+                        all_inlier_measurements.emplace_back(node_id, std::get<0>(node_descriptors),
+                                                             std::move(relations));
                     }
-                }
-
-                std::lock_guard<std::mutex> graph_lock(_graph_structure_mutex);
-                spdlog::debug("Adding {} edges to node {}", inlier_measurements.size(), node_id);
-                for (auto &node_measurements : inlier_measurements)
-                {
-                    _graph.addEdge(std::move(node_measurements.second), node_id, node_measurements.first);
                 }
             };
             funcs.push_back(run_func);
@@ -174,13 +174,13 @@ void Pipeline::process_images(const std::vector<size_t> &loaded_ids, const std::
         spdlog::info("Loading batch of {}", paths_to_load.size());
         for (const auto &path : paths_to_load)
             spdlog::debug(path);
-//             next_ids = build_nodes(paths_to_load);
+        //             next_ids = build_nodes(paths_to_load);
         std::vector<size_t> node_ids;
         node_ids.reserve(paths_to_load.size());
 
         for (size_t i = 0; i < paths_to_load.size(); i++)
         {
-            auto run_func = [&, i](){
+            auto run_func = [&, i]() {
                 const std::string &path = paths_to_load[i];
                 image img;
                 img.path = path;
@@ -197,7 +197,7 @@ void Pipeline::process_images(const std::vector<size_t> &loaded_ids, const std::
                 img.model.principle_point = Eigen::Vector2d(img.model.pixels_cols, img.model.pixels_rows) / 2;
 
                 spdlog::debug("camera model: dims: {}x{} focal: {}", img.model.pixels_cols, img.model.pixels_rows,
-                            img.model.focal_length_pixels);
+                              img.model.focal_length_pixels);
 
                 std::lock_guard<std::mutex> graph_lock(_graph_structure_mutex);
                 if (!_coordinate_system.isInitialized())
@@ -213,14 +213,17 @@ void Pipeline::process_images(const std::vector<size_t> &loaded_ids, const std::
             };
             funcs.push_back(run_func);
         }
-        
+
         // alternate between feature extraction and matching
-        for (size_t i = 0; i*2 < funcs.size(); i+=2) {
-            std::swap(funcs[i], funcs[i*2]);
+        //         std::random_shuffle(funcs.begin(), funcs.end());
+        for (size_t i = 0; i * 2 < funcs.size(); i += 2)
+        {
+            std::swap(funcs[i], funcs[i * 2]);
         }
-        
-        #pragma omp parallel for schedule(dynamic)
-        for(int i = 0; i < (int)funcs.size(); i++) {
+
+#pragma omp parallel for schedule(dynamic)
+        for (int i = 0; i < (int)funcs.size(); i++)
+        {
             funcs[i]();
         }
 
@@ -232,14 +235,18 @@ void Pipeline::process_images(const std::vector<size_t> &loaded_ids, const std::
             return path1 < path2;
         });
         next_ids = node_ids;
-            
+
+        for (auto &node_measurements : all_inlier_measurements)
+        {
+            _graph.addEdge(std::move(std::get<2>(node_measurements)), std::get<0>(node_measurements),
+                           std::get<1>(node_measurements));
+        }
     }
 
     initializeOrientation(loaded_ids, _graph);
     // TODO:
     // relaxSubset(node_ids, _graph, _graph_structure_mutex);
 }
-
 
 std::vector<Pipeline::NodeLinks> Pipeline::find_links(const std::vector<size_t> &node_ids)
 {
@@ -267,8 +274,6 @@ std::vector<Pipeline::NodeLinks> Pipeline::find_links(const std::vector<size_t> 
     }
     return batch_nearest;
 }
-
-
 
 void Pipeline::add(const std::vector<std::string> &paths)
 {
