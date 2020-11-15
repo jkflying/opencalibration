@@ -1,4 +1,6 @@
-add_library(oc_pipeline pipeline.cpp)
+add_library(oc_pipeline pipeline.cpp
+                        load_stage.cpp
+                        link_stage.cpp)
 target_link_libraries(oc_pipeline PUBLIC oc_extract
                                           oc_match
                                           oc_distort
