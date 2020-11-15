@@ -6,7 +6,6 @@
 #include <opencalibration/match/match_features.hpp>
 #include <opencalibration/model_inliers/ransac.hpp>
 
-#include <omp.h>
 #include <spdlog/spdlog.h>
 
 #include <chrono>
@@ -16,10 +15,149 @@ using namespace std::chrono_literals;
 
 namespace
 {
+using namespace opencalibration;
+
 std::array<double, 3> to_array(const Eigen::Vector3d &v)
 {
     return {v.x(), v.y(), v.z()};
 }
+
+class LoadStage
+{
+};
+
+class BuildLinksStage
+{
+    struct inlier_measurement
+    {
+        size_t node_id;
+        size_t match_node_id;
+        camera_relations relations;
+    };
+
+  public:
+    void init(const MeasurementGraph &graph, const jk::tree::KDTree<size_t, 3> &imageGPSLocations,
+              const std::vector<size_t> &node_ids)
+    {
+        _links.clear();
+        _links.reserve(node_ids.size());
+
+        // build nearest in serial, since it is really fast
+        for (size_t node_id : node_ids)
+        {
+            const auto &img = graph.getNode(node_id)->payload;
+
+            auto knn = imageGPSLocations.searchKnn(to_array(img.position), 10);
+            NodeLinks link;
+            link.node_id = node_id;
+            link.link_ids.reserve(knn.size());
+            for (const auto &nn : knn)
+            {
+                if (nn.payload != node_id)
+                {
+                    link.link_ids.push_back(nn.payload);
+                }
+            }
+            _links.emplace_back(std::move(link));
+        }
+    }
+
+    std::vector<std::function<void()>> get_runners(const MeasurementGraph &graph)
+    {
+        std::vector<std::function<void()>> funcs;
+        funcs.reserve(_links.size());
+        _all_inlier_measurements.reserve(10 * _links.size());
+        for (size_t i = 0; i < _links.size(); i++)
+        {
+            auto run_func = [&, i]() {
+                const auto &node_nearest = _links[i];
+                size_t node_id = node_nearest.node_id;
+                const auto &img = graph.getNode(node_id)->payload;
+                const auto &nearest = node_nearest.link_ids;
+
+                // match & distort
+                std::vector<std::tuple<size_t, std::reference_wrapper<const image>>> nearest_images;
+                nearest_images.reserve(nearest.size());
+                for (size_t match_node_id : nearest)
+                {
+                    const auto *node = graph.getNode(match_node_id);
+                    if (node != nullptr)
+                    {
+                        nearest_images.emplace_back(match_node_id, node->payload);
+                    }
+                }
+
+                for (const auto &near_image : nearest_images)
+                {
+                    // match
+                    auto matches = match_features(img.features, std::get<1>(near_image).get().features);
+
+                    // distort
+                    std::vector<correspondence> correspondences =
+                        distort_keypoints(img.features, std::get<1>(near_image).get().features, matches, img.model,
+                                          std::get<1>(near_image).get().model);
+
+                    // ransac
+                    homography_model h;
+                    std::vector<bool> inliers;
+                    ransac(correspondences, h, inliers);
+
+                    camera_relations relations;
+                    relations.ransac_relation = h.homography;
+                    relations.relationType = camera_relations::RelationType::HOMOGRAPHY;
+
+                    bool can_decompose = h.decompose(correspondences, inliers, relations.relative_rotation,
+                                                     relations.relative_translation);
+
+                    size_t num_inliers = std::count(inliers.begin(), inliers.end(), true);
+
+                    spdlog::debug("Matches: {}  inliers: {}  can_decompose: {}", matches.size(), num_inliers,
+                                  can_decompose);
+                    if (can_decompose && num_inliers > h.MINIMUM_POINTS * 1.5)
+                    {
+                        relations.inlier_matches.reserve(num_inliers);
+                        for (size_t i = 0; i < inliers.size(); i++)
+                        {
+                            if (inliers[i])
+                            {
+                                feature_match_denormalized fmd;
+                                fmd.pixel_1 = img.features[matches[i].feature_index_1].location;
+                                fmd.pixel_2 =
+                                    std::get<1>(near_image).get().features[matches[i].feature_index_2].location;
+                                relations.inlier_matches.push_back(fmd);
+                            }
+                        }
+                        std::lock_guard<std::mutex> lock(_measurement_mutex);
+                        _all_inlier_measurements.emplace_back(
+                            inlier_measurement{node_id, std::get<0>(near_image), std::move(relations)});
+                    }
+                }
+            };
+            funcs.push_back(run_func);
+        }
+        return funcs;
+    }
+
+    void finalize(MeasurementGraph &graph)
+    {
+        for (auto &measurements : _all_inlier_measurements)
+        {
+            graph.addEdge(std::move(measurements.relations), measurements.node_id, measurements.match_node_id);
+        }
+        _all_inlier_measurements.clear();
+    }
+
+  private:
+    std::vector<inlier_measurement> _all_inlier_measurements;
+    std::mutex _measurement_mutex;
+
+    std::vector<NodeLinks> _links;
+};
+
+class BundleStage
+{
+};
+
 } // namespace
 
 namespace opencalibration
@@ -27,7 +165,7 @@ namespace opencalibration
 Pipeline::Pipeline(size_t batch_size)
 {
     _keep_running = true;
-    omp_set_num_threads(batch_size);
+
     auto get_paths = [this, batch_size](std::vector<std::string> &paths, ThreadStatus &status) -> bool {
         while (_add_queue.size() > 0 && paths.size() < batch_size)
         {
@@ -84,92 +222,15 @@ Pipeline::~Pipeline()
 void Pipeline::process_images(const std::vector<size_t> &loaded_ids, const std::vector<std::string> &paths_to_load,
                               std::vector<size_t> &next_ids)
 {
-    spdlog::info("Building links");
-    const std::vector<NodeLinks> links = find_links(loaded_ids);
-
     std::vector<std::function<void()>> funcs;
-    funcs.reserve(paths_to_load.size() + links.size());
 
-    std::vector<std::tuple<size_t, size_t, camera_relations>> all_inlier_measurements;
-    all_inlier_measurements.reserve(links.size() * 10);
-    std::mutex measurement_mutex;
+    BuildLinksStage linksStage;
+    linksStage.init(_graph, _imageGPSLocations, loaded_ids);
 
-    {
-        for (const auto &link : links)
-        {
-            spdlog::debug("Node: {}", link.node_id);
-            spdlog::debug("Links to:");
-            for (size_t neighbor : link.link_ids)
-                spdlog::debug("{:>30}", neighbor);
-        }
-        //             process_links(links);
-        for (size_t i = 0; i < links.size(); i++)
-        {
-            auto run_func = [&, i]() {
-                const auto &node_nearest = links[i];
-                size_t node_id = node_nearest.node_id;
-                const auto &img = _graph.getNode(node_id)->payload;
-                const auto &nearest = node_nearest.link_ids;
+    std::vector<std::function<void()>> links_funcs = linksStage.get_runners(_graph);
+    funcs.insert(funcs.end(), std::make_move_iterator(links_funcs.begin()), std::make_move_iterator(links_funcs.end()));
+    links_funcs.clear();
 
-                // match & distort
-                std::vector<std::tuple<size_t, CameraModel, std::vector<feature_2d>>> nearest_descriptors;
-                nearest_descriptors.reserve(nearest.size());
-                for (size_t match_node_id : nearest)
-                {
-                    const auto *node = _graph.getNode(match_node_id);
-                    if (node != nullptr)
-                    {
-                        nearest_descriptors.emplace_back(match_node_id, node->payload.model, node->payload.features);
-                    }
-                }
-
-                for (const auto &node_descriptors : nearest_descriptors)
-                {
-                    // match
-                    auto matches = match_features(img.features, std::get<2>(node_descriptors));
-
-                    // distort
-                    std::vector<correspondence> correspondences = distort_keypoints(
-                        img.features, std::get<2>(node_descriptors), matches, img.model, std::get<1>(node_descriptors));
-
-                    // ransac
-                    homography_model h;
-                    std::vector<bool> inliers;
-                    ransac(correspondences, h, inliers);
-
-                    camera_relations relations;
-                    relations.ransac_relation = h.homography;
-                    relations.relationType = camera_relations::RelationType::HOMOGRAPHY;
-
-                    bool can_decompose = h.decompose(correspondences, inliers, relations.relative_rotation,
-                                                     relations.relative_translation);
-
-                    size_t num_inliers = std::count(inliers.begin(), inliers.end(), true);
-
-                    spdlog::debug("Matches: {}  inliers: {}  can_decompose: {}", matches.size(), num_inliers,
-                                  can_decompose);
-                    if (can_decompose && num_inliers > h.MINIMUM_POINTS * 1.5)
-                    {
-                        relations.inlier_matches.reserve(num_inliers);
-                        for (size_t i = 0; i < inliers.size(); i++)
-                        {
-                            if (inliers[i])
-                            {
-                                feature_match_denormalized fmd;
-                                fmd.pixel_1 = img.features[matches[i].feature_index_1].location;
-                                fmd.pixel_2 = std::get<2>(node_descriptors)[matches[i].feature_index_2].location;
-                                relations.inlier_matches.push_back(fmd);
-                            }
-                        }
-                        std::lock_guard<std::mutex> lock(measurement_mutex);
-                        all_inlier_measurements.emplace_back(node_id, std::get<0>(node_descriptors),
-                                                             std::move(relations));
-                    }
-                }
-            };
-            funcs.push_back(run_func);
-        }
-    }
     {
         spdlog::info("Loading batch of {}", paths_to_load.size());
         for (const auto &path : paths_to_load)
@@ -236,43 +297,12 @@ void Pipeline::process_images(const std::vector<size_t> &loaded_ids, const std::
         });
         next_ids = node_ids;
 
-        for (auto &node_measurements : all_inlier_measurements)
-        {
-            _graph.addEdge(std::move(std::get<2>(node_measurements)), std::get<0>(node_measurements),
-                           std::get<1>(node_measurements));
-        }
+        linksStage.finalize(_graph);
     }
 
     initializeOrientation(loaded_ids, _graph);
     // TODO:
     // relaxSubset(node_ids, _graph, _graph_structure_mutex);
-}
-
-std::vector<Pipeline::NodeLinks> Pipeline::find_links(const std::vector<size_t> &node_ids)
-{
-    // build nearest in serial, since it is really fast
-    std::vector<NodeLinks> batch_nearest;
-    batch_nearest.reserve(node_ids.size());
-
-    std::lock_guard<std::mutex> graph_lock(_graph_structure_mutex);
-    for (size_t node_id : node_ids)
-    {
-        const auto &img = _graph.getNode(node_id)->payload;
-
-        auto knn = _imageGPSLocations.searchKnn(to_array(img.position), 10);
-        NodeLinks link;
-        link.node_id = node_id;
-        link.link_ids.reserve(knn.size());
-        for (const auto &nn : knn)
-        {
-            if (nn.payload != node_id)
-            {
-                link.link_ids.push_back(nn.payload);
-            }
-        }
-        batch_nearest.emplace_back(std::move(link));
-    }
-    return batch_nearest;
 }
 
 void Pipeline::add(const std::vector<std::string> &paths)

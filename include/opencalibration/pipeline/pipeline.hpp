@@ -1,8 +1,7 @@
 #pragma once
 
-
-#include <opencalibration/relax/relax.hpp>
 #include <opencalibration/geo_coord/geo_coord.hpp>
+#include <opencalibration/relax/relax.hpp>
 
 #include <jk/KDTree.h>
 
@@ -16,6 +15,11 @@
 
 namespace opencalibration
 {
+struct NodeLinks
+{
+    size_t node_id;
+    std::vector<size_t> link_ids;
+};
 
 class Pipeline
 {
@@ -33,24 +37,16 @@ class Pipeline
 
     void add(const std::vector<std::string> &filename);
 
-    const MeasurementGraph& getGraph(); // warning - not threadsafe
+    const MeasurementGraph &getGraph(); // warning - not threadsafe
 
-    const GeoCoord& getCoord() const { return _coordinate_system; }
+    const GeoCoord &getCoord() const
+    {
+        return _coordinate_system;
+    }
 
   private:
-
-    void process_images(const std::vector<size_t> &loaded_ids, const std::vector<std::string> &paths_to_load, std::vector<size_t>& next_ids);
-    std::vector<size_t> build_nodes(const std::vector<std::string> &paths);
-
-    struct NodeLinks
-    {
-        size_t node_id;
-        std::vector<size_t> link_ids;
-    };
-
-    std::vector<NodeLinks> find_links(const std::vector<size_t>& node_ids);
-    void process_links(const std::vector<NodeLinks>& links);
-
+    void process_images(const std::vector<size_t> &loaded_ids, const std::vector<std::string> &paths_to_load,
+                        std::vector<size_t> &next_ids);
 
     std::condition_variable _queue_condition_variable;
     std::mutex _queue_mutex;
@@ -75,6 +71,5 @@ class Pipeline
     MeasurementGraph _graph;
     jk::tree::KDTree<size_t, 3> _imageGPSLocations;
     GeoCoord _coordinate_system;
-
 };
 } // namespace opencalibration
