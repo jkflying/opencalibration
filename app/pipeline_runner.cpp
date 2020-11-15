@@ -5,8 +5,8 @@
 #include <spdlog/spdlog.h>
 
 #include <filesystem>
-#include <thread>
 #include <iostream>
+#include <thread>
 
 using namespace opencalibration;
 using namespace std::chrono_literals;
@@ -34,7 +34,7 @@ int main(int argc, char *argv[])
         std::this_thread::sleep_for(1ms);
     }
 
-    auto to_wgs84 = [&p](const Eigen::Vector3d& local) { return p.getCoord().toWGS84(local); };
+    auto to_wgs84 = [&p](const Eigen::Vector3d &local) { return p.getCoord().toWGS84(local); };
     std::string out = toVisualizedGeoJson(p.getGraph(), to_wgs84);
 
     std::cerr << out << std::endl;

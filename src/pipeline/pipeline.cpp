@@ -1,10 +1,7 @@
 #include <opencalibration/pipeline/pipeline.hpp>
 
-#include <opencalibration/distort/distort_keypoints.hpp>
-#include <opencalibration/extract/extract_features.hpp>
-#include <opencalibration/extract/extract_metadata.hpp>
-#include <opencalibration/match/match_features.hpp>
-#include <opencalibration/model_inliers/ransac.hpp>
+#include <opencalibration/pipeline/link_stage.hpp>
+#include <opencalibration/pipeline/load_stage.hpp>
 
 #include <spdlog/spdlog.h>
 
@@ -12,153 +9,6 @@
 #include <iostream>
 
 using namespace std::chrono_literals;
-
-namespace
-{
-using namespace opencalibration;
-
-std::array<double, 3> to_array(const Eigen::Vector3d &v)
-{
-    return {v.x(), v.y(), v.z()};
-}
-
-class LoadStage
-{
-};
-
-class BuildLinksStage
-{
-    struct inlier_measurement
-    {
-        size_t node_id;
-        size_t match_node_id;
-        camera_relations relations;
-    };
-
-  public:
-    void init(const MeasurementGraph &graph, const jk::tree::KDTree<size_t, 3> &imageGPSLocations,
-              const std::vector<size_t> &node_ids)
-    {
-        _links.clear();
-        _links.reserve(node_ids.size());
-
-        // build nearest in serial, since it is really fast
-        for (size_t node_id : node_ids)
-        {
-            const auto &img = graph.getNode(node_id)->payload;
-
-            auto knn = imageGPSLocations.searchKnn(to_array(img.position), 10);
-            NodeLinks link;
-            link.node_id = node_id;
-            link.link_ids.reserve(knn.size());
-            for (const auto &nn : knn)
-            {
-                if (nn.payload != node_id)
-                {
-                    link.link_ids.push_back(nn.payload);
-                }
-            }
-            _links.emplace_back(std::move(link));
-        }
-    }
-
-    std::vector<std::function<void()>> get_runners(const MeasurementGraph &graph)
-    {
-        std::vector<std::function<void()>> funcs;
-        funcs.reserve(_links.size());
-        _all_inlier_measurements.reserve(10 * _links.size());
-        for (size_t i = 0; i < _links.size(); i++)
-        {
-            auto run_func = [&, i]() {
-                const auto &node_nearest = _links[i];
-                size_t node_id = node_nearest.node_id;
-                const auto &img = graph.getNode(node_id)->payload;
-                const auto &nearest = node_nearest.link_ids;
-
-                // match & distort
-                std::vector<std::tuple<size_t, std::reference_wrapper<const image>>> nearest_images;
-                nearest_images.reserve(nearest.size());
-                for (size_t match_node_id : nearest)
-                {
-                    const auto *node = graph.getNode(match_node_id);
-                    if (node != nullptr)
-                    {
-                        nearest_images.emplace_back(match_node_id, node->payload);
-                    }
-                }
-
-                for (const auto &near_image : nearest_images)
-                {
-                    // match
-                    auto matches = match_features(img.features, std::get<1>(near_image).get().features);
-
-                    // distort
-                    std::vector<correspondence> correspondences =
-                        distort_keypoints(img.features, std::get<1>(near_image).get().features, matches, img.model,
-                                          std::get<1>(near_image).get().model);
-
-                    // ransac
-                    homography_model h;
-                    std::vector<bool> inliers;
-                    ransac(correspondences, h, inliers);
-
-                    camera_relations relations;
-                    relations.ransac_relation = h.homography;
-                    relations.relationType = camera_relations::RelationType::HOMOGRAPHY;
-
-                    bool can_decompose = h.decompose(correspondences, inliers, relations.relative_rotation,
-                                                     relations.relative_translation);
-
-                    size_t num_inliers = std::count(inliers.begin(), inliers.end(), true);
-
-                    spdlog::debug("Matches: {}  inliers: {}  can_decompose: {}", matches.size(), num_inliers,
-                                  can_decompose);
-                    if (can_decompose && num_inliers > h.MINIMUM_POINTS * 1.5)
-                    {
-                        relations.inlier_matches.reserve(num_inliers);
-                        for (size_t i = 0; i < inliers.size(); i++)
-                        {
-                            if (inliers[i])
-                            {
-                                feature_match_denormalized fmd;
-                                fmd.pixel_1 = img.features[matches[i].feature_index_1].location;
-                                fmd.pixel_2 =
-                                    std::get<1>(near_image).get().features[matches[i].feature_index_2].location;
-                                relations.inlier_matches.push_back(fmd);
-                            }
-                        }
-                        std::lock_guard<std::mutex> lock(_measurement_mutex);
-                        _all_inlier_measurements.emplace_back(
-                            inlier_measurement{node_id, std::get<0>(near_image), std::move(relations)});
-                    }
-                }
-            };
-            funcs.push_back(run_func);
-        }
-        return funcs;
-    }
-
-    void finalize(MeasurementGraph &graph)
-    {
-        for (auto &measurements : _all_inlier_measurements)
-        {
-            graph.addEdge(std::move(measurements.relations), measurements.node_id, measurements.match_node_id);
-        }
-        _all_inlier_measurements.clear();
-    }
-
-  private:
-    std::vector<inlier_measurement> _all_inlier_measurements;
-    std::mutex _measurement_mutex;
-
-    std::vector<NodeLinks> _links;
-};
-
-class BundleStage
-{
-};
-
-} // namespace
 
 namespace opencalibration
 {
@@ -224,81 +74,39 @@ void Pipeline::process_images(const std::vector<size_t> &loaded_ids, const std::
 {
     std::vector<std::function<void()>> funcs;
 
-    BuildLinksStage linksStage;
-    linksStage.init(_graph, _imageGPSLocations, loaded_ids);
+    LoadStage loadStage;
+    loadStage.init(paths_to_load);
+    std::vector<std::function<void()>> load_funcs = loadStage.get_runners();
 
-    std::vector<std::function<void()>> links_funcs = linksStage.get_runners(_graph);
-    funcs.insert(funcs.end(), std::make_move_iterator(links_funcs.begin()), std::make_move_iterator(links_funcs.end()));
-    links_funcs.clear();
+    BuildLinksStage linkStage;
+    linkStage.init(_graph, _imageGPSLocations, loaded_ids);
+    std::vector<std::function<void()>> link_funcs = linkStage.get_runners(_graph);
 
+    funcs.reserve(load_funcs.size() + link_funcs.size());
+    // interleave the functions to spread resource usage across the excution
+    while (load_funcs.size() > 0 || link_funcs.size() > 0)
     {
-        spdlog::info("Loading batch of {}", paths_to_load.size());
-        for (const auto &path : paths_to_load)
-            spdlog::debug(path);
-        //             next_ids = build_nodes(paths_to_load);
-        std::vector<size_t> node_ids;
-        node_ids.reserve(paths_to_load.size());
-
-        for (size_t i = 0; i < paths_to_load.size(); i++)
+        if (load_funcs.size() > 0)
         {
-            auto run_func = [&, i]() {
-                const std::string &path = paths_to_load[i];
-                image img;
-                img.path = path;
-                img.features = extract_features(img.path);
-                if (img.features.size() == 0)
-                {
-                    return;
-                }
-
-                img.metadata = extract_metadata(img.path);
-                img.model.focal_length_pixels = img.metadata.focal_length_px;
-                img.model.pixels_cols = img.metadata.width_px;
-                img.model.pixels_rows = img.metadata.height_px;
-                img.model.principle_point = Eigen::Vector2d(img.model.pixels_cols, img.model.pixels_rows) / 2;
-
-                spdlog::debug("camera model: dims: {}x{} focal: {}", img.model.pixels_cols, img.model.pixels_rows,
-                              img.model.focal_length_pixels);
-
-                std::lock_guard<std::mutex> graph_lock(_graph_structure_mutex);
-                if (!_coordinate_system.isInitialized())
-                {
-                    _coordinate_system.setOrigin(img.metadata.latitude, img.metadata.longitude);
-                }
-                Eigen::Vector3d local_pos = img.position =
-                    _coordinate_system.toLocalCS(img.metadata.latitude, img.metadata.longitude, img.metadata.altitude);
-                size_t node_id = _graph.addNode(std::move(img));
-
-                _imageGPSLocations.addPoint(to_array(local_pos), node_id);
-                node_ids.push_back(node_id);
-            };
-            funcs.push_back(run_func);
+            funcs.push_back(std::move(load_funcs.back()));
+            load_funcs.pop_back();
         }
-
-        // alternate between feature extraction and matching
-        //         std::random_shuffle(funcs.begin(), funcs.end());
-        for (size_t i = 0; i * 2 < funcs.size(); i += 2)
+        if (link_funcs.size() > 0)
         {
-            std::swap(funcs[i], funcs[i * 2]);
+            funcs.push_back(std::move(link_funcs.back()));
+            link_funcs.pop_back();
         }
+    }
 
 #pragma omp parallel for schedule(dynamic)
-        for (int i = 0; i < (int)funcs.size(); i++)
-        {
-            funcs[i]();
-        }
-
-        std::lock_guard<std::mutex> graph_lock(_graph_structure_mutex);
-        // sort node_ids by the path, since they may be out of order now
-        std::sort(node_ids.begin(), node_ids.end(), [this](size_t node_id_1, size_t node_id_2) -> int {
-            const auto &path1 = _graph.getNode(node_id_1)->payload.path;
-            const auto &path2 = _graph.getNode(node_id_2)->payload.path;
-            return path1 < path2;
-        });
-        next_ids = node_ids;
-
-        linksStage.finalize(_graph);
+    for (int i = 0; i < (int)funcs.size(); i++)
+    {
+        funcs[i]();
     }
+
+    std::lock_guard<std::mutex> graph_lock(_graph_structure_mutex);
+    next_ids = loadStage.finalize(_coordinate_system, _graph, _imageGPSLocations);
+    linkStage.finalize(_graph);
 
     initializeOrientation(loaded_ids, _graph);
     // TODO:
@@ -307,11 +115,10 @@ void Pipeline::process_images(const std::vector<size_t> &loaded_ids, const std::
 
 void Pipeline::add(const std::vector<std::string> &paths)
 {
-    {
-        std::lock_guard<std::mutex> guard(_queue_mutex);
-        _add_queue.insert(_add_queue.end(), paths.begin(), paths.end());
-        _queue_condition_variable.notify_all();
-    }
+
+    std::lock_guard<std::mutex> guard(_queue_mutex);
+    _add_queue.insert(_add_queue.end(), paths.begin(), paths.end());
+    _queue_condition_variable.notify_all();
 }
 
 Pipeline::Status Pipeline::getStatus()
