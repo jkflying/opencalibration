@@ -16,22 +16,13 @@ Pipeline::Pipeline(size_t batch_size)
 {
     _keep_running = true;
 
-    auto get_paths = [this, batch_size](std::vector<std::string> &paths, ThreadStatus &status) -> bool {
+    auto get_paths = [this, batch_size](std::vector<std::string> &paths) -> bool {
         while (_add_queue.size() > 0 && paths.size() < batch_size)
         {
             paths.emplace_back(std::move(_add_queue.front()));
             _add_queue.pop_front();
         }
-        if (paths.size() > 0)
-        {
-            status = ThreadStatus::BUSY;
-            return true;
-        }
-        else
-        {
-            status = ThreadStatus::IDLE;
-            return false;
-        }
+        return paths.size() > 0;
     };
 
     _runner.thread.reset(new std::thread([this, batch_size, get_paths]() {
@@ -45,13 +36,15 @@ Pipeline::Pipeline(size_t batch_size)
         {
             paths.clear();
             next_ids.clear();
-            if (get_paths(paths, _runner.status) || loaded_ids.size() > 0)
+            if (get_paths(paths) || loaded_ids.size() > 0)
             {
+                _runner.status = ThreadStatus::BUSY;
                 process_images(loaded_ids, paths, next_ids);
                 std::swap(loaded_ids, next_ids);
             }
             else
             {
+                _runner.status = ThreadStatus::IDLE;
                 std::unique_lock<std::mutex> lck(sleep_mutex);
                 _queue_condition_variable.wait_for(lck, 1s);
             }
@@ -97,6 +90,7 @@ void Pipeline::process_images(const std::vector<size_t> &loaded_ids, const std::
             link_funcs.pop_back();
         }
     }
+    std::reverse(funcs.begin(), funcs.end());
 
 #pragma omp parallel for schedule(dynamic)
     for (int i = 0; i < (int)funcs.size(); i++)
