@@ -17,6 +17,7 @@ Pipeline::Pipeline(size_t batch_size)
     _keep_running = true;
 
     auto get_paths = [this, batch_size](std::vector<std::string> &paths) -> bool {
+        std::lock_guard<std::mutex> guard(_queue_mutex);
         while (_add_queue.size() > 0 && paths.size() < batch_size)
         {
             paths.emplace_back(std::move(_add_queue.front()));
