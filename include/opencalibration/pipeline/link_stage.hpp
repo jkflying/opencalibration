@@ -2,6 +2,8 @@
 
 #include <opencalibration/pipeline/pipeline.hpp>
 
+#include <opencalibration/types/node_links.hpp>
+
 namespace opencalibration
 {
 
@@ -20,7 +22,7 @@ class BuildLinksStage
 
     std::vector<std::function<void()>> get_runners(const MeasurementGraph &graph);
 
-    void finalize(MeasurementGraph &graph);
+    std::vector<size_t> finalize(MeasurementGraph &graph);
 
   private:
     std::vector<inlier_measurement> _all_inlier_measurements;

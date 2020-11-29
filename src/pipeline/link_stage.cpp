@@ -120,13 +120,24 @@ std::vector<std::function<void()>> BuildLinksStage::get_runners(const Measuremen
     return funcs;
 }
 
-void BuildLinksStage::finalize(MeasurementGraph &graph)
+std::vector<size_t> BuildLinksStage::finalize(MeasurementGraph &graph)
 {
     for (auto &measurements : _all_inlier_measurements)
     {
         graph.addEdge(std::move(measurements.relations), measurements.node_id, measurements.match_node_id);
     }
     _all_inlier_measurements.clear();
+    
+    std::vector<size_t> node_ids;
+    node_ids.reserve(_links.size());
+    for(const auto& link : _links) {
+       node_ids.push_back(link.node_id);
+    }
+    _links.clear();
+    
+    initializeOrientation(node_ids, graph);
+    
+    return node_ids;
 }
 
 } // namespace opencalibration

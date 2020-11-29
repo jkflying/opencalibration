@@ -29,19 +29,23 @@ Pipeline::Pipeline(size_t batch_size)
     _runner.thread.reset(new std::thread([this, batch_size, get_paths]() {
         std::mutex sleep_mutex;
         std::vector<std::string> paths;
-        std::vector<size_t> loaded_ids, next_ids;
+        std::vector<size_t> previous_loaded_ids, previous_linked_ids, next_loaded_ids, next_linked_ids;
         paths.reserve(batch_size);
-        loaded_ids.reserve(batch_size);
-        next_ids.reserve(batch_size);
+        previous_loaded_ids.reserve(batch_size);
+        previous_linked_ids.reserve(batch_size);
+        next_loaded_ids.reserve(batch_size);
+        next_linked_ids.reserve(batch_size);
         while (_keep_running)
         {
             paths.clear();
-            next_ids.clear();
-            if (get_paths(paths) || loaded_ids.size() > 0)
+            if (get_paths(paths) || previous_loaded_ids.size() > 0 || previous_linked_ids.size() > 0)
             {
                 _runner.status = ThreadStatus::BUSY;
-                process_images(loaded_ids, paths, next_ids);
-                std::swap(loaded_ids, next_ids);
+                next_loaded_ids.clear();
+                next_linked_ids.clear();
+                process_images(paths, previous_loaded_ids, previous_linked_ids, next_loaded_ids, next_linked_ids);
+                std::swap(previous_loaded_ids, next_loaded_ids);
+                std::swap(previous_linked_ids, next_linked_ids);
             }
             else
             {
@@ -63,8 +67,10 @@ Pipeline::~Pipeline()
     }
 }
 
-void Pipeline::process_images(const std::vector<size_t> &loaded_ids, const std::vector<std::string> &paths_to_load,
-                              std::vector<size_t> &next_ids)
+void Pipeline::process_images(const std::vector<std::string> &paths_to_load,
+                              const std::vector<size_t> &previous_loaded_ids,
+                              const std::vector<size_t> &previous_linked_ids, std::vector<size_t> &next_loaded_ids,
+                              std::vector<size_t> &next_linked_ids)
 {
     std::vector<std::function<void()>> funcs;
 
@@ -73,8 +79,13 @@ void Pipeline::process_images(const std::vector<size_t> &loaded_ids, const std::
     std::vector<std::function<void()>> load_funcs = loadStage.get_runners();
 
     BuildLinksStage linkStage;
-    linkStage.init(_graph, _imageGPSLocations, loaded_ids);
+    linkStage.init(_graph, _imageGPSLocations, previous_loaded_ids);
     std::vector<std::function<void()>> link_funcs = linkStage.get_runners(_graph);
+
+    // TODO:
+    (void)previous_linked_ids;
+    // RelaxStage relaxStage;
+    // relaxStage.init(previous_linked_ids, _graph);
 
     funcs.reserve(load_funcs.size() + link_funcs.size());
     // interleave the functions to spread resource usage across the excution
@@ -100,12 +111,8 @@ void Pipeline::process_images(const std::vector<size_t> &loaded_ids, const std::
     }
 
     std::lock_guard<std::mutex> graph_lock(_graph_structure_mutex);
-    next_ids = loadStage.finalize(_coordinate_system, _graph, _imageGPSLocations);
-    linkStage.finalize(_graph);
-
-    initializeOrientation(loaded_ids, _graph);
-    // TODO:
-    // relaxSubset(node_ids, _graph, _graph_structure_mutex);
+    next_loaded_ids = loadStage.finalize(_coordinate_system, _graph, _imageGPSLocations);
+    next_linked_ids = linkStage.finalize(_graph);
 }
 
 void Pipeline::add(const std::vector<std::string> &paths)

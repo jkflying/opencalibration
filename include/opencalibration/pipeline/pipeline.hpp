@@ -15,12 +15,6 @@
 
 namespace opencalibration
 {
-struct NodeLinks
-{
-    size_t node_id;
-    std::vector<size_t> link_ids;
-};
-
 class Pipeline
 {
   public:
@@ -45,8 +39,10 @@ class Pipeline
     }
 
   private:
-    void process_images(const std::vector<size_t> &loaded_ids, const std::vector<std::string> &paths_to_load,
-                        std::vector<size_t> &next_ids);
+    void process_images(const std::vector<std::string> &paths_to_load,
+                              const std::vector<size_t> &previous_loaded_ids,
+                              const std::vector<size_t> &previous_linked_ids, std::vector<size_t> &next_loaded_ids,
+                              std::vector<size_t> &next_linked_ids);
 
     std::condition_variable _queue_condition_variable;
     std::mutex _queue_mutex;
