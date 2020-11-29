@@ -2,6 +2,7 @@
 
 #include <opencalibration/pipeline/link_stage.hpp>
 #include <opencalibration/pipeline/load_stage.hpp>
+#include <opencalibration/pipeline/relax_stage.hpp>
 
 #include <spdlog/spdlog.h>
 
@@ -82,24 +83,28 @@ void Pipeline::process_images(const std::vector<std::string> &paths_to_load,
     linkStage.init(_graph, _imageGPSLocations, previous_loaded_ids);
     std::vector<std::function<void()>> link_funcs = linkStage.get_runners(_graph);
 
-    // TODO:
-    (void)previous_linked_ids;
-    // RelaxStage relaxStage;
-    // relaxStage.init(previous_linked_ids, _graph);
+    RelaxStage relaxStage;
+    relaxStage.init(_graph, previous_linked_ids);
+    std::vector<std::function<void()>> relax_funcs = relaxStage.get_runners(_graph);
 
     funcs.reserve(load_funcs.size() + link_funcs.size());
     // interleave the functions to spread resource usage across the excution
     while (load_funcs.size() > 0 || link_funcs.size() > 0)
     {
-        if (load_funcs.size() > 0)
+        if (relax_funcs.size() > 0)
         {
-            funcs.push_back(std::move(load_funcs.back()));
-            load_funcs.pop_back();
+            funcs.push_back(std::move(relax_funcs.back()));
+            relax_funcs.pop_back();
         }
         if (link_funcs.size() > 0)
         {
             funcs.push_back(std::move(link_funcs.back()));
             link_funcs.pop_back();
+        }
+        if (load_funcs.size() > 0)
+        {
+            funcs.push_back(std::move(load_funcs.back()));
+            load_funcs.pop_back();
         }
     }
     std::reverse(funcs.begin(), funcs.end());
@@ -113,6 +118,7 @@ void Pipeline::process_images(const std::vector<std::string> &paths_to_load,
     std::lock_guard<std::mutex> graph_lock(_graph_structure_mutex);
     next_loaded_ids = loadStage.finalize(_coordinate_system, _graph, _imageGPSLocations);
     next_linked_ids = linkStage.finalize(_graph);
+    relaxStage.finalize(_graph);
 }
 
 void Pipeline::add(const std::vector<std::string> &paths)
