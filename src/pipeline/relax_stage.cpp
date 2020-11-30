@@ -14,7 +14,7 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
     for (size_t node_id : node_ids)
     {
         const auto *node = graph.getNode(node_id);
-        CameraPose pose;
+        NodePose pose;
         pose.node_id = node_id;
         pose.orientation = node->payload.orientation;
         pose.position = node->payload.position;
@@ -24,33 +24,8 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
 
 std::vector<std::function<void()>> RelaxStage::get_runners(const MeasurementGraph &graph)
 {
-    struct measurement
-    {
-        CameraPose *pose;
-    };
-
     auto runner = [&]() {
-        std::vector<measurement> measurements;
-        measurements.reserve(_local_poses.size() * 10);
-        for (auto &pose : _local_poses)
-        {
-            auto *node = graph.getNode(pose.node_id);
-            const auto &edges = node->getEdges();
-            for (size_t edge_id : edges)
-            {
-                auto *edge = graph.getEdge(edge_id);
-
-                measurement m;
-                m.pose = &pose;
-                if (edge->getDest() == pose.node_id)
-                {
-                }
-                else if (edge->getSource() == pose.node_id)
-                {
-                }
-                measurements.push_back(m);
-            }
-        }
+       relaxExternal(graph, _local_poses);
     };
 
     return {runner};

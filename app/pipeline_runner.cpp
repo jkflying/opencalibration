@@ -4,6 +4,8 @@
 
 #include <spdlog/spdlog.h>
 
+#include <omp.h>
+
 #include <filesystem>
 #include <iostream>
 #include <thread>
@@ -14,7 +16,11 @@ using namespace std::chrono_literals;
 int main(int argc, char *argv[])
 {
     spdlog::set_level(spdlog::level::info);
-    Pipeline p(64);
+    int pipeline_width = omp_get_max_threads();
+
+    spdlog::info("Pipeline width set to {}", pipeline_width);
+
+    Pipeline p(pipeline_width);
     std::vector<std::string> files;
 
     if (argc > 1)

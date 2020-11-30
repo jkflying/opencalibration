@@ -2,7 +2,7 @@
 
 #include <opencalibration/pipeline/pipeline.hpp>
 
-#include <opencalibration/types/node_links.hpp>
+#include <opencalibration/types/node_pose.hpp>
 
 namespace opencalibration
 {
@@ -17,14 +17,8 @@ class RelaxStage
     std::vector<size_t> finalize(MeasurementGraph &graph);
 
   private:
-    struct CameraPose
-    {
-        size_t node_id;
-        Eigen::Quaterniond orientation;
-        Eigen::Vector3d position;
-    };
 
-    std::vector<CameraPose> _local_poses;
+    std::vector<NodePose> _local_poses;
 };
 
 } // namespace opencalibration
