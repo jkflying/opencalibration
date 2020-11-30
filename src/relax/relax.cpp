@@ -61,5 +61,21 @@ void relaxExternal(const MeasurementGraph &graph, std::vector<NodePose> &nodes)
 {
     (void)graph;
     (void)nodes;
+
+    ceres::Problem::Options problemOptions;
+    problemOptions.cost_function_ownership = ceres::TAKE_OWNERSHIP;
+    problemOptions.loss_function_ownership = ceres::TAKE_OWNERSHIP;
+    problemOptions.local_parameterization_ownership = ceres::TAKE_OWNERSHIP;
+
+    ceres::Problem problem(problemOptions);
+
+    ceres::Solver::Options solverOptions;
+    solverOptions.num_threads = 1;
+    solverOptions.linear_solver_type = ceres::DENSE_NORMAL_CHOLESKY;
+
+    ceres::Solver::Summary summary;
+
+    ceres::Solver solver;
+    solver.Solve(solverOptions, &problem, &summary);
 }
 } // namespace opencalibration

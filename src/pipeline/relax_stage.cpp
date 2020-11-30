@@ -1,5 +1,7 @@
 #include <opencalibration/pipeline/relax_stage.hpp>
 
+#include <opencalibration/relax/relax.hpp>
+
 #include <spdlog/spdlog.h>
 
 namespace opencalibration
