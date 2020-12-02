@@ -1,6 +1,7 @@
 #pragma once
 
 #include <opencalibration/geo_coord/geo_coord.hpp>
+#include <opencalibration/types/measurement_graph.hpp>
 
 #include <jk/KDTree.h>
 

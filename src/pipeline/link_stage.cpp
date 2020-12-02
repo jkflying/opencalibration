@@ -3,6 +3,7 @@
 #include <opencalibration/distort/distort_keypoints.hpp>
 #include <opencalibration/match/match_features.hpp>
 #include <opencalibration/model_inliers/ransac.hpp>
+#include <opencalibration/relax/relax.hpp>
 
 #include <spdlog/spdlog.h>
 
