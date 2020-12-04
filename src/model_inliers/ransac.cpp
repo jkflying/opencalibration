@@ -149,7 +149,6 @@ bool homography_model::decompose(const std::vector<correspondence> &corrs, const
     }
 
     return best_score > 0;
-
 }
 
 template <int n> double fast_pow(double d);
@@ -185,7 +184,7 @@ double ransac(const std::vector<correspondence> &matches, Model &model, std::vec
 
     auto random_k_from_n = [&generator](int n) {
         std::array<size_t, Model::MINIMUM_POINTS> indices;
-        std::uniform_int_distribution<size_t> distribution(0, n-1);
+        std::uniform_int_distribution<size_t> distribution(0, n - 1);
         for (size_t j = 0; j < Model::MINIMUM_POINTS; j++)
         {
             size_t candidate = distribution(generator);

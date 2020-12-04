@@ -1,3 +1,4 @@
+// clang-format off
 /*
   TinyEXIF.cpp -- A simple ISO C++ library to parse basic EXIF and XMP
                   information from a JPEG file.

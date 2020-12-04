@@ -39,10 +39,9 @@ class Pipeline
     }
 
   private:
-    void process_images(const std::vector<std::string> &paths_to_load,
-                              const std::vector<size_t> &previous_loaded_ids,
-                              const std::vector<size_t> &previous_linked_ids, std::vector<size_t> &next_loaded_ids,
-                              std::vector<size_t> &next_linked_ids);
+    void process_images(const std::vector<std::string> &paths_to_load, const std::vector<size_t> &previous_loaded_ids,
+                        const std::vector<size_t> &previous_linked_ids, std::vector<size_t> &next_loaded_ids,
+                        std::vector<size_t> &next_linked_ids);
 
     std::condition_variable _queue_condition_variable;
     std::mutex _queue_mutex;

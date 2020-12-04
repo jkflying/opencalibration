@@ -7,6 +7,6 @@
 namespace opencalibration
 {
 
-    image_metadata extract_metadata(const std::string& path);
+image_metadata extract_metadata(const std::string &path);
 
 }

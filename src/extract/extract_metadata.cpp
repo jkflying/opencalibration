@@ -95,7 +95,7 @@ image_metadata extract_metadata(const std::string &path)
          * Use sensor and lens physical size to determine focal length in pixels
          */
         double scale = 25.4;
-        if(imageEXIF.LensInfo.FocalPlaneResolutionUnit == 3)
+        if (imageEXIF.LensInfo.FocalPlaneResolutionUnit == 3)
         {
             scale = 10;
         }

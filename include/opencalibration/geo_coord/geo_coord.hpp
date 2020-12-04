@@ -1,10 +1,9 @@
 #pragma once
 
-
 #include <Eigen/Core>
 
-#include <string>
 #include <memory>
+#include <string>
 
 class OGRCoordinateTransformation;
 
@@ -22,7 +21,7 @@ class GeoCoord
 
     Eigen::Vector3d toLocalCS(double latitude, double longitude, double altitude) const;
 
-    Eigen::Vector3d toWGS84(const Eigen::Vector3d& local) const;
+    Eigen::Vector3d toWGS84(const Eigen::Vector3d &local) const;
 
     std::string getWKT() const;
 

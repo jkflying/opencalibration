@@ -17,7 +17,6 @@ class RelaxStage
     std::vector<size_t> finalize(MeasurementGraph &graph);
 
   private:
-
     std::vector<NodePose> _local_poses;
 };
 

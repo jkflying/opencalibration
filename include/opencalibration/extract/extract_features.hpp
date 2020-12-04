@@ -4,7 +4,8 @@
 
 #include <vector>
 
-namespace opencalibration {
+namespace opencalibration
+{
 
 std::vector<feature_2d> extract_features(const std::string &path);
 }

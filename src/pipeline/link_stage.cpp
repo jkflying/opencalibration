@@ -128,16 +128,17 @@ std::vector<size_t> BuildLinksStage::finalize(MeasurementGraph &graph)
         graph.addEdge(std::move(measurements.relations), measurements.node_id, measurements.match_node_id);
     }
     _all_inlier_measurements.clear();
-    
+
     std::vector<size_t> node_ids;
     node_ids.reserve(_links.size());
-    for(const auto& link : _links) {
-       node_ids.push_back(link.node_id);
+    for (const auto &link : _links)
+    {
+        node_ids.push_back(link.node_id);
     }
     _links.clear();
-    
+
     initializeOrientation(node_ids, graph);
-    
+
     return node_ids;
 }
 

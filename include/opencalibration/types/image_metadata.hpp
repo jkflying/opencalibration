@@ -1,7 +1,7 @@
 #pragma once
 
-#include <string>
 #include <Eigen/Core>
+#include <string>
 
 namespace opencalibration
 {
@@ -10,7 +10,7 @@ struct image_metadata
 {
     size_t width_px = 0, height_px = 0;
     double focal_length_px = NAN;
-    Eigen::Vector2d principal_point_px {NAN, NAN};
+    Eigen::Vector2d principal_point_px{NAN, NAN};
 
     double latitude = NAN;
     double longitude = NAN;
@@ -28,9 +28,10 @@ struct image_metadata
     std::string timestamp;
     std::string datestamp;
 
-    bool operator==(const image_metadata& other) const
+    bool operator==(const image_metadata &other) const
     {
-        auto double_eq = [](double a, double b){return a == b || (std::isnan(a) && std::isnan(b));};
+        auto double_eq = [](double a, double b) { return a == b || (std::isnan(a) && std::isnan(b)); };
+        // clang-format off
         return width_px == other.width_px &&
                 height_px == other.height_px &&
                 double_eq(focal_length_px , other.focal_length_px) &&
@@ -46,6 +47,7 @@ struct image_metadata
                 datum == other.datum &&
                 timestamp == other.timestamp &&
                 datestamp == other.datestamp;
+        // clang-format on
     }
 };
-}
+} // namespace opencalibration

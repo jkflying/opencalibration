@@ -51,13 +51,13 @@ template <> class Deserializer<MeasurementGraph>
                     image img;
                     img.path = niter->value.GetObject()["path"].GetString();
 
-                    const auto& position = niter->value.GetObject()["position"].GetArray();
+                    const auto &position = niter->value.GetObject()["position"].GetArray();
                     for (int i = 0; i < 3; i++)
                     {
                         img.position[i] = position[i].GetDouble();
                     }
 
-                    const auto& orientation = niter->value.GetObject()["orientation"].GetArray();
+                    const auto &orientation = niter->value.GetObject()["orientation"].GetArray();
                     for (int i = 0; i < 4; i++)
                     {
                         img.orientation.coeffs()[i] = orientation[i].GetDouble();

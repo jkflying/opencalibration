@@ -12,8 +12,8 @@ namespace opencalibration
 
 std::vector<correspondence> distort_keypoints(const std::vector<feature_2d> &features1,
                                               const std::vector<feature_2d> &features2,
-                                              const std::vector<feature_match> &matches,
-                                              const CameraModel &model1, const CameraModel &model2);
+                                              const std::vector<feature_match> &matches, const CameraModel &model1,
+                                              const CameraModel &model2);
 
 Eigen::Vector3d image_to_3d(const Eigen::Vector2d &keypoint, const CameraModel &model);
 
