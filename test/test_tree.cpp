@@ -25,7 +25,7 @@ TEST(kdtree, finds_nearest)
     EXPECT_EQ(lazyMonsterVictims[0].payload, "Melvin");
     EXPECT_DOUBLE_EQ(lazyMonsterVictims[0].distance, 2); // distance is squared
     EXPECT_EQ(lazyMonsterVictims[1].payload, "Harold");
-    EXPECT_DOUBLE_EQ(lazyMonsterVictims[1].distance, 3*3 + 5*5); // distance is squared
+    EXPECT_DOUBLE_EQ(lazyMonsterVictims[1].distance, 3 * 3 + 5 * 5); // distance is squared
 
     // ball search
     point_t stationaryMonsterLocation{{8, 8}}; // this monster doesn't move, so can only eat people that are close

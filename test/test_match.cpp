@@ -45,8 +45,8 @@ TEST(match, finds_correspondences)
         };
         for (const feature_match &m : matches)
         {
-            const feature_2d& f1 = feat1[m.feature_index_1];
-            const feature_2d& f2 = feat2[m.feature_index_2];
+            const feature_2d &f1 = feat1[m.feature_index_1];
+            const feature_2d &f2 = feat2[m.feature_index_2];
 
             cv::circle(img_combo, toPoint(f1.location), 30, cv::Scalar(0, 0, 255), 5);
             cv::circle(img_combo, toPoint(f2.location + img2_offset), 30, cv::Scalar(0, 0, 255), 5);

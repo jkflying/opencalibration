@@ -12,11 +12,11 @@ TEST(distort, image_to_3d_to_image)
     model.pixels_rows = 3000;
     model.principle_point = Eigen::Vector2d(model.pixels_cols, model.pixels_rows) / 2;
 
-    for (size_t i = 0; i < model.pixels_cols; i+=10)
+    for (size_t i = 0; i < model.pixels_cols; i += 10)
     {
-        for (size_t j = 0; j < model.pixels_rows; j+=10)
+        for (size_t j = 0; j < model.pixels_rows; j += 10)
         {
-            Eigen::Vector2d p(i,j);
+            Eigen::Vector2d p(i, j);
             Eigen::Vector2d p2 = image_from_3d(image_to_3d(p, model), model);
 
             EXPECT_NEAR(p.x(), p2.x(), 1e-9);
