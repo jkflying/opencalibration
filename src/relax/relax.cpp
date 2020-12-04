@@ -57,7 +57,7 @@ void initializeOrientation(const std::vector<size_t> &node_ids, MeasurementGraph
     }
 }
 
-void relaxExternal(const MeasurementGraph &graph, std::vector<NodePose> &nodes)
+void relaxDecompositions(const MeasurementGraph &graph, std::vector<NodePose> &nodes)
 {
     (void)graph;
     (void)nodes;
