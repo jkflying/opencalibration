@@ -57,6 +57,45 @@ void initializeOrientation(const std::vector<size_t> &node_ids, MeasurementGraph
     }
 }
 
+// cost functions for rotations relative to positions
+struct DecomposedRotationCost
+{
+    DecomposedRotationCost(const camera_relations &relations, const Eigen::Vector3d &translation1,
+                           const Eigen::Vector3d &translation2)
+        : _relations(relations), _translation1(translation1), _translation2(translation2)
+    {
+    }
+
+    template <typename T> bool operator()(const T *rotation1, const T *rotation2, T *residuals) const
+    {
+        using QuaterionT = Eigen::Quaternion<T>;
+        using Vector3T = Eigen::Matrix<T, 3, 1>;
+
+        using QuaterionTCM = Eigen::Map<const QuaterionT>;
+
+        const QuaterionTCM rotation1_em(rotation1);
+        const QuaterionT rotation2_em(rotation2);
+
+        // translate everything into camera1 frame
+
+        const QuaterionT rotation2_1 = rotation1_em.inverse() * rotation2_em;
+
+        const Vector3T rotated_translation2_1 = rotation1_em.inverse() * (_translation2 - _translation1).cast<T>();
+
+        residuals[0] = Eigen::AngleAxis<T>(rotation2_1 * _relations.relative_rotation.inverse().cast<T>()).angle();
+        residuals[1] =
+            M_PI *
+            (T(1) - rotated_translation2_1.dot(_relations.relative_translation) /
+                        sqrt(rotated_translation2_1.squaredNorm() * _relations.relative_translation.squaredNorm()));
+
+        return true;
+    }
+
+  private:
+    const camera_relations &_relations;
+    const Eigen::Vector3d &_translation1, _translation2;
+};
+
 void relaxDecompositions(const MeasurementGraph &graph, std::vector<NodePose> &nodes)
 {
     (void)graph;
@@ -68,6 +107,13 @@ void relaxDecompositions(const MeasurementGraph &graph, std::vector<NodePose> &n
     problemOptions.local_parameterization_ownership = ceres::TAKE_OWNERSHIP;
 
     ceres::Problem problem(problemOptions);
+
+    if (false)
+    {
+        camera_relations relations;
+        Eigen::Vector3d a, b;
+        ceres::AutoDiffCostFunction<DecomposedRotationCost, 2, 4, 4> cost(new DecomposedRotationCost(relations, a, b));
+    }
 
     ceres::Solver::Options solverOptions;
     solverOptions.num_threads = 1;
