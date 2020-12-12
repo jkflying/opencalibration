@@ -89,7 +89,7 @@ void Pipeline::process_images(const std::vector<std::string> &paths_to_load,
 
     funcs.reserve(load_funcs.size() + link_funcs.size());
     // interleave the functions to spread resource usage across the excution
-    while (load_funcs.size() > 0 || link_funcs.size() > 0)
+    while (load_funcs.size() > 0 || link_funcs.size() > 0 || relax_funcs.size() > 0)
     {
         if (relax_funcs.size() > 0)
         {

@@ -3,7 +3,6 @@
 #include <opencalibration/distort/distort_keypoints.hpp>
 #include <opencalibration/match/match_features.hpp>
 #include <opencalibration/model_inliers/ransac.hpp>
-#include <opencalibration/relax/relax.hpp>
 
 #include <spdlog/spdlog.h>
 
@@ -136,8 +135,6 @@ std::vector<size_t> BuildLinksStage::finalize(MeasurementGraph &graph)
         node_ids.push_back(link.node_id);
     }
     _links.clear();
-
-    initializeOrientation(node_ids, graph);
 
     return node_ids;
 }

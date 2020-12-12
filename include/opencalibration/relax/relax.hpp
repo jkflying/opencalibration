@@ -6,8 +6,7 @@
 namespace opencalibration
 {
 
-void initializeOrientation(const std::vector<size_t> &node_ids, MeasurementGraph &graph);
-
+void initializeOrientation(const MeasurementGraph &graph, std::vector<NodePose> &nodes);
 void relaxDecompositions(const MeasurementGraph &graph, std::vector<NodePose> &nodes);
 
 // TODO: keep the ray intersection points?

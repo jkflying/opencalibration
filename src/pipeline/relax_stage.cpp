@@ -22,6 +22,8 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
         pose.position = node->payload.position;
         _local_poses.push_back(pose);
     }
+
+    initializeOrientation(graph, _local_poses);
 }
 
 std::vector<std::function<void()>> RelaxStage::get_runners(const MeasurementGraph &graph)
