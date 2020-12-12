@@ -26,9 +26,11 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
 
 std::vector<std::function<void()>> RelaxStage::get_runners(const MeasurementGraph &graph)
 {
-    auto runner = [&]() { relaxDecompositions(graph, _local_poses); };
-
-    return {runner};
+    if (_local_poses.size() > 0)
+    {
+        return {[&]() { relaxDecompositions(graph, _local_poses); }};
+    }
+    return {};
 }
 
 std::vector<size_t> RelaxStage::finalize(MeasurementGraph &graph)

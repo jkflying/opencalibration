@@ -19,7 +19,10 @@ void initializeOrientation(const std::vector<size_t> &node_ids, MeasurementGraph
     {
         MeasurementGraph::Node *node = graph.getNode(node_id);
         if (node == nullptr)
-            return;
+        {
+            spdlog::error("Null node referenced from optimization list");
+            continue;
+        }
 
         // get connections
         hypotheses.clear();
@@ -60,8 +63,8 @@ void initializeOrientation(const std::vector<size_t> &node_ids, MeasurementGraph
 // cost functions for rotations relative to positions
 struct DecomposedRotationCost
 {
-    DecomposedRotationCost(const camera_relations &relations, const Eigen::Vector3d &translation1,
-                           const Eigen::Vector3d &translation2)
+    DecomposedRotationCost(const camera_relations &relations, const Eigen::Vector3d *translation1,
+                           const Eigen::Vector3d *translation2)
         : _relations(relations), _translation1(translation1), _translation2(translation2)
     {
     }
@@ -80,7 +83,7 @@ struct DecomposedRotationCost
 
         const QuaterionT rotation2_1 = rotation1_em.inverse() * rotation2_em;
 
-        const Vector3T rotated_translation2_1 = rotation1_em.inverse() * (_translation2 - _translation1).cast<T>();
+        const Vector3T rotated_translation2_1 = rotation1_em.inverse() * (*_translation2 - *_translation1).cast<T>();
 
         residuals[0] = Eigen::AngleAxis<T>(rotation2_1 * _relations.relative_rotation.inverse().cast<T>()).angle();
         residuals[1] =
@@ -93,14 +96,11 @@ struct DecomposedRotationCost
 
   private:
     const camera_relations &_relations;
-    const Eigen::Vector3d &_translation1, _translation2;
+    const Eigen::Vector3d *_translation1, *_translation2;
 };
 
 void relaxDecompositions(const MeasurementGraph &graph, std::vector<NodePose> &nodes)
 {
-    (void)graph;
-    (void)nodes;
-
     ceres::Problem::Options problemOptions;
     problemOptions.cost_function_ownership = ceres::TAKE_OWNERSHIP;
     problemOptions.loss_function_ownership = ceres::TAKE_OWNERSHIP;
@@ -108,19 +108,115 @@ void relaxDecompositions(const MeasurementGraph &graph, std::vector<NodePose> &n
 
     ceres::Problem problem(problemOptions);
 
-    if (false)
+    std::unordered_map<size_t, NodePose *> nodes_to_optimize;
+    nodes_to_optimize.reserve(nodes.size());
+
+    for (NodePose &n : nodes)
     {
-        camera_relations relations;
-        Eigen::Vector3d a, b;
-        ceres::AutoDiffCostFunction<DecomposedRotationCost, 2, 4, 4> cost(new DecomposedRotationCost(relations, a, b));
+        nodes_to_optimize.emplace(n.node_id, &n);
+    }
+
+    std::unordered_set<size_t> edges_used, external_nodes_used;
+    for (NodePose &n : nodes)
+    {
+        const auto *node = graph.getNode(n.node_id);
+        if (node == nullptr)
+        {
+            spdlog::error("Null node referenced from optimization list");
+            continue;
+        }
+        const auto &edgesIds = node->getEdges();
+        for (size_t edge_id : edgesIds)
+        {
+            const auto *edge = graph.getEdge(edge_id);
+            if (edge == nullptr)
+            {
+                spdlog::error("Null edge referenced from node");
+                continue;
+            }
+
+            // skip unitialized edges
+            if (edge->payload.relative_rotation.coeffs().hasNaN() || edge->payload.relative_translation.hasNaN())
+            {
+                continue;
+            }
+
+            bool n_is_source = edge->getSource() == n.node_id;
+
+            size_t other_id = n_is_source ? edge->getDest() : edge->getSource();
+
+            bool other_also_optimized = nodes_to_optimize.find(other_id) != nodes_to_optimize.end();
+
+            Eigen::Vector3d *n_loc_ptr = &n.position, *other_loc_ptr;
+            Eigen::Quaterniond *n_rot_ptr = &n.orientation, *other_rot_ptr;
+
+            if (other_also_optimized)
+            {
+                NodePose *other = nodes_to_optimize.find(other_id)->second;
+                other_loc_ptr = &other->position;
+                other_rot_ptr = &other->orientation;
+            }
+            else
+            {
+                const auto *other = graph.getNode(other_id);
+                if (other == nullptr)
+                {
+                    spdlog::error("Null node referenced from edge list");
+                    continue;
+                }
+
+                if (other->payload.orientation.coeffs().hasNaN() || other->payload.position.hasNaN())
+                {
+                    continue;
+                }
+
+                // rather set the parameter block const once we've added it
+                // otherwise we'd need a combinatorial list of const/mutable cost functions
+                // although that would technically lead to faster jacobian evaluation
+                other_loc_ptr = const_cast<Eigen::Vector3d *>(&other->payload.position);
+                other_rot_ptr = const_cast<Eigen::Quaterniond *>(&other->payload.orientation);
+            }
+
+            Eigen::Vector3d *source_loc_ptr, *dest_loc_ptr;
+            Eigen::Quaterniond *source_rot_ptr, *dest_rot_ptr;
+
+            if (n_is_source)
+            {
+                source_loc_ptr = n_loc_ptr;
+                source_rot_ptr = n_rot_ptr;
+                dest_loc_ptr = other_loc_ptr;
+                dest_rot_ptr = other_rot_ptr;
+            }
+            else
+            {
+                source_loc_ptr = other_loc_ptr;
+                source_rot_ptr = other_rot_ptr;
+                dest_loc_ptr = n_loc_ptr;
+                dest_rot_ptr = n_rot_ptr;
+            }
+
+            problem.AddResidualBlock(new ceres::AutoDiffCostFunction<DecomposedRotationCost, 2, 4, 4>(
+                                         new DecomposedRotationCost(edge->payload, source_loc_ptr, dest_loc_ptr)),
+                                     nullptr, source_rot_ptr->coeffs().data(), dest_rot_ptr->coeffs().data());
+
+            if (!other_also_optimized)
+            {
+                problem.SetParameterBlockConstant(other_rot_ptr->coeffs().data());
+            }
+
+            edges_used.emplace(edge_id);
+            external_nodes_used.emplace(other_id);
+        }
     }
 
     ceres::Solver::Options solverOptions;
     solverOptions.num_threads = 1;
     solverOptions.linear_solver_type = ceres::DENSE_NORMAL_CHOLESKY;
 
-    ceres::Solver::Summary summary;
+    spdlog::debug("Start rotation relax: {} active nodes, {} edges, {} inactive nodes", nodes.size(), edges_used.size(),
+                  external_nodes_used.size());
 
+    ceres::Solver::Summary summary;
     ceres::Solver solver;
     solver.Solve(solverOptions, &problem, &summary);
 }
