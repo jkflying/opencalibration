@@ -10,7 +10,7 @@
 namespace opencalibration
 {
 
-static const Eigen::Quaterniond DOWN_ORIENTED_NORTH = Eigen::Quaterniond::Identity(); // TODO FIXME
+static const Eigen::Quaterniond DOWN_ORIENTED_NORTH(Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()));
 
 void initializeOrientation(const MeasurementGraph &graph, std::vector<NodePose> &nodes)
 {
@@ -61,6 +61,26 @@ void initializeOrientation(const MeasurementGraph &graph, std::vector<NodePose> 
     }
 }
 
+struct PointsDownwardsPrior
+{
+    template <typename T> bool operator()(const T *rotation1, T *residuals) const
+    {
+        using QuaterionT = Eigen::Quaternion<T>;
+        using Vector3T = Eigen::Matrix<T, 3, 1>;
+        using QuaterionTCM = Eigen::Map<const QuaterionT>;
+
+        const QuaterionTCM rotation_em(rotation1);
+
+        const Eigen::Vector3d cam_center(0, 0, 1);
+        const Eigen::Vector3d down(0, 0, -1);
+
+        Vector3T rotated_cam_center = rotation_em.normalized() * cam_center.cast<T>();
+
+        *residuals = T(1) - rotated_cam_center.dot(down.cast<T>());
+        return true;
+    }
+};
+
 // cost functions for rotations relative to positions
 struct DecomposedRotationCost
 {
@@ -74,7 +94,6 @@ struct DecomposedRotationCost
     {
         using QuaterionT = Eigen::Quaternion<T>;
         using Vector3T = Eigen::Matrix<T, 3, 1>;
-
         using QuaterionTCM = Eigen::Map<const QuaterionT>;
 
         const QuaterionTCM rotation1_em(rotation1);
@@ -108,7 +127,7 @@ void relaxDecompositions(const MeasurementGraph &graph, std::vector<NodePose> &n
     problemOptions.local_parameterization_ownership = ceres::DO_NOT_TAKE_OWNERSHIP;
 
     ceres::EigenQuaternionParameterization quat_parameterization;
-    ceres::HuberLoss huber_loss(M_2_PI / 12);
+    ceres::HuberLoss huber_loss(M_PI_4);
 
     ceres::Problem problem(problemOptions);
 
@@ -203,9 +222,6 @@ void relaxDecompositions(const MeasurementGraph &graph, std::vector<NodePose> &n
                                          new DecomposedRotationCost(edge->payload, source_loc_ptr, dest_loc_ptr)),
                                      &huber_loss, source_rot_ptr->coeffs().data(), dest_rot_ptr->coeffs().data());
 
-            problem.SetParameterization(source_rot_ptr->coeffs().data(), &quat_parameterization);
-            problem.SetParameterization(dest_rot_ptr->coeffs().data(), &quat_parameterization);
-
             if (!other_also_optimized)
             {
                 problem.SetParameterBlockConstant(other_rot_ptr->coeffs().data());
@@ -217,6 +233,14 @@ void relaxDecompositions(const MeasurementGraph &graph, std::vector<NodePose> &n
                 external_nodes_used.emplace(other_id);
             }
         }
+    }
+
+    for (NodePose &n : nodes)
+    {
+        problem.AddResidualBlock(
+            new ceres::AutoDiffCostFunction<PointsDownwardsPrior, 1, 4>(new PointsDownwardsPrior()), nullptr,
+            n.orientation.coeffs().data());
+        problem.SetParameterization(n.orientation.coeffs().data(), &quat_parameterization);
     }
 
     ceres::Solver::Options solverOptions;
