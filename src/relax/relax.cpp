@@ -102,14 +102,12 @@ struct DecomposedRotationCost
         // translate everything into camera1 frame
 
         const QuaterionT rotation2_1 = rotation1_em.inverse() * rotation2_em;
-
         const Vector3T rotated_translation2_1 = rotation1_em.inverse() * (*_translation2 - *_translation1).cast<T>();
 
-        residuals[0] = Eigen::AngleAxis<T>(rotation2_1 * _relations.relative_rotation.inverse().cast<T>()).angle();
-        residuals[1] =
-            M_PI *
-            (T(1) - rotated_translation2_1.dot(_relations.relative_translation) /
-                        sqrt(rotated_translation2_1.squaredNorm() * _relations.relative_translation.squaredNorm()));
+        residuals[0] = acos(T(0.9999) * rotated_translation2_1.dot(_relations.relative_translation) /
+                            sqrt(rotated_translation2_1.squaredNorm() * _relations.relative_translation.squaredNorm()));
+
+        residuals[1] = Eigen::AngleAxis<T>(rotation2_1 * _relations.relative_rotation.inverse().cast<T>()).angle();
 
         return true;
     }
@@ -136,6 +134,7 @@ void relaxDecompositions(const MeasurementGraph &graph, std::vector<NodePose> &n
 
     for (NodePose &n : nodes)
     {
+        n.orientation.normalize();
         nodes_to_optimize.emplace(n.node_id, &n);
     }
 
@@ -247,6 +246,7 @@ void relaxDecompositions(const MeasurementGraph &graph, std::vector<NodePose> &n
     solverOptions.num_threads = 1;
     solverOptions.linear_solver_type = ceres::DENSE_NORMAL_CHOLESKY;
     solverOptions.max_num_iterations = 150;
+    solverOptions.use_inner_iterations = true;
 
     spdlog::debug("Start rotation relax: {} active nodes, {} edges, {} inactive nodes", nodes.size(), edges_used.size(),
                   external_nodes_used.size());
@@ -255,5 +255,10 @@ void relaxDecompositions(const MeasurementGraph &graph, std::vector<NodePose> &n
     ceres::Solver solver;
     solver.Solve(solverOptions, &problem, &summary);
     spdlog::debug(summary.BriefReport());
+
+    for (NodePose &n : nodes)
+    {
+        n.orientation.normalize();
+    }
 }
 } // namespace opencalibration
