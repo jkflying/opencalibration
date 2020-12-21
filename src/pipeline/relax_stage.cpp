@@ -65,14 +65,17 @@ std::vector<std::function<void()>> RelaxStage::get_runners(const MeasurementGrap
 
 std::vector<size_t> RelaxStage::finalize(MeasurementGraph &graph)
 {
+    std::vector<size_t> optimized_ids;
+    optimized_ids.reserve(_local_poses.size());
     for (const auto &pose : _local_poses)
     {
         auto *node = graph.getNode(pose.node_id);
         node->payload.orientation = pose.orientation;
         node->payload.position = pose.position;
+        optimized_ids.push_back(pose.node_id);
     }
     _local_poses.clear();
-    return {};
+    return optimized_ids;
 }
 
 } // namespace opencalibration

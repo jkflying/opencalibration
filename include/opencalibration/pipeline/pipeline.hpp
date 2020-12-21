@@ -28,6 +28,13 @@ class Pipeline
         COMPLETE
     };
 
+    struct StepCompletionInfo
+    {
+        std::reference_wrapper<std::vector<size_t>> loaded_ids, linked_ids, relaxed_ids;
+        size_t images_loaded, queue_size_remaining;
+    };
+    using StepCompletionCallback = std::function<void(const StepCompletionInfo &)>;
+
     Pipeline(size_t batch_size = 1);
     ~Pipeline();
 
@@ -35,11 +42,17 @@ class Pipeline
 
     void add(const std::vector<std::string> &filename);
 
-    const MeasurementGraph &getGraph(); // warning - not threadsafe
+    // warning - not threadsafe, only access from callback or when finished
+    const MeasurementGraph &getGraph();
 
     const GeoCoord &getCoord() const
     {
         return _coordinate_system;
+    }
+
+    void set_callback(const StepCompletionCallback &step_complete)
+    {
+        _step_callback = step_complete;
     }
 
   private:
@@ -49,7 +62,7 @@ class Pipeline
 
     void process_images(const std::vector<std::string> &paths_to_load, const std::vector<size_t> &previous_loaded_ids,
                         const std::vector<size_t> &previous_linked_ids, std::vector<size_t> &next_loaded_ids,
-                        std::vector<size_t> &next_linked_ids);
+                        std::vector<size_t> &next_linked_ids, std::vector<size_t> &next_relaxed_ids);
 
     std::condition_variable _queue_condition_variable;
     std::mutex _queue_mutex;
@@ -76,5 +89,7 @@ class Pipeline
     GeoCoord _coordinate_system;
 
     size_t _last_graph_size_full_relax = 0;
+
+    StepCompletionCallback _step_callback;
 };
 } // namespace opencalibration

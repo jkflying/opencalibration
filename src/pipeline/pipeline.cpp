@@ -14,7 +14,8 @@ using namespace std::chrono_literals;
 namespace opencalibration
 {
 Pipeline::Pipeline(size_t batch_size)
-    : _load_stage(new LoadStage()), _link_stage(new LinkStage()), _relax_stage(new RelaxStage())
+    : _load_stage(new LoadStage()), _link_stage(new LinkStage()), _relax_stage(new RelaxStage()),
+      _step_callback([](const StepCompletionInfo &) {})
 {
     _keep_running = true;
 
@@ -31,7 +32,8 @@ Pipeline::Pipeline(size_t batch_size)
     _runner.thread.reset(new std::thread([this, batch_size, get_paths]() {
         std::mutex sleep_mutex;
         std::vector<std::string> paths;
-        std::vector<size_t> previous_loaded_ids, previous_linked_ids, next_loaded_ids, next_linked_ids;
+        std::vector<size_t> previous_loaded_ids, previous_linked_ids, next_loaded_ids, next_linked_ids,
+            next_relaxed_ids;
         paths.reserve(batch_size);
         previous_loaded_ids.reserve(batch_size);
         previous_linked_ids.reserve(batch_size);
@@ -45,7 +47,13 @@ Pipeline::Pipeline(size_t batch_size)
                 _runner.status = ThreadStatus::BUSY;
                 next_loaded_ids.clear();
                 next_linked_ids.clear();
-                process_images(paths, previous_loaded_ids, previous_linked_ids, next_loaded_ids, next_linked_ids);
+                process_images(paths, previous_loaded_ids, previous_linked_ids, next_loaded_ids, next_linked_ids,
+                               next_relaxed_ids);
+
+                StepCompletionInfo info{next_loaded_ids, next_linked_ids, next_relaxed_ids, _graph.size_nodes(),
+                                        _add_queue.size()};
+                _step_callback(info);
+
                 std::swap(previous_loaded_ids, next_loaded_ids);
                 std::swap(previous_linked_ids, next_linked_ids);
             }
@@ -72,7 +80,7 @@ Pipeline::~Pipeline()
 void Pipeline::process_images(const std::vector<std::string> &paths_to_load,
                               const std::vector<size_t> &previous_loaded_ids,
                               const std::vector<size_t> &previous_linked_ids, std::vector<size_t> &next_loaded_ids,
-                              std::vector<size_t> &next_linked_ids)
+                              std::vector<size_t> &next_linked_ids, std::vector<size_t> &next_relaxed_ids)
 {
     std::vector<std::function<void()>> funcs;
 
@@ -122,7 +130,7 @@ void Pipeline::process_images(const std::vector<std::string> &paths_to_load,
     std::lock_guard<std::mutex> graph_lock(_graph_structure_mutex);
     next_loaded_ids = _load_stage->finalize(_coordinate_system, _graph, _imageGPSLocations);
     next_linked_ids = _link_stage->finalize(_graph);
-    _relax_stage->finalize(_graph);
+    next_relaxed_ids = _relax_stage->finalize(_graph);
 }
 
 void Pipeline::add(const std::vector<std::string> &paths)

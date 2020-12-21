@@ -15,14 +15,21 @@ using namespace std::chrono_literals;
 
 int main(int argc, char *argv[])
 {
-    spdlog::set_level(spdlog::level::info);
+    spdlog::set_level(spdlog::level::err);
     int pipeline_width = omp_get_max_threads();
 
     spdlog::info("Pipeline width set to {}", pipeline_width);
 
     Pipeline p(pipeline_width);
-    std::vector<std::string> files;
 
+    p.set_callback([](const Pipeline::StepCompletionInfo &info) {
+        std::cout << "Progress: " << info.images_loaded << " / " << (info.images_loaded + info.queue_size_remaining)
+                  << " "
+                  << " loaded: " << info.loaded_ids.get().size() << " linked: " << info.linked_ids.get().size()
+                  << " relaxed: " << info.relaxed_ids.get().size() << std::endl;
+    });
+
+    std::vector<std::string> files;
     if (argc > 1)
     {
         std::string path = argv[1];
