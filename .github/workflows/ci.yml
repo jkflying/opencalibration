@@ -14,12 +14,12 @@ jobs:
       with:
         submodules: 'true'
     - name: install dependencies
-      run: sudo apt-get update && sudo apt-get install libeigen3-dev libopencv-dev libgdal-dev libceres-dev libgtest-dev rapidjson-dev libspdlog-dev clang-format-10
+      run: sudo apt-get update && sudo apt-get install libeigen3-dev libopencv-dev libgdal-dev libceres-dev libgtest-dev rapidjson-dev libspdlog-dev libtinyxml2-dev clang-format-10 lcov
     - name: check formatting
       run: tools/check_style.sh
     - name: cmake
-      run: mkdir build && cd build && cmake ..
+      run: mkdir build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Coverage
     - name: make -j4
       run: cd build && make
-    - name: make test
-      run: cd build && make test
+    - name: make test_coverage_html
+      run: cd build && make test_coverage_html

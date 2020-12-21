@@ -23,11 +23,19 @@ include_directories(${RAPIDJSON_INCLUDE_DIRS})
 find_package(OpenMP REQUIRED)
 find_package(spdlog REQUIRED)
 
+# find_package(tinyxml2 REQUIRED)
+# include_directories(${TINYXML2_INCLUDE_DIRS})
+
 if(MSVC)
     set (CMAKE_CXX_FLAGS " /W4 /WX")
 else()
     set (CMAKE_CXX_FLAGS " -Wall -Wextra -pedantic -Werror")
 endif()
+
+set(CMAKE_CXX_FLAGS_COVERAGE "--coverage -fprofile-arcs -ftest-coverage -O0 -fno-default-inline -fno-inline -fno-inline-small-functions -fno-elide-constructors -fprofile-abs-path"
+                CACHE STRING "Flags used by the C++ compiler during coverage builds" FORCE)
+set(CMAKE_EXE_LINKER_FLAGS_COVERAGE "--coverage -ftest-coverage -lgcov"
+                       CACHE STRING "Flags used for linking binaries during coverage builds" FORCE)
 
 include_directories(include)
 
