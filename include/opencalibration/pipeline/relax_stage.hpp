@@ -10,7 +10,7 @@ namespace opencalibration
 class RelaxStage
 {
   public:
-    void init(const MeasurementGraph &graph, const std::vector<size_t> &node_ids);
+    void init(const MeasurementGraph &graph, const std::vector<size_t> &node_ids, bool optimize_all);
 
     std::vector<std::function<void()>> get_runners(const MeasurementGraph &graph);
 

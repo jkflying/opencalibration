@@ -163,6 +163,15 @@ template <typename NodePayload, typename EdgePayload> class DirectedGraph
         return _nodes == other._nodes && _edges == other._edges;
     }
 
+    size_t size_nodes() const
+    {
+        return _nodes.size();
+    }
+    size_t size_edges() const
+    {
+        return _edges.size();
+    }
+
   private:
     std::default_random_engine generator;
     std::uniform_int_distribution<size_t> distribution;

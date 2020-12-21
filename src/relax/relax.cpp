@@ -250,7 +250,7 @@ void relaxDecompositions(const MeasurementGraph &graph, std::vector<NodePose> &n
 
     ceres::Solver::Options solverOptions;
     solverOptions.num_threads = 1;
-    solverOptions.linear_solver_type = ceres::DENSE_NORMAL_CHOLESKY;
+    solverOptions.linear_solver_type = ceres::SPARSE_NORMAL_CHOLESKY;
     solverOptions.max_num_iterations = 150;
 
     spdlog::debug("Start rotation relax: {} active nodes, {} edges, {} inactive nodes", nodes.size(), edges_used.size(),

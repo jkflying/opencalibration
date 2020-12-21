@@ -18,8 +18,8 @@ std::array<double, 3> to_array(const Eigen::Vector3d &v)
 namespace opencalibration
 {
 
-void BuildLinksStage::init(const MeasurementGraph &graph, const jk::tree::KDTree<size_t, 3> &imageGPSLocations,
-                           const std::vector<size_t> &node_ids)
+void LinkStage::init(const MeasurementGraph &graph, const jk::tree::KDTree<size_t, 3> &imageGPSLocations,
+                     const std::vector<size_t> &node_ids)
 {
     spdlog::info("Queueing {} image nodes for link building", node_ids.size());
     _links.clear();
@@ -45,7 +45,7 @@ void BuildLinksStage::init(const MeasurementGraph &graph, const jk::tree::KDTree
     }
 }
 
-std::vector<std::function<void()>> BuildLinksStage::get_runners(const MeasurementGraph &graph)
+std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph &graph)
 {
     std::vector<std::function<void()>> funcs;
     funcs.reserve(_links.size());
@@ -120,7 +120,7 @@ std::vector<std::function<void()>> BuildLinksStage::get_runners(const Measuremen
     return funcs;
 }
 
-std::vector<size_t> BuildLinksStage::finalize(MeasurementGraph &graph)
+std::vector<size_t> LinkStage::finalize(MeasurementGraph &graph)
 {
     for (auto &measurements : _all_inlier_measurements)
     {

@@ -7,7 +7,7 @@
 namespace opencalibration
 {
 
-class BuildLinksStage
+class LinkStage
 {
     struct inlier_measurement
     {

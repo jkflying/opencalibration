@@ -14,6 +14,7 @@ using namespace std::chrono_literals;
 namespace opencalibration
 {
 Pipeline::Pipeline(size_t batch_size)
+    : _load_stage(new LoadStage()), _link_stage(new LinkStage()), _relax_stage(new RelaxStage())
 {
     _keep_running = true;
 
@@ -75,19 +76,23 @@ void Pipeline::process_images(const std::vector<std::string> &paths_to_load,
 {
     std::vector<std::function<void()>> funcs;
 
-    LoadStage loadStage;
-    loadStage.init(paths_to_load);
-    std::vector<std::function<void()>> load_funcs = loadStage.get_runners();
+    _load_stage->init(paths_to_load);
+    std::vector<std::function<void()>> load_funcs = _load_stage->get_runners();
 
-    BuildLinksStage linkStage;
-    linkStage.init(_graph, _imageGPSLocations, previous_loaded_ids);
-    std::vector<std::function<void()>> link_funcs = linkStage.get_runners(_graph);
+    _link_stage->init(_graph, _imageGPSLocations, previous_loaded_ids);
+    std::vector<std::function<void()>> link_funcs = _link_stage->get_runners(_graph);
 
-    RelaxStage relaxStage;
-    relaxStage.init(_graph, previous_linked_ids);
-    std::vector<std::function<void()>> relax_funcs = relaxStage.get_runners(_graph);
+    bool optimize_all =
+        _graph.size_nodes() > 1.5 * _last_graph_size_full_relax || (load_funcs.size() == 0 && link_funcs.size() == 0);
+    if (optimize_all)
+    {
+        _last_graph_size_full_relax = _graph.size_nodes();
+    }
 
-    funcs.reserve(load_funcs.size() + link_funcs.size());
+    _relax_stage->init(_graph, previous_linked_ids, optimize_all);
+    std::vector<std::function<void()>> relax_funcs = _relax_stage->get_runners(_graph);
+
+    funcs.reserve(load_funcs.size() + link_funcs.size() + relax_funcs.size());
     // interleave the functions to spread resource usage across the excution
     while (load_funcs.size() > 0 || link_funcs.size() > 0 || relax_funcs.size() > 0)
     {
@@ -107,7 +112,6 @@ void Pipeline::process_images(const std::vector<std::string> &paths_to_load,
             load_funcs.pop_back();
         }
     }
-    std::reverse(funcs.begin(), funcs.end());
 
 #pragma omp parallel for schedule(dynamic)
     for (int i = 0; i < (int)funcs.size(); i++)
@@ -116,9 +120,9 @@ void Pipeline::process_images(const std::vector<std::string> &paths_to_load,
     }
 
     std::lock_guard<std::mutex> graph_lock(_graph_structure_mutex);
-    next_loaded_ids = loadStage.finalize(_coordinate_system, _graph, _imageGPSLocations);
-    next_linked_ids = linkStage.finalize(_graph);
-    relaxStage.finalize(_graph);
+    next_loaded_ids = _load_stage->finalize(_coordinate_system, _graph, _imageGPSLocations);
+    next_linked_ids = _link_stage->finalize(_graph);
+    _relax_stage->finalize(_graph);
 }
 
 void Pipeline::add(const std::vector<std::string> &paths)

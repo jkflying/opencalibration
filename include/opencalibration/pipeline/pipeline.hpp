@@ -15,6 +15,10 @@
 
 namespace opencalibration
 {
+class LoadStage;
+class LinkStage;
+class RelaxStage;
+
 class Pipeline
 {
   public:
@@ -39,6 +43,10 @@ class Pipeline
     }
 
   private:
+    std::unique_ptr<LoadStage> _load_stage;
+    std::unique_ptr<LinkStage> _link_stage;
+    std::unique_ptr<RelaxStage> _relax_stage;
+
     void process_images(const std::vector<std::string> &paths_to_load, const std::vector<size_t> &previous_loaded_ids,
                         const std::vector<size_t> &previous_linked_ids, std::vector<size_t> &next_loaded_ids,
                         std::vector<size_t> &next_linked_ids);
@@ -66,5 +74,7 @@ class Pipeline
     MeasurementGraph _graph;
     jk::tree::KDTree<size_t, 3> _imageGPSLocations;
     GeoCoord _coordinate_system;
+
+    size_t _last_graph_size_full_relax = 0;
 };
 } // namespace opencalibration
