@@ -98,17 +98,22 @@ struct DecomposedRotationCost
         using QuaterionTCM = Eigen::Map<const QuaterionT>;
 
         const QuaterionTCM rotation1_em(rotation1);
-        const QuaterionT rotation2_em(rotation2);
+        const QuaterionTCM rotation2_em(rotation2);
 
-        // translate everything into camera1 frame
-
-        const QuaterionT rotation2_1 = rotation1_em.inverse() * rotation2_em;
+        // angle from camera1 -> camera2
         const Vector3T rotated_translation2_1 = rotation1_em.inverse() * (*_translation2 - *_translation1).cast<T>();
-
         residuals[0] = acos(T(0.99999) * rotated_translation2_1.dot(_relations.relative_translation) /
                             sqrt(rotated_translation2_1.squaredNorm() * _relations.relative_translation.squaredNorm()));
 
-        residuals[1] = Eigen::AngleAxis<T>(rotation2_1 * _relations.relative_rotation.inverse().cast<T>()).angle();
+        // angle from camera2 -> camera1
+        const Vector3T rotated_translation1_2 =
+            rotation2_em.inverse() * (_relations.relative_rotation * (*_translation1 - *_translation2)).cast<T>();
+        residuals[1] = acos(T(0.99999) * rotated_translation1_2.dot(-_relations.relative_translation) /
+                            sqrt(rotated_translation1_2.squaredNorm() * _relations.relative_translation.squaredNorm()));
+
+        // relative orientation of camera1 and camera2
+        const QuaterionT rotation2_1 = rotation1_em.inverse() * rotation2_em;
+        residuals[2] = Eigen::AngleAxis<T>(_relations.relative_rotation.cast<T>() * rotation2_1).angle();
 
         return true;
     }
@@ -218,7 +223,7 @@ void relaxDecompositions(const MeasurementGraph &graph, std::vector<NodePose> &n
                 dest_rot_ptr = n_rot_ptr;
             }
 
-            problem.AddResidualBlock(new ceres::AutoDiffCostFunction<DecomposedRotationCost, 2, 4, 4>(
+            problem.AddResidualBlock(new ceres::AutoDiffCostFunction<DecomposedRotationCost, 3, 4, 4>(
                                          new DecomposedRotationCost(edge->payload, source_loc_ptr, dest_loc_ptr)),
                                      &huber_loss, source_rot_ptr->coeffs().data(), dest_rot_ptr->coeffs().data());
 
@@ -247,7 +252,6 @@ void relaxDecompositions(const MeasurementGraph &graph, std::vector<NodePose> &n
     solverOptions.num_threads = 1;
     solverOptions.linear_solver_type = ceres::DENSE_NORMAL_CHOLESKY;
     solverOptions.max_num_iterations = 150;
-    solverOptions.use_inner_iterations = true;
 
     spdlog::debug("Start rotation relax: {} active nodes, {} edges, {} inactive nodes", nodes.size(), edges_used.size(),
                   external_nodes_used.size());
