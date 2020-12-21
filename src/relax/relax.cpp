@@ -57,7 +57,8 @@ void initializeOrientation(const MeasurementGraph &graph, std::vector<NodePose> 
             vec_sum += h.first * h.second.coeffs();
         }
 
-        node_pose.orientation.coeffs() = weight_sum > 0 ? vec_sum / weight_sum : DOWN_ORIENTED_NORTH.coeffs();
+        node_pose.orientation.coeffs() = weight_sum > 0 ? vec_sum : DOWN_ORIENTED_NORTH.coeffs();
+        node_pose.orientation.normalize();
     }
 }
 
@@ -76,7 +77,7 @@ struct PointsDownwardsPrior
 
         Vector3T rotated_cam_center = rotation_em.normalized() * cam_center.cast<T>();
 
-        *residuals = T(1) - rotated_cam_center.dot(down.cast<T>());
+        residuals[0] = acos(T(0.99999) * rotated_cam_center.dot(down.cast<T>()));
         return true;
     }
 };
@@ -104,7 +105,7 @@ struct DecomposedRotationCost
         const QuaterionT rotation2_1 = rotation1_em.inverse() * rotation2_em;
         const Vector3T rotated_translation2_1 = rotation1_em.inverse() * (*_translation2 - *_translation1).cast<T>();
 
-        residuals[0] = acos(T(0.9999) * rotated_translation2_1.dot(_relations.relative_translation) /
+        residuals[0] = acos(T(0.99999) * rotated_translation2_1.dot(_relations.relative_translation) /
                             sqrt(rotated_translation2_1.squaredNorm() * _relations.relative_translation.squaredNorm()));
 
         residuals[1] = Eigen::AngleAxis<T>(rotation2_1 * _relations.relative_rotation.inverse().cast<T>()).angle();
@@ -125,7 +126,7 @@ void relaxDecompositions(const MeasurementGraph &graph, std::vector<NodePose> &n
     problemOptions.local_parameterization_ownership = ceres::DO_NOT_TAKE_OWNERSHIP;
 
     ceres::EigenQuaternionParameterization quat_parameterization;
-    ceres::HuberLoss huber_loss(M_PI_4);
+    ceres::HuberLoss huber_loss(M_PI_2);
 
     ceres::Problem problem(problemOptions);
 

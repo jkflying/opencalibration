@@ -134,17 +134,17 @@ bool homography_model::decompose(const std::vector<correspondence> &corrs, const
                 continue;
             }
             double dot1 = N.dot(corrs[j].measurement1);
-            double dot2 = (R * N).dot(corrs[j].measurement1);
-            if (dot1 > 0 && dot2 > 0)
+            double dot2 = (R * N).dot(corrs[j].measurement2);
+            if (dot1 >= 0 && dot2 >= 0)
             {
                 score++;
             }
         }
-        if (score > best_score)
+        if (score >= best_score)
         {
-            best_score = score;
             r = Eigen::Quaterniond(R);
             t = T;
+            best_score = score;
         }
     }
 
