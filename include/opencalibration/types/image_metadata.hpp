@@ -1,6 +1,6 @@
 #pragma once
 
-#include <Eigen/Core>
+#include <eigen3/Eigen/Core>
 #include <string>
 
 namespace opencalibration

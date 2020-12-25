@@ -1,6 +1,6 @@
 #pragma once
 
-#include <Eigen/Geometry>
+#include <eigen3/Eigen/Geometry>
 
 namespace opencalibration
 {

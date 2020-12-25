@@ -1,7 +1,7 @@
 #include <opencalibration/model_inliers/ransac.hpp>
 
-#include <Eigen/Dense>
-#include <Eigen/Geometry>
+#include <eigen3/Eigen/Dense>
+#include <eigen3/Eigen/Geometry>
 
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core/eigen.hpp>

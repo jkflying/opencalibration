@@ -4,7 +4,7 @@
 #include <opencalibration/types/feature_2d.hpp>
 #include <opencalibration/types/image_metadata.hpp>
 
-#include <Eigen/Geometry>
+#include <eigen3/Eigen/Geometry>
 
 #include <iostream>
 

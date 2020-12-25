@@ -29,16 +29,11 @@ Pipeline::Pipeline(size_t batch_size)
         return paths.size() > 0;
     };
 
-    _runner.thread.reset(new std::thread([this, batch_size, get_paths]() {
+    _runner.thread.reset(new std::thread([this, get_paths]() {
         std::mutex sleep_mutex;
         std::vector<std::string> paths;
         std::vector<size_t> previous_loaded_ids, previous_linked_ids, next_loaded_ids, next_linked_ids,
             next_relaxed_ids;
-        paths.reserve(batch_size);
-        previous_loaded_ids.reserve(batch_size);
-        previous_linked_ids.reserve(batch_size);
-        next_loaded_ids.reserve(batch_size);
-        next_linked_ids.reserve(batch_size);
         while (_keep_running)
         {
             paths.clear();
@@ -54,8 +49,8 @@ Pipeline::Pipeline(size_t batch_size)
                                         _add_queue.size()};
                 _step_callback(info);
 
-                std::swap(previous_loaded_ids, next_loaded_ids);
                 std::swap(previous_linked_ids, next_linked_ids);
+                std::swap(previous_loaded_ids, next_loaded_ids);
             }
             else
             {

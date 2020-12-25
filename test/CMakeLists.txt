@@ -38,14 +38,14 @@ target_link_libraries(unit_tests PUBLIC gtest pthread oc_geo_coord
 add_custom_target(test
                   COMMAND ${CMAKE_BINARY_DIR}/test/functional_tests
                   COMMAND ${CMAKE_BINARY_DIR}/test/unit_tests
-                  COMMAND ${CMAKE_BINARY_DIR}/app/pipeline_runner ${CMAKE_BINARY_DIR}/../test/test_data/ 2> test_data.geojson
+                  COMMAND ${CMAKE_BINARY_DIR}/app/pipeline_runner "${CMAKE_CURRENT_SOURCE_DIR}/test_data/" 2> test_data.geojson
                   DEPENDS functional_tests unit_tests pipeline_runner)
 
 if ("${CMAKE_BUILD_TYPE}" STREQUAL "Coverage")
 
     add_custom_target(clean_coverage
-        COMMAND lcov --zerocounters --no-external --base-directory `realpath ${CMAKE_BINARY_DIR}/..` --directory `realpath ${CMAKE_BINARY_DIR}/..` --rc lcov_branch_coverage=1
-        COMMAND lcov --capture --initial --no-external --base-directory `realpath ${CMAKE_BINARY_DIR}/..` --directory `realpath ${CMAKE_BINARY_DIR}/..` --output-file base_coverage.info --rc lcov_branch_coverage=1
+        COMMAND lcov --zerocounters --no-external --base-directory `realpath ${CMAKE_CURRENT_SOURCE_DIR}/..` --directory `realpath ${CMAKE_CURRENT_SOURCE_DIR}/..` --rc lcov_branch_coverage=1
+        COMMAND lcov --capture --initial --no-external --base-directory `realpath ${CMAKE_CURRENT_SOURCE_DIR}/..` --directory `realpath ${CMAKE_CURRENT_SOURCE_DIR}/..` --output-file base_coverage.info --rc lcov_branch_coverage=1
         COMMAND rm -r coverage_html || echo "no existing coverage report"
         DEPENDS functional_tests unit_tests pipeline_runner)
 

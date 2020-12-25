@@ -2,7 +2,7 @@
 
 #include <opencalibration/types/feature_match.hpp>
 
-#include <Eigen/Geometry>
+#include <eigen3/Eigen/Geometry>
 
 #include <vector>
 
