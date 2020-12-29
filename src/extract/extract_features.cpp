@@ -19,7 +19,7 @@ std::vector<feature_2d> extract_features(const std::string &path)
         cv::setNumThreads(1);
     }
     int max_length_pixels = 800;
-    double nms_pixel_radius = 10;
+    double nms_pixel_radius = 8;
     std::vector<feature_2d> results;
 
     cv::Mat image = cv::imread(path);
