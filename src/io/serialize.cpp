@@ -29,6 +29,31 @@ template <> class Serializer<MeasurementGraph>
     static std::string visualizeGeoJson(const MeasurementGraph &graph,
                                         std::function<Eigen::Vector3d(const Eigen::Vector3d &)> toGlobalCoordinates)
     {
+        // sort nodes by id to make repeatable with unordered map
+        std::vector<size_t> node_ids;
+        node_ids.reserve(graph._nodes.size());
+        for (const auto &kv : graph._nodes)
+        {
+            node_ids.push_back(kv.first);
+        }
+        std::sort(node_ids.begin(), node_ids.end());
+
+        // sort edges by id to make repeatable with unordered map
+        std::vector<size_t> edge_ids;
+        edge_ids.reserve(graph._edges.size());
+        for (const auto &kv : graph._edges)
+        {
+            edge_ids.push_back(kv.first);
+        }
+        std::sort(edge_ids.begin(), edge_ids.end());
+
+        return visualizeGeoJson(graph, node_ids, edge_ids, toGlobalCoordinates);
+    }
+
+    static std::string visualizeGeoJson(const MeasurementGraph &graph, const std::vector<size_t> &node_ids,
+                                        const std::vector<size_t> &edge_ids,
+                                        std::function<Eigen::Vector3d(const Eigen::Vector3d &)> toGlobalCoordinates)
+    {
         rapidjson::StringBuffer buffer;
 
         rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(buffer);
@@ -41,14 +66,6 @@ template <> class Serializer<MeasurementGraph>
         writer.Key("features");
         writer.StartArray();
 
-        // sort nodes by id to make repeatable with unordered map
-        std::vector<size_t> node_ids;
-        node_ids.reserve(graph._nodes.size());
-        for (const auto &kv : graph._nodes)
-        {
-            node_ids.push_back(kv.first);
-        }
-        std::sort(node_ids.begin(), node_ids.end());
         for (size_t node_id : node_ids)
         {
             writer.StartObject();
@@ -86,14 +103,6 @@ template <> class Serializer<MeasurementGraph>
             writer.EndObject();
         }
 
-        // sort edges by id to make repeatable with unordered map
-        std::vector<size_t> edge_ids;
-        edge_ids.reserve(graph._edges.size());
-        for (const auto &kv : graph._edges)
-        {
-            edge_ids.push_back(kv.first);
-        }
-        std::sort(edge_ids.begin(), edge_ids.end());
         for (size_t edge_id : edge_ids)
         {
             std::string edge_id_str = std::to_string(edge_id);
@@ -456,5 +465,12 @@ std::string toVisualizedGeoJson(const MeasurementGraph &graph,
                                 std::function<Eigen::Vector3d(const Eigen::Vector3d &)> toGlobalCoordinates)
 {
     return Serializer<MeasurementGraph>::visualizeGeoJson(graph, toGlobalCoordinates);
+}
+
+std::string toVisualizedGeoJson(const MeasurementGraph &graph, const std::vector<size_t> &node_ids,
+                                const std::vector<size_t> &edge_ids,
+                                std::function<Eigen::Vector3d(const Eigen::Vector3d &)> toGlobalCoordinates)
+{
+    return Serializer<MeasurementGraph>::visualizeGeoJson(graph, node_ids, edge_ids, toGlobalCoordinates);
 }
 } // namespace opencalibration
