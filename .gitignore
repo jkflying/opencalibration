@@ -37,3 +37,6 @@ build/
 # KDevelop
 .kdev4/
 *.kdev4
+
+# VS Code
+.vscode/
