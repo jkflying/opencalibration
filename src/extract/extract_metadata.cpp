@@ -6,21 +6,50 @@
 #include <iostream>
 #include <vector>
 
+namespace
+{
+
+class EXIFStreamPath : public TinyEXIF::EXIFStream
+{
+  public:
+    EXIFStreamPath(const std::string &path) : _file{path, std::ifstream::in | std::ifstream::binary}
+    {
+    }
+
+    virtual ~EXIFStreamPath() = default;
+
+    bool IsValid() const override
+    {
+        return _file && !_file.fail();
+    }
+
+    const uint8_t *GetBuffer(unsigned desiredLength) override
+    {
+        _last_read.resize(desiredLength);
+        _file.read((char *)_last_read.data(), desiredLength);
+        return &(_last_read.front());
+    }
+
+    bool SkipBuffer(unsigned desiredLength) override
+    {
+        _file.seekg(desiredLength, std::ios_base::cur);
+        return !_file.fail();
+    }
+
+  private:
+    std::ifstream _file;
+    std::vector<uint8_t> _last_read;
+};
+} // namespace
+
 namespace opencalibration
 {
-
 image_metadata extract_metadata(const std::string &path)
 {
-
-    std::ifstream file(path, std::ifstream::in | std::ifstream::binary);
-    file.seekg(0, std::ios::end);
-    std::streampos length = file.tellg();
-    file.seekg(0, std::ios::beg);
-    std::vector<uint8_t> data(length);
-    file.read((char *)data.data(), length);
+    EXIFStreamPath streamP(path);
 
     // parse image EXIF and XMP metadata
-    TinyEXIF::EXIFInfo imageEXIF(data.data(), length);
+    TinyEXIF::EXIFInfo imageEXIF(streamP);
 
     image_metadata res;
     if (!imageEXIF.Fields)
