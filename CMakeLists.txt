@@ -31,6 +31,10 @@ else()
     set (CMAKE_CXX_FLAGS " -Wall -Wextra -pedantic -Werror")
 endif()
 
+if (NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE "Release" CACHE STRING "" FORCE)
+endif()
+
 set(CMAKE_CXX_FLAGS_COVERAGE "--coverage -fprofile-arcs -ftest-coverage -O0 -fno-default-inline -fno-inline -fno-inline-small-functions -fno-elide-constructors -fprofile-abs-path"
                 CACHE STRING "Flags used by the C++ compiler during coverage builds" FORCE)
 set(CMAKE_EXE_LINKER_FLAGS_COVERAGE "--coverage -ftest-coverage -lgcov"
