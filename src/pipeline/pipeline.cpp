@@ -92,7 +92,7 @@ void Pipeline::process_images(const std::vector<std::string> &paths_to_load,
         _last_graph_size_full_relax = _graph.size_nodes();
     }
 
-    _relax_stage->init(_graph, previous_linked_ids, optimize_all);
+    _relax_stage->init(_graph, previous_linked_ids, _imageGPSLocations, optimize_all);
     std::vector<std::function<void()>> relax_funcs = _relax_stage->get_runners(_graph);
 
     funcs.reserve(load_funcs.size() + link_funcs.size() + relax_funcs.size());

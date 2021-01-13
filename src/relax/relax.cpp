@@ -123,7 +123,8 @@ struct DecomposedRotationCost
     const Eigen::Vector3d *_translation1, *_translation2;
 };
 
-void relaxDecompositions(const MeasurementGraph &graph, std::vector<NodePose> &nodes)
+void relaxDecompositions(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                         const std::unordered_set<size_t> &edges_to_optimize)
 {
     ceres::Problem::Options problemOptions;
     problemOptions.cost_function_ownership = ceres::TAKE_OWNERSHIP;
@@ -156,6 +157,12 @@ void relaxDecompositions(const MeasurementGraph &graph, std::vector<NodePose> &n
         const auto &edgesIds = node->getEdges();
         for (size_t edge_id : edgesIds)
         {
+            // skip edges not whitelisted
+            if (edges_to_optimize.find(edge_id) == edges_to_optimize.end())
+            {
+                continue;
+            }
+
             const auto *edge = graph.getEdge(edge_id);
             if (edge == nullptr)
             {

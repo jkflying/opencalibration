@@ -16,7 +16,7 @@ TEST(relax, no_images)
     std::vector<NodePose> np;
 
     // WHEN: we relax the relative orientations
-    relaxDecompositions(graph, np);
+    relaxDecompositions(graph, np, {});
 
     // THEN: it shouldn't crash
 }
@@ -37,7 +37,7 @@ TEST(relax, prior_1_image)
     np.emplace_back(NodePose{id, ori, pos});
 
     // WHEN: we relax the relative orientations
-    relaxDecompositions(graph, np);
+    relaxDecompositions(graph, np, {});
 
     // THEN: it should be pointing downwards, with other axes close to the original
     EXPECT_LT((np[0].orientation.coeffs() - Eigen::Vector4d(1, 0, 0, 0)).norm(), 1e-3)
@@ -72,10 +72,10 @@ TEST(relax, prior_2_images)
     relation.relative_rotation = Eigen::Quaterniond::Identity();
     //     std::cout << relation.relative_rotation.coeffs().transpose() << std::endl;
     relation.relative_translation << 1, 0, 0;
-    graph.addEdge(std::move(relation), id, id2);
+    size_t edge_id = graph.addEdge(std::move(relation), id, id2);
 
     // WHEN: we relax the relative orientations
-    relaxDecompositions(graph, np);
+    relaxDecompositions(graph, np, {edge_id});
 
     // THEN: it should be pointing downwards, with other axes close to the original
     EXPECT_LT(Eigen::AngleAxisd(np[0].orientation.inverse() *

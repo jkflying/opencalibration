@@ -9,7 +9,7 @@
 namespace
 {
 
-class EXIFStreamPath : public TinyEXIF::EXIFStream
+class EXIFStreamPath final : public TinyEXIF::EXIFStream
 {
   public:
     EXIFStreamPath(const std::string &path) : _file{path, std::ifstream::in | std::ifstream::binary}
