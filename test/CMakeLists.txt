@@ -44,18 +44,18 @@ add_custom_target(test
 if ("${CMAKE_BUILD_TYPE}" STREQUAL "Coverage")
 
     add_custom_target(clean_coverage
-        COMMAND lcov --zerocounters --no-external --base-directory `realpath ${CMAKE_CURRENT_SOURCE_DIR}/..` --directory `realpath ${CMAKE_CURRENT_SOURCE_DIR}/..` --rc lcov_branch_coverage=1
-        COMMAND lcov --capture --initial --no-external --base-directory `realpath ${CMAKE_CURRENT_SOURCE_DIR}/..` --directory `realpath ${CMAKE_CURRENT_SOURCE_DIR}/..` --output-file base_coverage.info --rc lcov_branch_coverage=1
+        COMMAND lcov --zerocounters --no-external --base-directory `realpath ${CMAKE_CURRENT_SOURCE_DIR}/..` --directory `realpath ${CMAKE_CURRENT_SOURCE_DIR}/..`
+        COMMAND lcov --capture --initial --no-external --base-directory `realpath ${CMAKE_CURRENT_SOURCE_DIR}/..` --directory `realpath ${CMAKE_CURRENT_SOURCE_DIR}/..` --output-file base_coverage.info
         COMMAND rm -r coverage_html || echo "no existing coverage report"
         DEPENDS functional_tests unit_tests pipeline_runner)
 
     add_dependencies(test clean_coverage)
 
     add_custom_target(test_coverage
-        COMMAND lcov --capture --base-directory `realpath ${CMAKE_BINARY_DIR}/..`  --directory `realpath ${CMAKE_BINARY_DIR}/..` --no-external --output-file test_coverage.info --rc lcov_branch_coverage=1
-        COMMAND lcov -a base_coverage.info -a test_coverage.info -o coverage.info --rc lcov_branch_coverage=1
-        COMMAND lcov -r coverage.info "*/TinyEXIF.*" -o clean_coverage.info --rc lcov_branch_coverage=1
-        COMMAND lcov --summary clean_coverage.info --rc lcov_branch_coverage=1
+        COMMAND lcov --capture --base-directory `realpath ${CMAKE_BINARY_DIR}/..`  --directory `realpath ${CMAKE_BINARY_DIR}/..` --no-external --output-file test_coverage.info
+        COMMAND lcov -a base_coverage.info -a test_coverage.info -o coverage.info
+        COMMAND lcov -r coverage.info "*/TinyEXIF.*" -o clean_coverage.info
+        COMMAND lcov --summary clean_coverage.info
         DEPENDS test)
 
     add_custom_target(test_coverage_html
