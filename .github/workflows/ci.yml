@@ -24,4 +24,4 @@ jobs:
     - name: make test_coverage_html
       run: cd build && make test_coverage_html
     - name: upload to codecov
-      run:  bash <(curl -s https://codecov.io/bash)
+      run:  bash <(curl -s https://codecov.io/bash) -f build/test/clean_coverage.info
