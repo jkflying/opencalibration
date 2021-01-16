@@ -26,7 +26,6 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
 
     _local_poses.reserve(node_ids.size());
 
-    // TODO: prune extra graph edges that don't make sense anymore due to higher risk of false matches
     auto build_optimization_edges = [&](size_t node_id) {
         const auto *node = graph.getNode(node_id);
         auto knn = imageGPSLocations.searchKnn(to_array(node->payload.position), 10);
