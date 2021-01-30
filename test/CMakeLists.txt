@@ -26,12 +26,14 @@ target_compile_definitions(functional_tests PUBLIC TEST_DATA_DIR=\"${CMAKE_CURRE
 
 add_executable(unit_tests gtest_main.cpp
                           test_geo_coord.cpp
+                          test_geometry.cpp
                           test_graph.cpp
                           test_ransac_unit.cpp
                           test_relax.cpp
                           test_tree.cpp)
 
 target_link_libraries(unit_tests PUBLIC gtest pthread oc_geo_coord
+                                                      oc_geometry
                                                       oc_model_inliers
                                                       oc_relax)
 

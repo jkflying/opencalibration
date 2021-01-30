@@ -1,6 +1,7 @@
 add_subdirectory(distort)
 add_subdirectory(extract)
 add_subdirectory(geo_coord)
+add_subdirectory(geometry)
 add_subdirectory(io)
 add_subdirectory(match)
 add_subdirectory(model_inliers)
