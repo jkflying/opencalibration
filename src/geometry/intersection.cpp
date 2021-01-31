@@ -8,11 +8,14 @@ Eigen::Vector4d rayIntersection(const Eigen::Vector3d &origin1, const Eigen::Vec
                                 const Eigen::Vector3d &origin2, const Eigen::Vector3d &normal2)
 {
     Eigen::Vector4d res{NAN, NAN, NAN, NAN};
+    double n1dn1 = normal1.dot(normal1);
+    double n1dn2 = normal1.dot(normal2);
+    double n2dn2 = normal2.dot(normal2);
 
     auto sqr = [](double d) { return d * d; };
-    double scale_denom = sqr(normal1.dot(normal2)) - normal1.dot(normal1) * normal2.dot(normal2);
+    double scale_denom = sqr(n1dn2) - n1dn1 * n2dn2;
 
-    if (scale_denom < 0.01)
+    if (scale_denom < 0.01) // signal to noise ratio is too low
     {
 
         Eigen::Vector3d offset = (origin2 - origin1);
@@ -20,12 +23,12 @@ Eigen::Vector4d rayIntersection(const Eigen::Vector3d &origin1, const Eigen::Vec
         double offset2 = offset.dot(normal2);
         double norm_scale = 1. / scale_denom;
 
-        double t = (offset2 * normal1.dot(normal2) - offset1 * normal2.dot(normal2)) * norm_scale;
-        double s = (offset2 * normal1.dot(normal1) - offset1 * normal1.dot(normal2)) * norm_scale;
+        double t = (offset2 * n1dn2 - offset1 * n2dn2) * norm_scale;
+        double s = (offset2 * n1dn1 - offset1 * n1dn2) * norm_scale;
 
         Eigen::Vector3d p1 = (origin1 + t * normal1), p2 = (origin2 + s * normal2);
         res.topRows<3>() = 0.5 * (p1 + p2);
-        res(3) = (p1 - p2).norm();
+        res(3) = (p1 - p2).squaredNorm();
     }
 
     return res;
