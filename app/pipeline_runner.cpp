@@ -4,9 +4,12 @@
 
 #include <spdlog/spdlog.h>
 
+#include "CommandLine.hpp"
+
 #include <omp.h>
 
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <thread>
 
@@ -15,7 +18,58 @@ using namespace std::chrono_literals;
 
 int main(int argc, char *argv[])
 {
-    spdlog::set_level(spdlog::level::err);
+
+    std::string input_dir = "";
+    uint32_t debug_level = 2;
+    std::string output_file = "output.geojson";
+    bool printHelp = false;
+
+    CommandLine args("Run the opencalibration pipeline from the command line");
+    args.addArgument({"-i", "--input"}, &input_dir, "Input directory of images");
+    args.addArgument({"-d", "--debug"}, &debug_level, "none=0, critical=1, error=2, warn=3, info=4, debug=5");
+    args.addArgument({"-o", "--output"}, &output_file, "Output geojson file");
+    args.addArgument({"-h", "--help"}, &printHelp, "You must specify at least an input file");
+
+    try
+    {
+        args.parse(argc, argv);
+    }
+    catch (std::runtime_error const &e)
+    {
+        std::cout << e.what() << std::endl;
+        return -1;
+    }
+
+    if (printHelp)
+    {
+        args.printHelp();
+        return 0;
+    }
+
+    auto level = spdlog::level::err;
+    switch (debug_level)
+    {
+    case 0:
+        level = spdlog::level::off;
+        break;
+    case 1:
+        level = spdlog::level::critical;
+        break;
+    case 2:
+        level = spdlog::level::err;
+        break;
+    case 3:
+        level = spdlog::level::warn;
+        break;
+    case 4:
+        level = spdlog::level::info;
+        break;
+    case 5:
+        level = spdlog::level::debug;
+        break;
+    }
+    spdlog::set_level(level);
+
     int pipeline_width = omp_get_max_threads();
 
     spdlog::info("Pipeline width set to {}", pipeline_width);
@@ -30,10 +84,9 @@ int main(int argc, char *argv[])
     });
 
     std::vector<std::string> files;
-    if (argc > 1)
+    if (input_dir.size() > 0)
     {
-        std::string path = argv[1];
-        for (const auto &entry : std::filesystem::directory_iterator(path))
+        for (const auto &entry : std::filesystem::directory_iterator(input_dir))
         {
             files.push_back(entry.path());
         }
@@ -50,5 +103,9 @@ int main(int argc, char *argv[])
     auto to_wgs84 = [&p](const Eigen::Vector3d &local) { return p.getCoord().toWGS84(local); };
     std::string out = toVisualizedGeoJson(p.getGraph(), to_wgs84);
 
-    std::cerr << out << std::endl;
+    std::fstream output;
+    output.open(output_file);
+    output << out;
+    output.close();
+    std::cout << "Complete!" << std::endl;
 }

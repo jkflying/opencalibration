@@ -26,8 +26,6 @@ class GeoCoord
     std::string getWKT() const;
 
   private:
-    bool _initialized = false;
-
     std::unique_ptr<OGRCoordinateTransformation> _to_local, _to_wgs84;
 };
 } // namespace opencalibration
