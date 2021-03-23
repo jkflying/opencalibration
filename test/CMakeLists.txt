@@ -40,7 +40,7 @@ target_link_libraries(unit_tests PUBLIC gtest pthread oc_geo_coord
 add_custom_target(test
                   COMMAND ${CMAKE_BINARY_DIR}/test/functional_tests
                   COMMAND ${CMAKE_BINARY_DIR}/test/unit_tests
-                  COMMAND ${CMAKE_BINARY_DIR}/app/pipeline_runner "${CMAKE_CURRENT_SOURCE_DIR}/test_data/" 2> test_data.geojson
+                  COMMAND ${CMAKE_BINARY_DIR}/app/pipeline_runner -i "${CMAKE_CURRENT_SOURCE_DIR}/test_data/" -o test_data.geojson
                   DEPENDS functional_tests unit_tests pipeline_runner)
 
 if ("${CMAKE_BUILD_TYPE}" STREQUAL "Coverage")
@@ -56,7 +56,7 @@ if ("${CMAKE_BUILD_TYPE}" STREQUAL "Coverage")
     add_custom_target(test_coverage
         COMMAND lcov --capture --base-directory `realpath ${CMAKE_BINARY_DIR}/..`  --directory `realpath ${CMAKE_BINARY_DIR}/..` --no-external --output-file test_coverage.info
         COMMAND lcov -a base_coverage.info -a test_coverage.info -o coverage.info
-        COMMAND lcov -r coverage.info "*/TinyEXIF.*" -o clean_coverage.info
+        COMMAND lcov -r coverage.info "*/TinyEXIF.*" "*/app/*" -o clean_coverage.info
         COMMAND lcov --summary clean_coverage.info
         DEPENDS test)
 
