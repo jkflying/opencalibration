@@ -104,7 +104,7 @@ int main(int argc, char *argv[])
     std::string out = toVisualizedGeoJson(p.getGraph(), to_wgs84);
 
     std::fstream output;
-    output.open(output_file);
+    output.open(output_file, std::ios::out | std::ios::trunc);
     output << out;
     output.close();
     std::cout << "Complete!" << std::endl;

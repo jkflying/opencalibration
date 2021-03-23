@@ -75,7 +75,7 @@ struct PointsDownwardsPrior
         const Eigen::Vector3d cam_center(0, 0, 1);
         const Eigen::Vector3d down(0, 0, -1);
 
-        Vector3T rotated_cam_center = rotation_em.normalized() * cam_center.cast<T>();
+        Vector3T rotated_cam_center = rotation_em * cam_center.cast<T>();
 
         residuals[0] = acos(T(0.99999) * rotated_cam_center.dot(down.cast<T>()));
         return true;
