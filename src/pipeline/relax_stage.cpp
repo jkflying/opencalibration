@@ -19,12 +19,18 @@ namespace opencalibration
 {
 
 void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &node_ids,
-                      const jk::tree::KDTree<size_t, 3> &imageGPSLocations, bool optimize_all)
+                      const jk::tree::KDTree<size_t, 3> &imageGPSLocations, bool force_optimize_all)
 {
     _local_poses.clear();
     _edges_to_optimize.clear();
 
     _local_poses.reserve(node_ids.size());
+
+    bool optimize_all = force_optimize_all || graph.size_nodes() > 1.5 * _last_graph_size_full_relax;
+    if (optimize_all)
+    {
+        _last_graph_size_full_relax = graph.size_nodes();
+    }
 
     auto build_optimization_edges = [&](size_t node_id) {
         const auto *node = graph.getNode(node_id);

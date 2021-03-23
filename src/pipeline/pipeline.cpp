@@ -85,14 +85,8 @@ void Pipeline::process_images(const std::vector<std::string> &paths_to_load,
     _link_stage->init(_graph, _imageGPSLocations, previous_loaded_ids);
     std::vector<std::function<void()>> link_funcs = _link_stage->get_runners(_graph);
 
-    bool optimize_all =
-        _graph.size_nodes() > 1.5 * _last_graph_size_full_relax || (load_funcs.size() == 0 && link_funcs.size() == 0);
-    if (optimize_all)
-    {
-        _last_graph_size_full_relax = _graph.size_nodes();
-    }
-
-    _relax_stage->init(_graph, previous_linked_ids, _imageGPSLocations, optimize_all);
+    bool last_iteration = load_funcs.size() + link_funcs.size() == 0;
+    _relax_stage->init(_graph, previous_linked_ids, _imageGPSLocations, last_iteration);
     std::vector<std::function<void()>> relax_funcs = _relax_stage->get_runners(_graph);
 
     funcs.reserve(load_funcs.size() + link_funcs.size() + relax_funcs.size());

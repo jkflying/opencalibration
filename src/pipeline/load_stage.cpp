@@ -61,7 +61,7 @@ std::vector<size_t> LoadStage::finalize(GeoCoord &coordinate_system, Measurement
 {
     // put the images back in order after the parallel processing
     std::sort(_images.begin(), _images.end(),
-              [this](const image &img1, const image &img2) -> int { return img1.path < img2.path; });
+              [](const image &img1, const image &img2) -> int { return img1.path < img2.path; });
 
     std::vector<size_t> node_ids;
     node_ids.reserve(_paths_to_load.size());

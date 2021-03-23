@@ -88,8 +88,6 @@ class Pipeline
     jk::tree::KDTree<size_t, 3> _imageGPSLocations;
     GeoCoord _coordinate_system;
 
-    size_t _last_graph_size_full_relax = 0;
-
     StepCompletionCallback _step_callback;
 };
 } // namespace opencalibration
