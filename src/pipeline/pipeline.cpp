@@ -11,6 +11,37 @@
 
 using namespace std::chrono_literals;
 
+namespace
+{
+template <typename vec> vec interleave(std::initializer_list<typename std::reference_wrapper<vec>> refs)
+{
+    vec interleaved;
+    int count = 0;
+    for (const auto &r : refs)
+    {
+        count += r.get().size();
+    }
+    interleaved.reserve(count);
+
+    bool some_added;
+    do
+    {
+        some_added = false;
+        for (auto &r : refs)
+        {
+            if (r.get().size() > 0)
+            {
+                interleaved.emplace_back(std::move(r.get().back()));
+                r.get().pop_back();
+                some_added = true;
+            }
+        }
+    } while (some_added);
+    return interleaved;
+}
+
+} // namespace
+
 namespace opencalibration
 {
 Pipeline::Pipeline(size_t batch_size)
@@ -77,38 +108,20 @@ void Pipeline::process_images(const std::vector<std::string> &paths_to_load,
                               const std::vector<size_t> &previous_linked_ids, std::vector<size_t> &next_loaded_ids,
                               std::vector<size_t> &next_linked_ids, std::vector<size_t> &next_relaxed_ids)
 {
-    std::vector<std::function<void()>> funcs;
+
+    using fvec = std::vector<std::function<void()>>;
 
     _load_stage->init(paths_to_load);
-    std::vector<std::function<void()>> load_funcs = _load_stage->get_runners();
+    fvec load_funcs = _load_stage->get_runners();
 
     _link_stage->init(_graph, _imageGPSLocations, previous_loaded_ids);
-    std::vector<std::function<void()>> link_funcs = _link_stage->get_runners(_graph);
+    fvec link_funcs = _link_stage->get_runners(_graph);
 
     bool last_iteration = load_funcs.size() + link_funcs.size() == 0;
     _relax_stage->init(_graph, previous_linked_ids, _imageGPSLocations, last_iteration);
-    std::vector<std::function<void()>> relax_funcs = _relax_stage->get_runners(_graph);
+    fvec relax_funcs = _relax_stage->get_runners(_graph);
 
-    funcs.reserve(load_funcs.size() + link_funcs.size() + relax_funcs.size());
-    // interleave the functions to spread resource usage across the excution
-    while (load_funcs.size() > 0 || link_funcs.size() > 0 || relax_funcs.size() > 0)
-    {
-        if (relax_funcs.size() > 0)
-        {
-            funcs.push_back(std::move(relax_funcs.back()));
-            relax_funcs.pop_back();
-        }
-        if (link_funcs.size() > 0)
-        {
-            funcs.push_back(std::move(link_funcs.back()));
-            link_funcs.pop_back();
-        }
-        if (load_funcs.size() > 0)
-        {
-            funcs.push_back(std::move(load_funcs.back()));
-            load_funcs.pop_back();
-        }
-    }
+    fvec funcs = interleave<fvec>({load_funcs, link_funcs, relax_funcs});
 
 #pragma omp parallel for schedule(dynamic)
     for (int i = 0; i < (int)funcs.size(); i++)
