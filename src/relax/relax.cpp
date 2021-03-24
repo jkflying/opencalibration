@@ -339,14 +339,12 @@ void relaxDecompositions(const MeasurementGraph &graph, std::vector<NodePose> &n
     RelaxProblem rp;
     rp.initialize(nodes);
 
-    for (auto iter = graph.edgebegin(); iter != graph.edgeend(); ++iter)
+    for (size_t edge_id : edges_to_optimize)
     {
-        size_t edge_id = iter->first;
-        const MeasurementGraph::Edge &edge = iter->second;
-
-        if (rp.shouldOptimizeEdge(edges_to_optimize, edge_id, edge))
+        const MeasurementGraph::Edge *edge = graph.getEdge(edge_id);
+        if (edge != nullptr && rp.shouldOptimizeEdge(edges_to_optimize, edge_id, *edge))
         {
-            rp.addRelationCost(graph, edge_id, edge);
+            rp.addRelationCost(graph, edge_id, *edge);
         }
     }
 
