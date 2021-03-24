@@ -21,13 +21,15 @@ int main(int argc, char *argv[])
 
     std::string input_dir = "";
     uint32_t debug_level = 2;
-    std::string output_file = "output.geojson";
+    std::string output_file = "";
+    int batch_size = omp_get_max_threads();
     bool printHelp = false;
 
     CommandLine args("Run the opencalibration pipeline from the command line");
     args.addArgument({"-i", "--input"}, &input_dir, "Input directory of images");
     args.addArgument({"-d", "--debug"}, &debug_level, "none=0, critical=1, error=2, warn=3, info=4, debug=5");
     args.addArgument({"-o", "--output"}, &output_file, "Output geojson file");
+    args.addArgument({"-b", "--batch-size"}, &batch_size, "Processing batch size");
     args.addArgument({"-h", "--help"}, &printHelp, "You must specify at least an input file");
 
     try
@@ -47,34 +49,40 @@ int main(int argc, char *argv[])
     }
 
     auto level = spdlog::level::err;
+    std::string log_level_str = "err";
     switch (debug_level)
     {
     case 0:
         level = spdlog::level::off;
+        log_level_str = "off";
         break;
     case 1:
         level = spdlog::level::critical;
+        log_level_str = "critical";
         break;
     case 2:
         level = spdlog::level::err;
+        log_level_str = "err";
         break;
     case 3:
         level = spdlog::level::warn;
+        log_level_str = "warn";
         break;
     case 4:
         level = spdlog::level::info;
+        log_level_str = "info";
         break;
     case 5:
         level = spdlog::level::debug;
+        log_level_str = "debug";
         break;
     }
     spdlog::set_level(level);
 
-    int pipeline_width = omp_get_max_threads();
+    spdlog::info("Log level set to {}", log_level_str);
+    spdlog::info("Pipeline batch size set to {}", batch_size);
 
-    spdlog::info("Pipeline width set to {}", pipeline_width);
-
-    Pipeline p(pipeline_width);
+    Pipeline p(batch_size);
 
     p.set_callback([](const Pipeline::StepCompletionInfo &info) {
         std::cout << "Progress: " << info.images_loaded << " / " << (info.images_loaded + info.queue_size_remaining)
@@ -100,12 +108,15 @@ int main(int argc, char *argv[])
         std::this_thread::sleep_for(1ms);
     }
 
-    auto to_wgs84 = [&p](const Eigen::Vector3d &local) { return p.getCoord().toWGS84(local); };
-    std::string out = toVisualizedGeoJson(p.getGraph(), to_wgs84);
+    if (output_file.size() > 0)
+    {
+        auto to_wgs84 = [&p](const Eigen::Vector3d &local) { return p.getCoord().toWGS84(local); };
+        std::string out = toVisualizedGeoJson(p.getGraph(), to_wgs84);
 
-    std::fstream output;
-    output.open(output_file, std::ios::out | std::ios::trunc);
-    output << out;
-    output.close();
+        std::ofstream output;
+        output.open(output_file, std::ios::out | std::ios::trunc);
+        output << out;
+        output.close();
+    }
     std::cout << "Complete!" << std::endl;
 }
