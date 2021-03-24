@@ -7,60 +7,9 @@
 
 #include <unordered_set>
 
-namespace opencalibration
+namespace
 {
-
-static const Eigen::Quaterniond DOWN_ORIENTED_NORTH(Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()));
-
-void initializeOrientation(const MeasurementGraph &graph, std::vector<NodePose> &nodes)
-{
-    std::vector<std::pair<double, Eigen::Quaterniond>> hypotheses;
-    for (NodePose &node_pose : nodes)
-    {
-        const MeasurementGraph::Node *node = graph.getNode(node_pose.node_id);
-        if (node == nullptr)
-        {
-            spdlog::error("Null node referenced from optimization list");
-            continue;
-        }
-
-        // get connections
-        hypotheses.clear();
-        hypotheses.reserve(node->getEdges().size());
-
-        for (size_t edge_id : node->getEdges())
-        {
-            const MeasurementGraph::Edge *edge = graph.getEdge(edge_id);
-            size_t other_node_id = edge->getDest() == node_pose.node_id ? edge->getSource() : edge->getDest();
-            const MeasurementGraph::Node *other_node = graph.getNode(other_node_id);
-
-            Eigen::Quaterniond transform = edge->getDest() == node_pose.node_id
-                                               ? edge->payload.relative_rotation.inverse()
-                                               : edge->payload.relative_rotation;
-
-            // TODO: use relative positions as well when NaN
-            bool other_ori_nan = other_node->payload.orientation.coeffs().hasNaN();
-            Eigen::Quaterniond other_orientation =
-                other_ori_nan ? DOWN_ORIENTED_NORTH : other_node->payload.orientation;
-            double weight = other_ori_nan ? 0.1 : 1;
-            Eigen::Quaterniond hypothesis = transform * other_orientation;
-
-            hypotheses.emplace_back(weight, hypothesis);
-        }
-
-        // for now just make a dumb weighted average
-        double weight_sum = 0;
-        Eigen::Vector4d vec_sum;
-        for (const auto &h : hypotheses)
-        {
-            weight_sum += h.first;
-            vec_sum += h.first * h.second.coeffs();
-        }
-
-        node_pose.orientation.coeffs() = weight_sum > 0 ? vec_sum : DOWN_ORIENTED_NORTH.coeffs();
-        node_pose.orientation.normalize();
-    }
-}
+using namespace opencalibration;
 
 struct PointsDownwardsPrior
 {
@@ -123,71 +72,194 @@ struct DecomposedRotationCost
     const Eigen::Vector3d *_translation1, *_translation2;
 };
 
-void relaxDecompositions(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                         const std::unordered_set<size_t> &edges_to_optimize)
+struct RelaxProblem
 {
     ceres::Problem::Options problemOptions;
-    problemOptions.cost_function_ownership = ceres::TAKE_OWNERSHIP;
-    problemOptions.loss_function_ownership = ceres::DO_NOT_TAKE_OWNERSHIP;
-    problemOptions.local_parameterization_ownership = ceres::DO_NOT_TAKE_OWNERSHIP;
-
     ceres::EigenQuaternionParameterization quat_parameterization;
-    ceres::HuberLoss huber_loss(M_PI_2);
+    ceres::HuberLoss huber_loss;
+    std::unique_ptr<ceres::Problem> problem;
 
-    ceres::Problem problem(problemOptions);
+    ceres::Solver::Options solverOptions;
+    ceres::Solver::Summary summary;
+    ceres::Solver solver;
 
     std::unordered_map<size_t, NodePose *> nodes_to_optimize;
-    nodes_to_optimize.reserve(nodes.size());
+    std::unordered_set<size_t> edges_used, external_nodes_used;
 
-    for (NodePose &n : nodes)
+    RelaxProblem() : huber_loss(M_PI_2)
     {
-        n.orientation.normalize();
-        nodes_to_optimize.emplace(n.node_id, &n);
+        problemOptions.cost_function_ownership = ceres::TAKE_OWNERSHIP;
+        problemOptions.loss_function_ownership = ceres::DO_NOT_TAKE_OWNERSHIP;
+        problemOptions.local_parameterization_ownership = ceres::DO_NOT_TAKE_OWNERSHIP;
+        problem.reset(new ceres::Problem(problemOptions));
+
+        solverOptions.num_threads = 1;
+        solverOptions.linear_solver_type = ceres::SPARSE_NORMAL_CHOLESKY;
+        solverOptions.max_num_iterations = 150;
     }
 
-    std::unordered_set<size_t> edges_used, external_nodes_used;
-    for (NodePose &n : nodes)
+    void initialize(std::vector<NodePose> &nodes)
     {
-        const auto *node = graph.getNode(n.node_id);
+        nodes_to_optimize.reserve(nodes.size());
+
+        for (NodePose &n : nodes)
+        {
+            n.orientation.normalize();
+            nodes_to_optimize.emplace(n.node_id, &n);
+        }
+    }
+
+    static const MeasurementGraph::Edge *getValidEdge(const MeasurementGraph &graph,
+                                                      const std::unordered_set<size_t> &edges_to_optimize,
+                                                      size_t edge_id)
+    {
+        // skip edges not whitelisted
+        if (edges_to_optimize.find(edge_id) == edges_to_optimize.end())
+        {
+            return nullptr;
+        }
+
+        const MeasurementGraph::Edge *edge = graph.getEdge(edge_id);
+        if (edge == nullptr)
+        {
+            spdlog::error("Null edge referenced from node");
+            return nullptr;
+        }
+
+        // skip unitialized edges
+        if (edge->payload.relative_rotation.coeffs().hasNaN() || edge->payload.relative_translation.hasNaN())
+        {
+            return nullptr;
+        }
+        return edge;
+    }
+
+    void addDownwardsPrior(std::vector<NodePose> &nodes)
+    {
+        for (NodePose &n : nodes)
+        {
+            problem->AddResidualBlock(
+                new ceres::AutoDiffCostFunction<PointsDownwardsPrior, 1, 4>(new PointsDownwardsPrior()), nullptr,
+                n.orientation.coeffs().data());
+            problem->SetParameterization(n.orientation.coeffs().data(), &quat_parameterization);
+        }
+    }
+
+    void solve(std::vector<NodePose> &nodes)
+    {
+        spdlog::debug("Start rotation relax: {} active nodes, {} edges, {} inactive nodes", nodes.size(),
+                      edges_used.size(), external_nodes_used.size());
+
+        solver.Solve(solverOptions, problem.get(), &summary);
+        spdlog::debug(summary.BriefReport());
+
+        for (NodePose &n : nodes)
+        {
+            n.orientation.normalize();
+        }
+    }
+};
+
+struct OptimizationPackage
+{
+    Eigen::Vector3d *source_loc_ptr, *dest_loc_ptr;
+    Eigen::Quaterniond *source_rot_ptr, *dest_rot_ptr;
+
+    bool source_optimize = true, dest_optimize = true;
+
+    std::reference_wrapper<camera_relations> relations;
+};
+
+} // namespace
+
+namespace opencalibration
+{
+
+static const Eigen::Quaterniond DOWN_ORIENTED_NORTH(Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()));
+
+void initializeOrientation(const MeasurementGraph &graph, std::vector<NodePose> &nodes)
+{
+    std::vector<std::pair<double, Eigen::Quaterniond>> hypotheses;
+    for (NodePose &node_pose : nodes)
+    {
+        const MeasurementGraph::Node *node = graph.getNode(node_pose.node_id);
         if (node == nullptr)
         {
             spdlog::error("Null node referenced from optimization list");
             continue;
         }
-        const auto &edgesIds = node->getEdges();
-        for (size_t edge_id : edgesIds)
+
+        // get connections
+        hypotheses.clear();
+        hypotheses.reserve(node->getEdges().size());
+
+        for (size_t edge_id : node->getEdges())
         {
-            // skip edges not whitelisted
-            if (edges_to_optimize.find(edge_id) == edges_to_optimize.end())
-            {
-                continue;
-            }
+            const MeasurementGraph::Edge *edge = graph.getEdge(edge_id);
+            size_t other_node_id = edge->getDest() == node_pose.node_id ? edge->getSource() : edge->getDest();
+            const MeasurementGraph::Node *other_node = graph.getNode(other_node_id);
 
-            const auto *edge = graph.getEdge(edge_id);
+            Eigen::Quaterniond transform = edge->getDest() == node_pose.node_id
+                                               ? edge->payload.relative_rotation.inverse()
+                                               : edge->payload.relative_rotation;
+
+            // TODO: use relative positions as well when NaN
+            bool other_ori_nan = other_node->payload.orientation.coeffs().hasNaN();
+            Eigen::Quaterniond other_orientation =
+                other_ori_nan ? DOWN_ORIENTED_NORTH : other_node->payload.orientation;
+            double weight = other_ori_nan ? 0.1 : 1;
+            Eigen::Quaterniond hypothesis = transform * other_orientation;
+
+            hypotheses.emplace_back(weight, hypothesis);
+        }
+
+        // for now just make a dumb weighted average
+        double weight_sum = 0;
+        Eigen::Vector4d vec_sum;
+        for (const auto &h : hypotheses)
+        {
+            weight_sum += h.first;
+            vec_sum += h.first * h.second.coeffs();
+        }
+
+        node_pose.orientation.coeffs() = weight_sum > 0 ? vec_sum : DOWN_ORIENTED_NORTH.coeffs();
+        node_pose.orientation.normalize();
+    }
+}
+
+void relaxDecompositions(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                         const std::unordered_set<size_t> &edges_to_optimize)
+{
+    RelaxProblem rp;
+    rp.initialize(nodes);
+
+    for (NodePose &n : nodes)
+    {
+        const MeasurementGraph::Node *node = graph.getNode(n.node_id);
+        if (node == nullptr)
+        {
+            spdlog::error("Null node referenced from optimization list");
+            continue;
+        }
+
+        for (size_t edge_id : node->getEdges())
+        {
+            const MeasurementGraph::Edge *edge = rp.getValidEdge(graph, edges_to_optimize, edge_id);
             if (edge == nullptr)
-            {
-                spdlog::error("Null edge referenced from node");
                 continue;
-            }
-
-            // skip unitialized edges
-            if (edge->payload.relative_rotation.coeffs().hasNaN() || edge->payload.relative_translation.hasNaN())
-            {
-                continue;
-            }
 
             bool n_is_source = edge->getSource() == n.node_id;
 
             size_t other_id = n_is_source ? edge->getDest() : edge->getSource();
 
-            bool other_also_optimized = nodes_to_optimize.find(other_id) != nodes_to_optimize.end();
+            bool other_also_optimized = rp.nodes_to_optimize.find(other_id) != rp.nodes_to_optimize.end();
 
             Eigen::Vector3d *n_loc_ptr = &n.position, *other_loc_ptr;
             Eigen::Quaterniond *n_rot_ptr = &n.orientation, *other_rot_ptr;
 
             if (other_also_optimized)
             {
-                NodePose *other = nodes_to_optimize.find(other_id)->second;
+                NodePose *other = rp.nodes_to_optimize.find(other_id)->second;
                 other_loc_ptr = &other->position;
                 other_rot_ptr = &other->orientation;
             }
@@ -212,65 +284,30 @@ void relaxDecompositions(const MeasurementGraph &graph, std::vector<NodePose> &n
                 other_rot_ptr = const_cast<Eigen::Quaterniond *>(&other->payload.orientation);
             }
 
-            Eigen::Vector3d *source_loc_ptr, *dest_loc_ptr;
-            Eigen::Quaterniond *source_rot_ptr, *dest_rot_ptr;
+            Eigen::Vector3d *source_loc_ptr = n_loc_ptr, *dest_loc_ptr = other_loc_ptr;
+            Eigen::Quaterniond *source_rot_ptr = n_rot_ptr, *dest_rot_ptr = other_rot_ptr;
 
-            if (n_is_source)
+            if (!n_is_source)
             {
-                source_loc_ptr = n_loc_ptr;
-                source_rot_ptr = n_rot_ptr;
-                dest_loc_ptr = other_loc_ptr;
-                dest_rot_ptr = other_rot_ptr;
-            }
-            else
-            {
-                source_loc_ptr = other_loc_ptr;
-                source_rot_ptr = other_rot_ptr;
-                dest_loc_ptr = n_loc_ptr;
-                dest_rot_ptr = n_rot_ptr;
+                std::swap(source_loc_ptr, dest_loc_ptr);
+                std::swap(source_rot_ptr, dest_rot_ptr);
             }
 
-            problem.AddResidualBlock(new ceres::AutoDiffCostFunction<DecomposedRotationCost, 3, 4, 4>(
-                                         new DecomposedRotationCost(edge->payload, source_loc_ptr, dest_loc_ptr)),
-                                     &huber_loss, source_rot_ptr->coeffs().data(), dest_rot_ptr->coeffs().data());
+            rp.problem->AddResidualBlock(new ceres::AutoDiffCostFunction<DecomposedRotationCost, 3, 4, 4>(
+                                             new DecomposedRotationCost(edge->payload, source_loc_ptr, dest_loc_ptr)),
+                                         &rp.huber_loss, source_rot_ptr->coeffs().data(),
+                                         dest_rot_ptr->coeffs().data());
 
+            rp.edges_used.emplace(edge_id);
             if (!other_also_optimized)
             {
-                problem.SetParameterBlockConstant(other_rot_ptr->coeffs().data());
-            }
-
-            edges_used.emplace(edge_id);
-            if (!other_also_optimized)
-            {
-                external_nodes_used.emplace(other_id);
+                rp.external_nodes_used.emplace(other_id);
+                rp.problem->SetParameterBlockConstant(other_rot_ptr->coeffs().data());
             }
         }
     }
 
-    for (NodePose &n : nodes)
-    {
-        problem.AddResidualBlock(
-            new ceres::AutoDiffCostFunction<PointsDownwardsPrior, 1, 4>(new PointsDownwardsPrior()), nullptr,
-            n.orientation.coeffs().data());
-        problem.SetParameterization(n.orientation.coeffs().data(), &quat_parameterization);
-    }
-
-    ceres::Solver::Options solverOptions;
-    solverOptions.num_threads = 1;
-    solverOptions.linear_solver_type = ceres::SPARSE_NORMAL_CHOLESKY;
-    solverOptions.max_num_iterations = 150;
-
-    spdlog::debug("Start rotation relax: {} active nodes, {} edges, {} inactive nodes", nodes.size(), edges_used.size(),
-                  external_nodes_used.size());
-
-    ceres::Solver::Summary summary;
-    ceres::Solver solver;
-    solver.Solve(solverOptions, &problem, &summary);
-    spdlog::debug(summary.BriefReport());
-
-    for (NodePose &n : nodes)
-    {
-        n.orientation.normalize();
-    }
+    rp.addDownwardsPrior(nodes);
+    rp.solve(nodes);
 }
 } // namespace opencalibration
