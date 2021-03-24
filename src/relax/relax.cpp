@@ -72,7 +72,6 @@ struct DecomposedRotationCost
     const Eigen::Vector3d *_translation1, *_translation2;
 };
 
-
 struct OptimizationPackage
 {
     const camera_relations *relations;
@@ -98,7 +97,7 @@ struct RelaxProblem
     ceres::Solver solver;
 
     std::unordered_map<size_t, NodePose *> nodes_to_optimize;
-    std::unordered_set<size_t> edges_used, external_nodes_used;
+    std::unordered_set<size_t> edges_used, constant_nodes;
 
     RelaxProblem() : huber_loss(M_PI_2)
     {
@@ -123,35 +122,56 @@ struct RelaxProblem
         }
     }
 
-    const MeasurementGraph::Edge *getValidEdge(const MeasurementGraph &graph,
-                                                      const std::unordered_set<size_t> &edges_to_optimize,
-                                                      size_t edge_id)
+    bool shouldOptimizeEdge(const std::unordered_set<size_t> &edges_to_optimize, size_t edge_id,
+                            const MeasurementGraph::Edge &edge)
     {
         // skip edges not whitelisted
         if (edges_to_optimize.find(edge_id) == edges_to_optimize.end())
         {
-            return nullptr;
+            return false;
         }
 
         // skip edges already used in this optimization problem
         if (edges_used.find(edge_id) != edges_used.end())
         {
-            return nullptr;
-        }
-
-        const MeasurementGraph::Edge *edge = graph.getEdge(edge_id);
-        if (edge == nullptr)
-        {
-            spdlog::error("Null edge referenced from node");
-            return nullptr;
+            return false;
         }
 
         // skip unitialized edges
-        if (edge->payload.relative_rotation.coeffs().hasNaN() || edge->payload.relative_translation.hasNaN())
+        if (edge.payload.relative_rotation.coeffs().hasNaN() || edge.payload.relative_translation.hasNaN())
         {
-            return nullptr;
+            return false;
         }
-        return edge;
+        return true;
+    }
+
+    void addRelationCost(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge)
+    {
+        OptimizationPackage pkg;
+        pkg.relations = &edge.payload;
+
+        pkg.source = nodeid2poseopt(graph, edge.getSource());
+        if (pkg.source.loc_ptr == nullptr)
+            return;
+
+        pkg.dest = nodeid2poseopt(graph, edge.getDest());
+        if (pkg.dest.loc_ptr == nullptr)
+            return;
+
+        problem->AddResidualBlock(new ceres::AutoDiffCostFunction<DecomposedRotationCost, 3, 4, 4>(
+                                      new DecomposedRotationCost(*pkg.relations, pkg.source.loc_ptr, pkg.dest.loc_ptr)),
+                                  &huber_loss, pkg.source.rot_ptr->coeffs().data(), pkg.dest.rot_ptr->coeffs().data());
+
+        if (!pkg.source.optimize)
+        {
+            constant_nodes.emplace(pkg.source.node_id);
+        }
+        if (!pkg.dest.optimize)
+        {
+            constant_nodes.emplace(pkg.dest.node_id);
+        }
+
+        edges_used.emplace(edge_id);
     }
 
     void addDownwardsPrior(std::vector<NodePose> &nodes)
@@ -165,7 +185,7 @@ struct RelaxProblem
         }
     }
 
-    static OptimizationPackage::PoseOpt nodepose2poseopt(NodePose& n)
+    static OptimizationPackage::PoseOpt nodepose2poseopt(NodePose &n)
     {
         OptimizationPackage::PoseOpt po;
         po.loc_ptr = &n.position;
@@ -175,7 +195,7 @@ struct RelaxProblem
         return po;
     }
 
-    OptimizationPackage::PoseOpt nodeid2poseopt(const MeasurementGraph& graph, size_t node_id)
+    OptimizationPackage::PoseOpt nodeid2poseopt(const MeasurementGraph &graph, size_t node_id)
     {
         OptimizationPackage::PoseOpt po;
         po.node_id = node_id;
@@ -213,10 +233,20 @@ struct RelaxProblem
         return po;
     }
 
+    void setConstantBlocks(const MeasurementGraph &graph)
+    {
+
+        for (size_t const_node_id : constant_nodes)
+        {
+            problem->SetParameterBlockConstant(
+                const_cast<double *>(graph.getNode(const_node_id)->payload.orientation.coeffs().data()));
+        }
+    }
+
     void solve(std::vector<NodePose> &nodes)
     {
         spdlog::debug("Start rotation relax: {} active nodes, {} edges, {} inactive nodes", nodes.size(),
-                      edges_used.size(), external_nodes_used.size());
+                      edges_used.size(), constant_nodes.size());
 
         solver.Solve(solverOptions, problem.get(), &summary);
         spdlog::debug(summary.BriefReport());
@@ -291,63 +321,20 @@ void relaxDecompositions(const MeasurementGraph &graph, std::vector<NodePose> &n
     RelaxProblem rp;
     rp.initialize(nodes);
 
-    for (NodePose &n : nodes)
+    for (auto iter = graph.edgebegin(); iter != graph.edgeend(); ++iter)
     {
-        const MeasurementGraph::Node *node = graph.getNode(n.node_id);
-        if (node == nullptr)
+        size_t edge_id = iter->first;
+        const MeasurementGraph::Edge &edge = iter->second;
+
+        if (rp.shouldOptimizeEdge(edges_to_optimize, edge_id, edge))
         {
-            spdlog::error("Null node referenced from optimization list");
-            continue;
+            rp.addRelationCost(graph, edge_id, edge);
         }
-
-        for (size_t edge_id : node->getEdges())
-        {
-            const MeasurementGraph::Edge *edge = rp.getValidEdge(graph, edges_to_optimize, edge_id);
-            if (edge == nullptr)
-                continue;
-
-            OptimizationPackage pkg;
-            pkg.relations = &edge->payload;
-
-            if (edge->getSource() == n.node_id)
-            {
-                pkg.source = rp.nodepose2poseopt(n);
-                pkg.dest = rp.nodeid2poseopt(graph, edge->getDest());
-                if (pkg.dest.loc_ptr == nullptr)
-                    continue;
-            }
-            else
-            {
-                pkg.dest = rp.nodepose2poseopt(n);
-                pkg.source = rp.nodeid2poseopt(graph, edge->getSource());
-                if (pkg.source.loc_ptr == nullptr)
-                    continue;
-            }
-
-
-            rp.problem->AddResidualBlock(new ceres::AutoDiffCostFunction<DecomposedRotationCost, 3, 4, 4>(
-                                             new DecomposedRotationCost(*pkg.relations, pkg.source.loc_ptr, pkg.dest.loc_ptr)),
-                                         &rp.huber_loss, pkg.source.rot_ptr->coeffs().data(),
-                                         pkg.dest.rot_ptr->coeffs().data());
-
-            rp.edges_used.emplace(edge_id);
-            if (!pkg.source.optimize)
-            {
-                rp.external_nodes_used.emplace(pkg.source.node_id);
-            }
-            if (!pkg.dest.optimize)
-            {
-                rp.external_nodes_used.emplace(pkg.dest.node_id);
-            }
-        }
-    }
-
-    for (size_t ext_node_id : rp.external_nodes_used)
-    {
-        rp.problem->SetParameterBlockConstant(const_cast<double*>(graph.getNode(ext_node_id)->payload.orientation.coeffs().data()));
     }
 
     rp.addDownwardsPrior(nodes);
+    rp.setConstantBlocks(graph);
+
     rp.solve(nodes);
 }
 } // namespace opencalibration
