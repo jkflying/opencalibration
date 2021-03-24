@@ -72,6 +72,20 @@ struct DecomposedRotationCost
     const Eigen::Vector3d *_translation1, *_translation2;
 };
 
+
+struct OptimizationPackage
+{
+    const camera_relations *relations;
+
+    struct PoseOpt
+    {
+        Eigen::Vector3d *loc_ptr;
+        Eigen::Quaterniond *rot_ptr;
+        bool optimize = true;
+        size_t node_id;
+    } source, dest;
+};
+
 struct RelaxProblem
 {
     ceres::Problem::Options problemOptions;
@@ -109,12 +123,18 @@ struct RelaxProblem
         }
     }
 
-    static const MeasurementGraph::Edge *getValidEdge(const MeasurementGraph &graph,
+    const MeasurementGraph::Edge *getValidEdge(const MeasurementGraph &graph,
                                                       const std::unordered_set<size_t> &edges_to_optimize,
                                                       size_t edge_id)
     {
         // skip edges not whitelisted
         if (edges_to_optimize.find(edge_id) == edges_to_optimize.end())
+        {
+            return nullptr;
+        }
+
+        // skip edges already used in this optimization problem
+        if (edges_used.find(edge_id) != edges_used.end())
         {
             return nullptr;
         }
@@ -145,6 +165,54 @@ struct RelaxProblem
         }
     }
 
+    static OptimizationPackage::PoseOpt nodepose2poseopt(NodePose& n)
+    {
+        OptimizationPackage::PoseOpt po;
+        po.loc_ptr = &n.position;
+        po.rot_ptr = &n.orientation;
+        po.optimize = true;
+        po.node_id = n.node_id;
+        return po;
+    }
+
+    OptimizationPackage::PoseOpt nodeid2poseopt(const MeasurementGraph& graph, size_t node_id)
+    {
+        OptimizationPackage::PoseOpt po;
+        po.node_id = node_id;
+        auto opt_iter = nodes_to_optimize.find(node_id);
+        if (opt_iter != nodes_to_optimize.end())
+        {
+            NodePose *other = opt_iter->second;
+            po.loc_ptr = &other->position;
+            po.rot_ptr = &other->orientation;
+            po.optimize = true;
+        }
+        else
+        {
+            const MeasurementGraph::Node *other = graph.getNode(node_id);
+            if (other == nullptr)
+            {
+                spdlog::error("Null node referenced from edge list");
+                po.loc_ptr = nullptr;
+                po.rot_ptr = nullptr;
+                po.optimize = false;
+            }
+            else if (other->payload.orientation.coeffs().hasNaN() || other->payload.position.hasNaN())
+            {
+                po.loc_ptr = nullptr;
+                po.rot_ptr = nullptr;
+                po.optimize = false;
+            }
+            else
+            {
+                po.loc_ptr = const_cast<Eigen::Vector3d *>(&other->payload.position);
+                po.rot_ptr = const_cast<Eigen::Quaterniond *>(&other->payload.orientation);
+                po.optimize = false;
+            }
+        }
+        return po;
+    }
+
     void solve(std::vector<NodePose> &nodes)
     {
         spdlog::debug("Start rotation relax: {} active nodes, {} edges, {} inactive nodes", nodes.size(),
@@ -158,16 +226,6 @@ struct RelaxProblem
             n.orientation.normalize();
         }
     }
-};
-
-struct OptimizationPackage
-{
-    Eigen::Vector3d *source_loc_ptr, *dest_loc_ptr;
-    Eigen::Quaterniond *source_rot_ptr, *dest_rot_ptr;
-
-    bool source_optimize = true, dest_optimize = true;
-
-    std::reference_wrapper<camera_relations> relations;
 };
 
 } // namespace
@@ -248,63 +306,45 @@ void relaxDecompositions(const MeasurementGraph &graph, std::vector<NodePose> &n
             if (edge == nullptr)
                 continue;
 
-            bool n_is_source = edge->getSource() == n.node_id;
+            OptimizationPackage pkg;
+            pkg.relations = &edge->payload;
 
-            size_t other_id = n_is_source ? edge->getDest() : edge->getSource();
-
-            bool other_also_optimized = rp.nodes_to_optimize.find(other_id) != rp.nodes_to_optimize.end();
-
-            Eigen::Vector3d *n_loc_ptr = &n.position, *other_loc_ptr;
-            Eigen::Quaterniond *n_rot_ptr = &n.orientation, *other_rot_ptr;
-
-            if (other_also_optimized)
+            if (edge->getSource() == n.node_id)
             {
-                NodePose *other = rp.nodes_to_optimize.find(other_id)->second;
-                other_loc_ptr = &other->position;
-                other_rot_ptr = &other->orientation;
+                pkg.source = rp.nodepose2poseopt(n);
+                pkg.dest = rp.nodeid2poseopt(graph, edge->getDest());
+                if (pkg.dest.loc_ptr == nullptr)
+                    continue;
             }
             else
             {
-                const auto *other = graph.getNode(other_id);
-                if (other == nullptr)
-                {
-                    spdlog::error("Null node referenced from edge list");
+                pkg.dest = rp.nodepose2poseopt(n);
+                pkg.source = rp.nodeid2poseopt(graph, edge->getSource());
+                if (pkg.source.loc_ptr == nullptr)
                     continue;
-                }
-
-                if (other->payload.orientation.coeffs().hasNaN() || other->payload.position.hasNaN())
-                {
-                    continue;
-                }
-
-                // rather set the parameter block const once we've added it
-                // otherwise we'd need a combinatorial list of const/mutable cost functions
-                // although that would technically lead to faster jacobian evaluation
-                other_loc_ptr = const_cast<Eigen::Vector3d *>(&other->payload.position);
-                other_rot_ptr = const_cast<Eigen::Quaterniond *>(&other->payload.orientation);
             }
 
-            Eigen::Vector3d *source_loc_ptr = n_loc_ptr, *dest_loc_ptr = other_loc_ptr;
-            Eigen::Quaterniond *source_rot_ptr = n_rot_ptr, *dest_rot_ptr = other_rot_ptr;
-
-            if (!n_is_source)
-            {
-                std::swap(source_loc_ptr, dest_loc_ptr);
-                std::swap(source_rot_ptr, dest_rot_ptr);
-            }
 
             rp.problem->AddResidualBlock(new ceres::AutoDiffCostFunction<DecomposedRotationCost, 3, 4, 4>(
-                                             new DecomposedRotationCost(edge->payload, source_loc_ptr, dest_loc_ptr)),
-                                         &rp.huber_loss, source_rot_ptr->coeffs().data(),
-                                         dest_rot_ptr->coeffs().data());
+                                             new DecomposedRotationCost(*pkg.relations, pkg.source.loc_ptr, pkg.dest.loc_ptr)),
+                                         &rp.huber_loss, pkg.source.rot_ptr->coeffs().data(),
+                                         pkg.dest.rot_ptr->coeffs().data());
 
             rp.edges_used.emplace(edge_id);
-            if (!other_also_optimized)
+            if (!pkg.source.optimize)
             {
-                rp.external_nodes_used.emplace(other_id);
-                rp.problem->SetParameterBlockConstant(other_rot_ptr->coeffs().data());
+                rp.external_nodes_used.emplace(pkg.source.node_id);
+            }
+            if (!pkg.dest.optimize)
+            {
+                rp.external_nodes_used.emplace(pkg.dest.node_id);
             }
         }
+    }
+
+    for (size_t ext_node_id : rp.external_nodes_used)
+    {
+        rp.problem->SetParameterBlockConstant(const_cast<double*>(graph.getNode(ext_node_id)->payload.orientation.coeffs().data()));
     }
 
     rp.addDownwardsPrior(nodes);
