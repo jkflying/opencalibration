@@ -49,17 +49,26 @@ struct DecomposedRotationCost
         const QuaterionTCM rotation1_em(rotation1);
         const QuaterionTCM rotation2_em(rotation2);
 
-        // angle from camera1 -> camera2
-        const Vector3T rotated_translation2_1 = rotation1_em.inverse() * (*_translation2 - *_translation1).cast<T>();
-        residuals[0] = acos(T(0.99999) * rotated_translation2_1.dot(_relations.relative_translation) /
-                            sqrt(rotated_translation2_1.squaredNorm() * _relations.relative_translation.squaredNorm()));
+        const Eigen::Vector3d distance = *_translation2 - *_translation1;
+        if (distance.squaredNorm() > 1e-9)
+        {
+            // angle from camera1 -> camera2
+            const Vector3T rotated_translation2_1 = rotation1_em.inverse() * distance.cast<T>();
+            residuals[0] =
+                acos(T(0.99999) * rotated_translation2_1.dot(_relations.relative_translation) /
+                     sqrt(rotated_translation2_1.squaredNorm() * _relations.relative_translation.squaredNorm()));
 
-        // angle from camera2 -> camera1
-        const Vector3T rotated_translation1_2 =
-            rotation2_em.inverse() * (_relations.relative_rotation * (*_translation1 - *_translation2)).cast<T>();
-        residuals[1] = acos(T(0.99999) * rotated_translation1_2.dot(-_relations.relative_translation) /
-                            sqrt(rotated_translation1_2.squaredNorm() * _relations.relative_translation.squaredNorm()));
-
+            // angle from camera2 -> camera1
+            const Vector3T rotated_translation1_2 =
+                rotation2_em.inverse() * (_relations.relative_rotation * -distance).cast<T>();
+            residuals[1] =
+                acos(T(0.99999) * rotated_translation1_2.dot(-_relations.relative_translation) /
+                     sqrt(rotated_translation1_2.squaredNorm() * _relations.relative_translation.squaredNorm()));
+        }
+        else
+        {
+            residuals[0] = residuals[1] = T(0);
+        }
         // relative orientation of camera1 and camera2
         const QuaterionT rotation2_1 = rotation1_em.inverse() * rotation2_em;
         residuals[2] = Eigen::AngleAxis<T>(_relations.relative_rotation.cast<T>() * rotation2_1).angle();
@@ -142,57 +151,8 @@ struct RelaxProblem
         {
             return false;
         }
+
         return true;
-    }
-
-    void addRelationCost(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge)
-    {
-        OptimizationPackage pkg;
-        pkg.relations = &edge.payload;
-
-        pkg.source = nodeid2poseopt(graph, edge.getSource());
-        if (pkg.source.loc_ptr == nullptr)
-            return;
-
-        pkg.dest = nodeid2poseopt(graph, edge.getDest());
-        if (pkg.dest.loc_ptr == nullptr)
-            return;
-
-        problem->AddResidualBlock(new ceres::AutoDiffCostFunction<DecomposedRotationCost, 3, 4, 4>(
-                                      new DecomposedRotationCost(*pkg.relations, pkg.source.loc_ptr, pkg.dest.loc_ptr)),
-                                  &huber_loss, pkg.source.rot_ptr->coeffs().data(), pkg.dest.rot_ptr->coeffs().data());
-
-        if (!pkg.source.optimize)
-        {
-            constant_nodes.emplace(pkg.source.node_id);
-        }
-        if (!pkg.dest.optimize)
-        {
-            constant_nodes.emplace(pkg.dest.node_id);
-        }
-
-        edges_used.emplace(edge_id);
-    }
-
-    void addDownwardsPrior(std::vector<NodePose> &nodes)
-    {
-        for (NodePose &n : nodes)
-        {
-            problem->AddResidualBlock(
-                new ceres::AutoDiffCostFunction<PointsDownwardsPrior, 1, 4>(new PointsDownwardsPrior()), nullptr,
-                n.orientation.coeffs().data());
-            problem->SetParameterization(n.orientation.coeffs().data(), &quat_parameterization);
-        }
-    }
-
-    static OptimizationPackage::PoseOpt nodepose2poseopt(NodePose &n)
-    {
-        OptimizationPackage::PoseOpt po;
-        po.loc_ptr = &n.position;
-        po.rot_ptr = &n.orientation;
-        po.optimize = true;
-        po.node_id = n.node_id;
-        return po;
     }
 
     OptimizationPackage::PoseOpt nodeid2poseopt(const MeasurementGraph &graph, size_t node_id)
@@ -231,6 +191,78 @@ struct RelaxProblem
             }
         }
         return po;
+    }
+
+    void addRelationCost(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge)
+    {
+        OptimizationPackage pkg;
+        pkg.relations = &edge.payload;
+
+        pkg.source = nodeid2poseopt(graph, edge.getSource());
+        if (pkg.source.loc_ptr == nullptr)
+            return;
+
+        pkg.dest = nodeid2poseopt(graph, edge.getDest());
+        if (pkg.dest.loc_ptr == nullptr)
+            return;
+
+        // skip edges that trigger a singularity in the math
+        if ((*pkg.source.loc_ptr - *pkg.dest.loc_ptr).squaredNorm() < 1e-9)
+            return;
+
+        using CostFunction = ceres::AutoDiffCostFunction<DecomposedRotationCost, 3, 4, 4>;
+        std::unique_ptr<CostFunction> func(
+            new CostFunction(new DecomposedRotationCost(*pkg.relations, pkg.source.loc_ptr, pkg.dest.loc_ptr)));
+
+        // test-evaluate the cost function to make sure no weird data gets into the relaxation
+        Eigen::Matrix<double, 4, 3> jac[2];
+        jac[0].setConstant(NAN);
+        jac[1].setConstant(NAN);
+        double *jacdata[2] = {jac[0].data(), jac[1].data()};
+        Eigen::Vector3d res;
+        res.setConstant(NAN);
+        double *datas[2] = {pkg.source.rot_ptr->coeffs().data(), pkg.dest.rot_ptr->coeffs().data()};
+        bool success = func->Evaluate(datas, res.data(), jacdata);
+
+        if (!success || !res.allFinite() || !jac[0].allFinite() || !jac[1].allFinite())
+        {
+            std::stringstream ss;
+            ss << std::endl;
+            ss << "source pos: " << pkg.source.loc_ptr->transpose()
+               << "  rot: " << pkg.source.rot_ptr->coeffs().transpose() << std::endl;
+            ss << "dest   pos: " << pkg.dest.loc_ptr->transpose() << "  rot: " << pkg.dest.rot_ptr->coeffs().transpose()
+               << std::endl;
+            ss << "res : " << res.transpose() << std::endl;
+            ss << "jac[0]: " << std::endl << jac[0] << std::endl;
+            ss << "jac[1]: " << std::endl << jac[1] << std::endl;
+            spdlog::warn("Bad camera relation prevented from entering minimization: edge {} more info: {}", edge_id,
+                         ss.str());
+            return;
+        }
+
+        problem->AddResidualBlock(func.release(), &huber_loss, datas[0], datas[1]);
+
+        if (!pkg.source.optimize)
+        {
+            constant_nodes.emplace(pkg.source.node_id);
+        }
+        if (!pkg.dest.optimize)
+        {
+            constant_nodes.emplace(pkg.dest.node_id);
+        }
+
+        edges_used.emplace(edge_id);
+    }
+
+    void addDownwardsPrior(std::vector<NodePose> &nodes)
+    {
+        for (NodePose &n : nodes)
+        {
+            problem->AddResidualBlock(
+                new ceres::AutoDiffCostFunction<PointsDownwardsPrior, 1, 4>(new PointsDownwardsPrior()), nullptr,
+                n.orientation.coeffs().data());
+            problem->SetParameterization(n.orientation.coeffs().data(), &quat_parameterization);
+        }
     }
 
     void setConstantBlocks(const MeasurementGraph &graph)
