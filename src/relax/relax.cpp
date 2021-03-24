@@ -206,10 +206,6 @@ struct RelaxProblem
         if (pkg.dest.loc_ptr == nullptr)
             return;
 
-        // skip edges that trigger a singularity in the math
-        if ((*pkg.source.loc_ptr - *pkg.dest.loc_ptr).squaredNorm() < 1e-9)
-            return;
-
         using CostFunction = ceres::AutoDiffCostFunction<DecomposedRotationCost, 3, 4, 4>;
         std::unique_ptr<CostFunction> func(
             new CostFunction(new DecomposedRotationCost(*pkg.relations, pkg.source.loc_ptr, pkg.dest.loc_ptr)));
@@ -226,17 +222,7 @@ struct RelaxProblem
 
         if (!success || !res.allFinite() || !jac[0].allFinite() || !jac[1].allFinite())
         {
-            std::stringstream ss;
-            ss << std::endl;
-            ss << "source pos: " << pkg.source.loc_ptr->transpose()
-               << "  rot: " << pkg.source.rot_ptr->coeffs().transpose() << std::endl;
-            ss << "dest   pos: " << pkg.dest.loc_ptr->transpose() << "  rot: " << pkg.dest.rot_ptr->coeffs().transpose()
-               << std::endl;
-            ss << "res : " << res.transpose() << std::endl;
-            ss << "jac[0]: " << std::endl << jac[0] << std::endl;
-            ss << "jac[1]: " << std::endl << jac[1] << std::endl;
-            spdlog::warn("Bad camera relation prevented from entering minimization: edge {} more info: {}", edge_id,
-                         ss.str());
+            spdlog::warn("Bad camera relation prevented from entering minimization");
             return;
         }
 
