@@ -1,6 +1,7 @@
 #include <opencalibration/relax/relax.hpp>
 
 #include <opencalibration/distort/distort_keypoints.hpp>
+#include <opencalibration/geometry/intersection.hpp>
 
 #include <ceres/ceres.h>
 #include <spdlog/spdlog.h>
@@ -79,6 +80,44 @@ struct DecomposedRotationCost
   private:
     const camera_relations &_relations;
     const Eigen::Vector3d *_translation1, *_translation2;
+};
+
+struct PixelErrorCost
+{
+    PixelErrorCost(const Eigen::Vector3d &camera_loc, const CameraModel &camera_model,
+                   const Eigen::Vector2d &camera_pixel)
+        : loc(camera_loc), model(camera_model), pixel(camera_pixel)
+    {
+    }
+
+    template <typename T> bool operator()(const T *rotation, const T *point, T *residuals) const
+    {
+        using QuaterionT = Eigen::Quaternion<T>;
+        using Vector3T = Eigen::Matrix<T, 3, 1>;
+        using Vector2T = Eigen::Matrix<T, 2, 1>;
+        using QuaterionTCM = Eigen::Map<const QuaterionT>;
+        using Vector3TCM = Eigen::Map<const Vector3T>;
+        using Vector2TM = Eigen::Map<Vector2T>;
+
+        const QuaterionTCM rotation_em(rotation);
+        const Vector3TCM point_em(point);
+
+        Vector3T ray = rotation_em.inverse() * (loc.cast<T>() - point_em);
+
+        DifferentiableCameraModel<T> model_t = model.cast<T>();
+
+        Vector2T projected_pixel = image_from_3d<T>(ray, model_t);
+
+        Vector2TM residuals_m(residuals);
+        residuals_m = projected_pixel - pixel.cast<T>();
+
+        return true;
+    }
+
+  private:
+    const Eigen::Vector3d &loc;
+    const CameraModel &model;
+    const Eigen::Vector2d &pixel;
 };
 
 struct OptimizationPackage
@@ -197,13 +236,10 @@ struct RelaxProblem
     {
         OptimizationPackage pkg;
         pkg.relations = &edge.payload;
-
         pkg.source = nodeid2poseopt(graph, edge.getSource());
-        if (pkg.source.loc_ptr == nullptr)
-            return;
-
         pkg.dest = nodeid2poseopt(graph, edge.getDest());
-        if (pkg.dest.loc_ptr == nullptr)
+
+        if (pkg.source.loc_ptr == nullptr || pkg.dest.loc_ptr == nullptr)
             return;
 
         using CostFunction = ceres::AutoDiffCostFunction<DecomposedRotationCost, 3, 4, 4>;
@@ -239,6 +275,10 @@ struct RelaxProblem
 
         edges_used.emplace(edge_id);
     }
+
+    //     void addMeasurementsCost(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge)
+    //     {
+    //     }
 
     void addDownwardsPrior(std::vector<NodePose> &nodes)
     {
@@ -345,6 +385,78 @@ void relaxDecompositions(const MeasurementGraph &graph, std::vector<NodePose> &n
         if (edge != nullptr && rp.shouldOptimizeEdge(edges_to_optimize, edge_id, *edge))
         {
             rp.addRelationCost(graph, edge_id, *edge);
+        }
+    }
+
+    rp.addDownwardsPrior(nodes);
+    rp.setConstantBlocks(graph);
+
+    rp.solve(nodes);
+}
+
+void relaxMeasurements(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                       const std::unordered_set<size_t> &edges_to_optimize)
+{
+    RelaxProblem rp;
+    rp.initialize(nodes);
+
+    using VecVec3D = std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>>;
+    std::unordered_map<size_t, VecVec3D> edge_points;
+
+    for (size_t edge_id : edges_to_optimize)
+    {
+        const MeasurementGraph::Edge *edge = graph.getEdge(edge_id);
+        if (edge != nullptr && rp.shouldOptimizeEdge(edges_to_optimize, edge_id, *edge))
+        {
+            VecVec3D &points = edge_points[edge_id];
+            points.reserve(edge->payload.inlier_matches.size());
+
+            OptimizationPackage pkg;
+            pkg.relations = &edge->payload;
+            pkg.source = rp.nodeid2poseopt(graph, edge->getSource());
+            pkg.dest = rp.nodeid2poseopt(graph, edge->getDest());
+
+            if (pkg.source.loc_ptr == nullptr || pkg.dest.loc_ptr == nullptr)
+                return;
+
+            const auto &source_model = graph.getNode(edge->getSource())->payload.model;
+            const auto &dest_model = graph.getNode(edge->getDest())->payload.model;
+
+            Eigen::Matrix3d source_rot = pkg.source.rot_ptr->toRotationMatrix();
+            Eigen::Matrix3d dest_rot = pkg.dest.rot_ptr->toRotationMatrix();
+
+            for (const auto &inlier : edge->payload.inlier_matches)
+            {
+                // TODO: make 3D intersection, add it to `points`
+                Eigen::Vector3d source_ray = source_rot * image_to_3d(inlier.pixel_1, source_model);
+                Eigen::Vector3d dest_ray = dest_rot * image_to_3d(inlier.pixel_2, dest_model);
+                Eigen::Vector4d intersection =
+                    rayIntersection(*pkg.source.loc_ptr, source_ray, *pkg.dest.loc_ptr, dest_ray);
+
+                points.emplace_back(intersection.topRows<3>());
+
+                // TODO: add cost functions for this 3D point from both the source and dest camera
+
+                using CostFunction = ceres::AutoDiffCostFunction<PixelErrorCost, 2, 4, 3>;
+
+                rp.problem->AddResidualBlock(
+                    new CostFunction(new PixelErrorCost(*pkg.source.loc_ptr, source_model, inlier.pixel_1)),
+                    &rp.huber_loss, pkg.source.rot_ptr->coeffs().data(), points.back().data());
+                rp.problem->AddResidualBlock(
+                    new CostFunction(new PixelErrorCost(*pkg.dest.loc_ptr, dest_model, inlier.pixel_2)), &rp.huber_loss,
+                    pkg.dest.rot_ptr->coeffs().data(), points.back().data());
+            }
+
+            if (!pkg.source.optimize)
+            {
+                rp.constant_nodes.emplace(pkg.source.node_id);
+            }
+            if (!pkg.dest.optimize)
+            {
+                rp.constant_nodes.emplace(pkg.dest.node_id);
+            }
+
+            rp.edges_used.emplace(edge_id);
         }
     }
 

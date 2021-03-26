@@ -29,10 +29,10 @@ Eigen::Vector3d image_to_3d(const Eigen::Vector2d &keypoint, const CameraModel &
     Eigen::Vector3d ray;
     switch (model.projection_type)
     {
-    case CameraModel::ProjectionType::PLANAR:
+    case ProjectionType::PLANAR:
         ray = ((keypoint - model.principle_point) / model.focal_length_pixels).homogeneous().normalized();
         break;
-    case CameraModel::ProjectionType::UNKNOWN:
+    case ProjectionType::UNKNOWN:
         break;
     }
     return ray;

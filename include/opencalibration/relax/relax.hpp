@@ -10,9 +10,10 @@ namespace opencalibration
 
 void initializeOrientation(const MeasurementGraph &graph, std::vector<NodePose> &nodes);
 void relaxDecompositions(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                         const std::unordered_set<size_t> &edges);
+                         const std::unordered_set<size_t> &edges_to_optimize);
 
-// TODO: keep the ray intersection points?
-// void relaxMeasurements(const MeasurementGraph &graph, std::vector<NodePose> &nodes);
+// TODO: keep the ray intersection points somewhere?
+void relaxMeasurements(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                       const std::unordered_set<size_t> &edges_to_optimize);
 
 } // namespace opencalibration

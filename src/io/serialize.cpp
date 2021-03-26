@@ -245,10 +245,10 @@ template <> class Serializer<MeasurementGraph>
                     writer.Key("projection");
                     switch (node.payload.model.projection_type)
                     {
-                    case CameraModel::ProjectionType::PLANAR:
+                    case ProjectionType::PLANAR:
                         writer.String("planar");
                         break;
-                    case CameraModel::ProjectionType::UNKNOWN:
+                    case ProjectionType::UNKNOWN:
                         writer.String("UNKNOWN");
                         break;
                     }

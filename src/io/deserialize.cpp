@@ -70,8 +70,8 @@ template <> class Deserializer<MeasurementGraph>
                     img.model.principle_point[0] = model["principal"].GetArray()[0].GetDouble();
                     img.model.principle_point[1] = model["principal"].GetArray()[1].GetDouble();
                     img.model.projection_type = "planar" == std::string(model["projection"].GetString())
-                                                    ? CameraModel::ProjectionType::PLANAR
-                                                    : CameraModel::ProjectionType::UNKNOWN;
+                                                    ? ProjectionType::PLANAR
+                                                    : ProjectionType::UNKNOWN;
 
                     MeasurementGraph::Node node(std::move(img));
 

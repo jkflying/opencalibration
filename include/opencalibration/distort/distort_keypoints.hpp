@@ -24,13 +24,13 @@ Eigen::Matrix<T, 2, 1> image_from_3d(const Eigen::Matrix<T, 3, 1> &ray, const Di
     Eigen::Matrix<T, 2, 1> pixel_location;
     switch (model.projection_type)
     {
-    case DifferentiableCameraModel<T>::ProjectionType::PLANAR: {
+    case ProjectionType::PLANAR: {
         Eigen::Matrix<T, 2, 1> on_plane(ray.x() / ray.z(), ray.y() / ray.z());
         pixel_location = on_plane * model.focal_length_pixels + model.principle_point;
         break;
     }
-    case DifferentiableCameraModel<T>::ProjectionType::UNKNOWN:
-        pixel_location.fill(NAN);
+    case ProjectionType::UNKNOWN:
+        pixel_location.fill(T(NAN));
         break;
     }
     return pixel_location;
