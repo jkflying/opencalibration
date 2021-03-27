@@ -26,8 +26,8 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
 
     _local_poses.reserve(node_ids.size());
 
-    bool optimize_all = force_optimize_all || graph.size_nodes() > 1.5 * _last_graph_size_full_relax;
-    if (optimize_all)
+    _optimize_all = force_optimize_all || graph.size_nodes() > 1.5 * _last_graph_size_full_relax;
+    if (_optimize_all)
     {
         _last_graph_size_full_relax = graph.size_nodes();
     }
@@ -67,7 +67,7 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
 
     initializeOrientation(graph, _local_poses);
 
-    if (optimize_all)
+    if (_optimize_all)
     {
         std::unordered_set<size_t> ids_added;
         for (size_t node_id : node_ids)
@@ -100,7 +100,16 @@ std::vector<std::function<void()>> RelaxStage::get_runners(const MeasurementGrap
 {
     if (_local_poses.size() > 0)
     {
-        return {[&]() { relaxDecompositions(graph, _local_poses, _edges_to_optimize); }};
+        return {[&]() {
+            //             if (_optimize_all)
+            //             {
+            //                 relaxMeasurements(graph, _local_poses, _edges_to_optimize); // still too slow
+            //             }
+            //             else
+            //             {
+            relaxDecompositions(graph, _local_poses, _edges_to_optimize);
+            //             }
+        }};
     }
     return {};
 }

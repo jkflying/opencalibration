@@ -14,6 +14,7 @@ using namespace opencalibration;
 
 struct PointsDownwardsPrior
 {
+    static constexpr double weight = 1e-2;
     template <typename T> bool operator()(const T *rotation1, T *residuals) const
     {
         using QuaterionT = Eigen::Quaternion<T>;
@@ -27,7 +28,7 @@ struct PointsDownwardsPrior
 
         Vector3T rotated_cam_center = rotation_em * cam_center.cast<T>();
 
-        residuals[0] = acos(T(0.99999) * rotated_cam_center.dot(down.cast<T>()));
+        residuals[0] = weight * acos(T(0.99999) * rotated_cam_center.dot(down.cast<T>()));
         return true;
     }
 };
@@ -137,7 +138,7 @@ struct RelaxProblem
 {
     ceres::Problem::Options problemOptions;
     ceres::EigenQuaternionParameterization quat_parameterization;
-    ceres::HuberLoss huber_loss;
+    std::unique_ptr<ceres::HuberLoss> huber_loss;
     std::unique_ptr<ceres::Problem> problem;
 
     ceres::Solver::Options solverOptions;
@@ -147,7 +148,10 @@ struct RelaxProblem
     std::unordered_map<size_t, NodePose *> nodes_to_optimize;
     std::unordered_set<size_t> edges_used, constant_nodes;
 
-    RelaxProblem() : huber_loss(M_PI_2)
+    using VecVec3D = std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>>;
+    std::unordered_map<size_t, VecVec3D> edge_points;
+
+    RelaxProblem() : huber_loss(new ceres::HuberLoss(M_PI_2))
     {
         problemOptions.cost_function_ownership = ceres::TAKE_OWNERSHIP;
         problemOptions.loss_function_ownership = ceres::DO_NOT_TAKE_OWNERSHIP;
@@ -262,7 +266,9 @@ struct RelaxProblem
             return;
         }
 
-        problem->AddResidualBlock(func.release(), &huber_loss, datas[0], datas[1]);
+        problem->AddResidualBlock(func.release(), huber_loss.get(), datas[0], datas[1]);
+        problem->SetParameterization(datas[0], &quat_parameterization);
+        problem->SetParameterization(datas[1], &quat_parameterization);
 
         if (!pkg.source.optimize)
         {
@@ -276,9 +282,61 @@ struct RelaxProblem
         edges_used.emplace(edge_id);
     }
 
-    //     void addMeasurementsCost(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge)
-    //     {
-    //     }
+    void addMeasurementsCost(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge)
+    {
+        auto &points = edge_points[edge_id];
+        points.reserve(edge.payload.inlier_matches.size());
+
+        OptimizationPackage pkg;
+        pkg.relations = &edge.payload;
+        pkg.source = nodeid2poseopt(graph, edge.getSource());
+        pkg.dest = nodeid2poseopt(graph, edge.getDest());
+
+        if (pkg.source.loc_ptr == nullptr || pkg.dest.loc_ptr == nullptr)
+            return;
+
+        const auto &source_model = graph.getNode(edge.getSource())->payload.model;
+        const auto &dest_model = graph.getNode(edge.getDest())->payload.model;
+
+        Eigen::Matrix3d source_rot = pkg.source.rot_ptr->toRotationMatrix();
+        Eigen::Matrix3d dest_rot = pkg.dest.rot_ptr->toRotationMatrix();
+
+        for (const auto &inlier : edge.payload.inlier_matches)
+        {
+            // TODO: make 3D intersection, add it to `points`
+            Eigen::Vector3d source_ray = source_rot * image_to_3d(inlier.pixel_1, source_model);
+            Eigen::Vector3d dest_ray = dest_rot * image_to_3d(inlier.pixel_2, dest_model);
+            Eigen::Vector4d intersection =
+                rayIntersection(*pkg.source.loc_ptr, source_ray, *pkg.dest.loc_ptr, dest_ray);
+
+            points.emplace_back(intersection.topRows<3>());
+
+            // TODO: add cost functions for this 3D point from both the source and dest camera
+
+            using CostFunction = ceres::AutoDiffCostFunction<PixelErrorCost, 2, 4, 3>;
+
+            problem->AddResidualBlock(
+                new CostFunction(new PixelErrorCost(*pkg.source.loc_ptr, source_model, inlier.pixel_1)),
+                huber_loss.get(), pkg.source.rot_ptr->coeffs().data(), points.back().data());
+            problem->SetParameterization(pkg.source.rot_ptr->coeffs().data(), &quat_parameterization);
+
+            problem->AddResidualBlock(
+                new CostFunction(new PixelErrorCost(*pkg.dest.loc_ptr, dest_model, inlier.pixel_2)), huber_loss.get(),
+                pkg.dest.rot_ptr->coeffs().data(), points.back().data());
+            problem->SetParameterization(pkg.dest.rot_ptr->coeffs().data(), &quat_parameterization);
+        }
+
+        if (!pkg.source.optimize)
+        {
+            constant_nodes.emplace(pkg.source.node_id);
+        }
+        if (!pkg.dest.optimize)
+        {
+            constant_nodes.emplace(pkg.dest.node_id);
+        }
+
+        edges_used.emplace(edge_id);
+    }
 
     void addDownwardsPrior(std::vector<NodePose> &nodes)
     {
@@ -307,7 +365,8 @@ struct RelaxProblem
                       edges_used.size(), constant_nodes.size());
 
         solver.Solve(solverOptions, problem.get(), &summary);
-        spdlog::debug(summary.BriefReport());
+        spdlog::info(summary.BriefReport());
+        spdlog::debug(summary.FullReport());
 
         for (NodePose &n : nodes)
         {
@@ -399,69 +458,22 @@ void relaxMeasurements(const MeasurementGraph &graph, std::vector<NodePose> &nod
 {
     RelaxProblem rp;
     rp.initialize(nodes);
-
-    using VecVec3D = std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>>;
-    std::unordered_map<size_t, VecVec3D> edge_points;
+    rp.huber_loss.reset(new ceres::HuberLoss(10));
 
     for (size_t edge_id : edges_to_optimize)
     {
         const MeasurementGraph::Edge *edge = graph.getEdge(edge_id);
         if (edge != nullptr && rp.shouldOptimizeEdge(edges_to_optimize, edge_id, *edge))
         {
-            VecVec3D &points = edge_points[edge_id];
-            points.reserve(edge->payload.inlier_matches.size());
-
-            OptimizationPackage pkg;
-            pkg.relations = &edge->payload;
-            pkg.source = rp.nodeid2poseopt(graph, edge->getSource());
-            pkg.dest = rp.nodeid2poseopt(graph, edge->getDest());
-
-            if (pkg.source.loc_ptr == nullptr || pkg.dest.loc_ptr == nullptr)
-                return;
-
-            const auto &source_model = graph.getNode(edge->getSource())->payload.model;
-            const auto &dest_model = graph.getNode(edge->getDest())->payload.model;
-
-            Eigen::Matrix3d source_rot = pkg.source.rot_ptr->toRotationMatrix();
-            Eigen::Matrix3d dest_rot = pkg.dest.rot_ptr->toRotationMatrix();
-
-            for (const auto &inlier : edge->payload.inlier_matches)
-            {
-                // TODO: make 3D intersection, add it to `points`
-                Eigen::Vector3d source_ray = source_rot * image_to_3d(inlier.pixel_1, source_model);
-                Eigen::Vector3d dest_ray = dest_rot * image_to_3d(inlier.pixel_2, dest_model);
-                Eigen::Vector4d intersection =
-                    rayIntersection(*pkg.source.loc_ptr, source_ray, *pkg.dest.loc_ptr, dest_ray);
-
-                points.emplace_back(intersection.topRows<3>());
-
-                // TODO: add cost functions for this 3D point from both the source and dest camera
-
-                using CostFunction = ceres::AutoDiffCostFunction<PixelErrorCost, 2, 4, 3>;
-
-                rp.problem->AddResidualBlock(
-                    new CostFunction(new PixelErrorCost(*pkg.source.loc_ptr, source_model, inlier.pixel_1)),
-                    &rp.huber_loss, pkg.source.rot_ptr->coeffs().data(), points.back().data());
-                rp.problem->AddResidualBlock(
-                    new CostFunction(new PixelErrorCost(*pkg.dest.loc_ptr, dest_model, inlier.pixel_2)), &rp.huber_loss,
-                    pkg.dest.rot_ptr->coeffs().data(), points.back().data());
-            }
-
-            if (!pkg.source.optimize)
-            {
-                rp.constant_nodes.emplace(pkg.source.node_id);
-            }
-            if (!pkg.dest.optimize)
-            {
-                rp.constant_nodes.emplace(pkg.dest.node_id);
-            }
-
-            rp.edges_used.emplace(edge_id);
+            rp.addMeasurementsCost(graph, edge_id, *edge);
         }
     }
 
-    rp.addDownwardsPrior(nodes);
+    // rp.addDownwardsPrior(nodes); the downwards prior hopefully isn't necessary at this stage in the bundle
     rp.setConstantBlocks(graph);
+
+    rp.solverOptions.max_num_iterations = 300;
+    rp.solverOptions.linear_solver_type = ceres::SPARSE_SCHUR;
 
     rp.solve(nodes);
 }

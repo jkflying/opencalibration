@@ -23,6 +23,7 @@ class RelaxStage
     std::unordered_set<size_t> _edges_to_optimize;
 
     size_t _last_graph_size_full_relax = 0;
+    bool _optimize_all = false;
 };
 
 } // namespace opencalibration
