@@ -14,7 +14,7 @@ using namespace opencalibration;
 
 struct PointsDownwardsPrior
 {
-    static constexpr double weight = 1e-2;
+    static constexpr double weight = 1;
     template <typename T> bool operator()(const T *rotation1, T *residuals) const
     {
         using QuaterionT = Eigen::Quaternion<T>;
