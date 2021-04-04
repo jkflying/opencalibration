@@ -12,9 +12,14 @@ namespace
 {
 using namespace opencalibration;
 
+template <typename T> T angleBetweenUnitVectors(const Eigen::Matrix<T, 3, 1> &n1, const Eigen::Matrix<T, 3, 1> &n2)
+{
+    return acos(T(0.99999) * n1.dot(n2));
+}
+
 struct PointsDownwardsPrior
 {
-    static constexpr double weight = 1;
+    static constexpr double weight = 1e-3;
     template <typename T> bool operator()(const T *rotation1, T *residuals) const
     {
         using QuaterionT = Eigen::Quaternion<T>;
@@ -23,12 +28,12 @@ struct PointsDownwardsPrior
 
         const QuaterionTCM rotation_em(rotation1);
 
-        const Eigen::Vector3d cam_center(0, 0, 1);
-        const Eigen::Vector3d down(0, 0, -1);
+        const Vector3T cam_center = Eigen::Vector3d(0, 0, 1).cast<T>();
+        const Vector3T down = Eigen::Vector3d(0, 0, -1).cast<T>();
 
-        Vector3T rotated_cam_center = rotation_em * cam_center.cast<T>();
+        Vector3T rotated_cam_center = rotation_em * cam_center;
 
-        residuals[0] = weight * acos(T(0.99999) * rotated_cam_center.dot(down.cast<T>()));
+        residuals[0] = weight * angleBetweenUnitVectors<T>(rotated_cam_center, down);
         return true;
     }
 };
@@ -38,7 +43,13 @@ struct DecomposedRotationCost
 {
     DecomposedRotationCost(const camera_relations &relations, const Eigen::Vector3d *translation1,
                            const Eigen::Vector3d *translation2)
-        : _relations(relations), _translation1(translation1), _translation2(translation2)
+        :
+
+          _has_translation((*translation2 - *translation1).squaredNorm() > 1e-9 &&
+                           relations.relative_translation.squaredNorm() > 1e-9),
+          _relative_rotation(relations.relative_rotation.normalized()),
+          _translation_direction((*translation2 - *translation1).normalized()),
+          _relative_translation_direction(relations.relative_translation.normalized())
     {
     }
 
@@ -51,36 +62,35 @@ struct DecomposedRotationCost
         const QuaterionTCM rotation1_em(rotation1);
         const QuaterionTCM rotation2_em(rotation2);
 
-        const Eigen::Vector3d distance = *_translation2 - *_translation1;
-        if (distance.squaredNorm() > 1e-9)
+        if (_has_translation)
         {
             // angle from camera1 -> camera2
-            const Vector3T rotated_translation2_1 = rotation1_em.inverse() * distance.cast<T>();
-            residuals[0] =
-                acos(T(0.99999) * rotated_translation2_1.dot(_relations.relative_translation) /
-                     sqrt(rotated_translation2_1.squaredNorm() * _relations.relative_translation.squaredNorm()));
+            const Vector3T rotated_translation2_1 = rotation1_em.inverse() * _translation_direction.cast<T>();
+            residuals[0] = angleBetweenUnitVectors<T>(rotated_translation2_1, _relative_translation_direction.cast<T>());
 
             // angle from camera2 -> camera1
             const Vector3T rotated_translation1_2 =
-                rotation2_em.inverse() * (_relations.relative_rotation * -distance).cast<T>();
-            residuals[1] =
-                acos(T(0.99999) * rotated_translation1_2.dot(-_relations.relative_translation) /
-                     sqrt(rotated_translation1_2.squaredNorm() * _relations.relative_translation.squaredNorm()));
+                rotation2_em.inverse() * (_relative_rotation * -_translation_direction).cast<T>();
+            residuals[1] = angleBetweenUnitVectors<T>(rotated_translation1_2, -_relative_translation_direction.cast<T>());
         }
         else
         {
             residuals[0] = residuals[1] = T(0);
         }
+
         // relative orientation of camera1 and camera2
         const QuaterionT rotation2_1 = rotation1_em.inverse() * rotation2_em;
-        residuals[2] = Eigen::AngleAxis<T>(_relations.relative_rotation.cast<T>() * rotation2_1).angle();
+        residuals[2] = Eigen::AngleAxis<T>(_relative_rotation.cast<T>() * rotation2_1).angle();
 
         return true;
     }
 
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
   private:
-    const camera_relations &_relations;
-    const Eigen::Vector3d *_translation1, *_translation2;
+    const bool _has_translation;
+    const Eigen::Quaterniond _relative_rotation;
+    const Eigen::Vector3d _translation_direction, _relative_translation_direction;
 };
 
 struct PixelErrorCost
@@ -303,7 +313,7 @@ struct RelaxProblem
 
         for (const auto &inlier : edge.payload.inlier_matches)
         {
-            // TODO: make 3D intersection, add it to `points`
+            // make 3D intersection, add it to `points`
             Eigen::Vector3d source_ray = source_rot * image_to_3d(inlier.pixel_1, source_model);
             Eigen::Vector3d dest_ray = dest_rot * image_to_3d(inlier.pixel_2, dest_model);
             Eigen::Vector4d intersection =
@@ -311,8 +321,7 @@ struct RelaxProblem
 
             points.emplace_back(intersection.topRows<3>());
 
-            // TODO: add cost functions for this 3D point from both the source and dest camera
-
+            // add cost functions for this 3D point from both the source and dest camera
             using CostFunction = ceres::AutoDiffCostFunction<PixelErrorCost, 2, 4, 3>;
 
             problem->AddResidualBlock(

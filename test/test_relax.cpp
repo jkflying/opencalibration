@@ -50,7 +50,10 @@ TEST(relax, prior_2_images)
     MeasurementGraph graph;
     std::vector<NodePose> np;
 
-    Eigen::Quaterniond ori(Eigen::AngleAxisd(M_PI_4, Eigen::Vector3d::UnitX()));
+    // NB! relative translation of the two images is on the X axis, so the rotation around the X axis is unconstrained
+    // Only put disturbances on the Y axis!
+
+    Eigen::Quaterniond ori(Eigen::AngleAxisd(M_PI_2, Eigen::Vector3d::UnitY()));
     Eigen::Vector3d pos(9, 9, 9);
     image img;
     img.orientation = ori;
@@ -78,14 +81,8 @@ TEST(relax, prior_2_images)
     relaxDecompositions(graph, np, {edge_id});
 
     // THEN: it should be pointing downwards, with other axes close to the original
-    EXPECT_LT(Eigen::AngleAxisd(np[0].orientation.inverse() *
-                                Eigen::Quaterniond(Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX())))
-                  .angle(),
-              1e-3)
+    EXPECT_LT(Eigen::AngleAxisd(np[0].orientation.inverse() * Eigen::Quaterniond::Identity()).angle(), 1e-3)
         << np[0].orientation.coeffs().transpose();
-    EXPECT_LT(Eigen::AngleAxisd(np[1].orientation.inverse() *
-                                Eigen::Quaterniond(Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX())))
-                  .angle(),
-              1e-3)
+    EXPECT_LT(Eigen::AngleAxisd(np[1].orientation.inverse() * Eigen::Quaterniond::Identity()).angle(), 1e-3)
         << np[1].orientation.coeffs().transpose();
 }
