@@ -14,14 +14,16 @@ jobs:
       with:
         submodules: 'true'
     - name: install dependencies
-      run: sudo apt-get update && sudo apt-get install libeigen3-dev libopencv-dev libgdal-dev libceres-dev libgtest-dev rapidjson-dev libspdlog-dev libtinyxml2-dev clang-format-10 lcov
+      run: sudo apt-get update && sudo apt-get install ccache ninja-build libeigen3-dev libopencv-dev libgdal-dev libceres-dev libgtest-dev rapidjson-dev libspdlog-dev libtinyxml2-dev clang-format-10 lcov
     - name: check formatting
       run: tools/check_style.sh
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1
     - name: cmake
-      run: mkdir build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Coverage
-    - name: make -j4
-      run: cd build && make
-    - name: make test_coverage_html
-      run: cd build && make test_coverage_html
+      run: mkdir build && cd build && PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH" cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Coverage
+    - name: build
+      run: cd build && ninja
+    - name: test_coverage_html
+      run: cd build && ninja test_coverage_html
     - name: upload to codecov
       run:  bash <(curl -s https://codecov.io/bash) -f build/test/clean_coverage.info

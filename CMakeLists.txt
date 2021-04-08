@@ -8,6 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 find_package(Eigen3 3.3.7 REQUIRED)
 
 find_package(Ceres 1.14 REQUIRED )
+add_compile_definitions(CERES_USE_CXX11 TRUE)
 include_directories(${CERES_INCLUDE_DIRS})
 
 find_package(OpenCV REQUIRED)
