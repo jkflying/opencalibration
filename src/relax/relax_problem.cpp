@@ -28,8 +28,8 @@ void RelaxProblem::initialize(std::vector<NodePose> &nodes)
     }
 }
 
-bool RelaxProblem::shouldOptimizeEdge(const std::unordered_set<size_t> &edges_to_optimize, size_t edge_id,
-                                      const MeasurementGraph::Edge &edge)
+bool RelaxProblem::shouldAddEdgeToOptimization(const std::unordered_set<size_t> &edges_to_optimize, size_t edge_id,
+                                               const MeasurementGraph::Edge &edge)
 {
     // skip edges not whitelisted
     if (edges_to_optimize.find(edge_id) == edges_to_optimize.end())
@@ -126,11 +126,11 @@ void RelaxProblem::addRelationCost(const MeasurementGraph &graph, size_t edge_id
 
     if (!pkg.source.optimize)
     {
-        constant_nodes.emplace(pkg.source.node_id);
+        problem->SetParameterBlockConstant(pkg.source.rot_ptr->coeffs().data());
     }
     if (!pkg.dest.optimize)
     {
-        constant_nodes.emplace(pkg.dest.node_id);
+        problem->SetParameterBlockConstant(pkg.dest.rot_ptr->coeffs().data());
     }
 
     edges_used.emplace(edge_id);
@@ -180,49 +180,38 @@ void RelaxProblem::addMeasurementsCost(const MeasurementGraph &graph, size_t edg
 
     if (!pkg.source.optimize)
     {
-        constant_nodes.emplace(pkg.source.node_id);
+        problem->SetParameterBlockConstant(pkg.source.rot_ptr->coeffs().data());
     }
     if (!pkg.dest.optimize)
     {
-        constant_nodes.emplace(pkg.dest.node_id);
+        problem->SetParameterBlockConstant(pkg.dest.rot_ptr->coeffs().data());
     }
 
     edges_used.emplace(edge_id);
 }
 
-void RelaxProblem::addDownwardsPrior(std::vector<NodePose> &nodes)
+void RelaxProblem::addDownwardsPrior()
 {
-    for (NodePose &n : nodes)
+    for (auto &p : nodes_to_optimize)
     {
+        double *d = p.second->orientation.coeffs().data();
         problem->AddResidualBlock(
-            new ceres::AutoDiffCostFunction<PointsDownwardsPrior, 1, 4>(new PointsDownwardsPrior()), nullptr,
-            n.orientation.coeffs().data());
-        problem->SetParameterization(n.orientation.coeffs().data(), &quat_parameterization);
+            new ceres::AutoDiffCostFunction<PointsDownwardsPrior, 1, 4>(new PointsDownwardsPrior()), nullptr, d);
+        problem->SetParameterization(d, &quat_parameterization);
     }
 }
 
-void RelaxProblem::setConstantBlocks(const MeasurementGraph &graph)
+void RelaxProblem::solve()
 {
-
-    for (size_t const_node_id : constant_nodes)
-    {
-        problem->SetParameterBlockConstant(
-            const_cast<double *>(graph.getNode(const_node_id)->payload.orientation.coeffs().data()));
-    }
-}
-
-void RelaxProblem::solve(std::vector<NodePose> &nodes)
-{
-    spdlog::debug("Start rotation relax: {} active nodes, {} edges, {} inactive nodes", nodes.size(), edges_used.size(),
-                  constant_nodes.size());
+    spdlog::debug("Start rotation relax: {} active nodes, {} edges", nodes_to_optimize.size(), edges_used.size());
 
     solver.Solve(solverOptions, problem.get(), &summary);
     spdlog::info(summary.BriefReport());
     spdlog::debug(summary.FullReport());
 
-    for (NodePose &n : nodes)
+    for (auto &p : nodes_to_optimize)
     {
-        n.orientation.normalize();
+        p.second->orientation.normalize();
     }
 }
 

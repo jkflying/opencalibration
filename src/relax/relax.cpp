@@ -8,7 +8,12 @@ namespace opencalibration
 void initializeOrientation(const MeasurementGraph &graph, std::vector<NodePose> &nodes)
 {
     static const Eigen::Quaterniond DOWN_ORIENTED_NORTH(Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()));
-    std::vector<std::pair<double, Eigen::Quaterniond>> hypotheses;
+    struct hypothesis_t
+    {
+        double weight;
+        Eigen::Quaterniond orientation;
+    };
+    std::vector<hypothesis_t, Eigen::aligned_allocator<hypothesis_t>> hypotheses;
     for (NodePose &node_pose : nodes)
     {
         const MeasurementGraph::Node *node = graph.getNode(node_pose.node_id);
@@ -39,7 +44,7 @@ void initializeOrientation(const MeasurementGraph &graph, std::vector<NodePose> 
             double weight = other_ori_nan ? 0.1 : 1;
             Eigen::Quaterniond hypothesis = transform * other_orientation;
 
-            hypotheses.emplace_back(weight, hypothesis);
+            hypotheses.emplace_back(hypothesis_t{weight, hypothesis});
         }
 
         // for now just make a dumb weighted average
@@ -47,8 +52,8 @@ void initializeOrientation(const MeasurementGraph &graph, std::vector<NodePose> 
         Eigen::Vector4d vec_sum;
         for (const auto &h : hypotheses)
         {
-            weight_sum += h.first;
-            vec_sum += h.first * h.second.coeffs();
+            weight_sum += h.weight;
+            vec_sum += h.weight * h.orientation.coeffs();
         }
 
         node_pose.orientation.coeffs() = weight_sum > 0 ? vec_sum : DOWN_ORIENTED_NORTH.coeffs();
@@ -65,16 +70,15 @@ void relaxDecompositions(const MeasurementGraph &graph, std::vector<NodePose> &n
     for (size_t edge_id : edges_to_optimize)
     {
         const MeasurementGraph::Edge *edge = graph.getEdge(edge_id);
-        if (edge != nullptr && rp.shouldOptimizeEdge(edges_to_optimize, edge_id, *edge))
+        if (edge != nullptr && rp.shouldAddEdgeToOptimization(edges_to_optimize, edge_id, *edge))
         {
             rp.addRelationCost(graph, edge_id, *edge);
         }
     }
 
-    rp.addDownwardsPrior(nodes);
-    rp.setConstantBlocks(graph);
+    rp.addDownwardsPrior();
 
-    rp.solve(nodes);
+    rp.solve();
 }
 
 void relaxMeasurements(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
@@ -87,18 +91,15 @@ void relaxMeasurements(const MeasurementGraph &graph, std::vector<NodePose> &nod
     for (size_t edge_id : edges_to_optimize)
     {
         const MeasurementGraph::Edge *edge = graph.getEdge(edge_id);
-        if (edge != nullptr && rp.shouldOptimizeEdge(edges_to_optimize, edge_id, *edge))
+        if (edge != nullptr && rp.shouldAddEdgeToOptimization(edges_to_optimize, edge_id, *edge))
         {
             rp.addMeasurementsCost(graph, edge_id, *edge);
         }
     }
 
-    // rp.addDownwardsPrior(nodes); the downwards prior hopefully isn't necessary at this stage in the bundle
-    rp.setConstantBlocks(graph);
-
     rp.solverOptions.max_num_iterations = 300;
     rp.solverOptions.linear_solver_type = ceres::SPARSE_SCHUR;
 
-    rp.solve(nodes);
+    rp.solve();
 }
 } // namespace opencalibration

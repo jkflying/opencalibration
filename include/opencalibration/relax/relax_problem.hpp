@@ -26,28 +26,14 @@ struct OptimizationPackage
     } source, dest;
 };
 
-struct RelaxProblem
+class RelaxProblem
 {
-    ceres::Problem::Options problemOptions;
-    ceres::EigenQuaternionParameterization quat_parameterization;
-    std::unique_ptr<ceres::HuberLoss> huber_loss;
-    std::unique_ptr<ceres::Problem> problem;
-
-    ceres::Solver::Options solverOptions;
-    ceres::Solver::Summary summary;
-    ceres::Solver solver;
-
-    std::unordered_map<size_t, NodePose *> nodes_to_optimize;
-    std::unordered_set<size_t> edges_used, constant_nodes;
-
-    using VecVec3D = std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>>;
-    std::unordered_map<size_t, VecVec3D> edge_points;
-
+  public:
     RelaxProblem();
 
     void initialize(std::vector<NodePose> &nodes);
-    bool shouldOptimizeEdge(const std::unordered_set<size_t> &edges_to_optimize, size_t edge_id,
-                            const MeasurementGraph::Edge &edge);
+    bool shouldAddEdgeToOptimization(const std::unordered_set<size_t> &edges_to_optimize, size_t edge_id,
+                                     const MeasurementGraph::Edge &edge);
 
     OptimizationPackage::PoseOpt nodeid2poseopt(const MeasurementGraph &graph, size_t node_id);
 
@@ -55,11 +41,26 @@ struct RelaxProblem
 
     void addMeasurementsCost(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge);
 
-    void addDownwardsPrior(std::vector<NodePose> &nodes);
+    void addDownwardsPrior();
 
-    void setConstantBlocks(const MeasurementGraph &graph);
+    void solve();
 
-    void solve(std::vector<NodePose> &nodes);
+    ceres::Problem::Options problemOptions;
+    ceres::Solver::Options solverOptions;
+    std::unique_ptr<ceres::HuberLoss> huber_loss;
+
+  private:
+    ceres::EigenQuaternionParameterization quat_parameterization;
+    std::unique_ptr<ceres::Problem> problem;
+
+    ceres::Solver::Summary summary;
+    ceres::Solver solver;
+
+    std::unordered_map<size_t, NodePose *> nodes_to_optimize;
+    std::unordered_set<size_t> edges_used;
+
+    using VecVec3D = std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>>;
+    std::unordered_map<size_t, VecVec3D> edge_points;
 };
 
 } // namespace opencalibration

@@ -11,8 +11,8 @@ struct feature_2d
     static constexpr int DESCRIPTOR_BITS = 256;
 
     Eigen::Vector2d location = {NAN, NAN};
-    std::bitset<DESCRIPTOR_BITS> descriptor{};
     float strength = 0;
+    std::bitset<DESCRIPTOR_BITS> descriptor{};
 
     bool operator==(const feature_2d &other) const
     {
