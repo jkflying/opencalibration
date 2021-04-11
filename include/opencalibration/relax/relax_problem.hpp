@@ -19,10 +19,10 @@ struct OptimizationPackage
 
     struct PoseOpt
     {
-        Eigen::Vector3d *loc_ptr;
-        Eigen::Quaterniond *rot_ptr;
+        Eigen::Vector3d *loc_ptr = nullptr;
+        Eigen::Quaterniond *rot_ptr = nullptr;
         bool optimize = true;
-        size_t node_id;
+        size_t node_id = 0;
     } source, dest;
 };
 

@@ -59,32 +59,22 @@ OptimizationPackage::PoseOpt RelaxProblem::nodeid2poseopt(const MeasurementGraph
     auto opt_iter = _nodes_to_optimize.find(node_id);
     if (opt_iter != _nodes_to_optimize.end())
     {
-        NodePose *other = opt_iter->second;
-        po.loc_ptr = &other->position;
-        po.rot_ptr = &other->orientation;
         po.optimize = true;
+
+        NodePose *np = opt_iter->second;
+        po.loc_ptr = &np->position;
+        po.rot_ptr = &np->orientation;
     }
     else
     {
-        const MeasurementGraph::Node *other = graph.getNode(node_id);
-        if (other == nullptr)
+        po.optimize = false;
+
+        const MeasurementGraph::Node *node = graph.getNode(node_id);
+        if (node != nullptr && node->payload.orientation.coeffs().allFinite() && node->payload.position.allFinite())
         {
-            spdlog::error("Null node referenced from edge list");
-            po.loc_ptr = nullptr;
-            po.rot_ptr = nullptr;
-            po.optimize = false;
-        }
-        else if (other->payload.orientation.coeffs().hasNaN() || other->payload.position.hasNaN())
-        {
-            po.loc_ptr = nullptr;
-            po.rot_ptr = nullptr;
-            po.optimize = false;
-        }
-        else
-        {
-            po.loc_ptr = const_cast<Eigen::Vector3d *>(&other->payload.position);
-            po.rot_ptr = const_cast<Eigen::Quaterniond *>(&other->payload.orientation);
-            po.optimize = false;
+            // const_cast these, but mark as "don't optimize" so that they don't get changed downstream
+            po.loc_ptr = const_cast<Eigen::Vector3d *>(&node->payload.position);
+            po.rot_ptr = const_cast<Eigen::Quaterniond *>(&node->payload.orientation);
         }
     }
     return po;
