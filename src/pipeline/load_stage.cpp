@@ -23,6 +23,7 @@ void LoadStage::init(const std::vector<std::string> &paths_to_load)
     _images.clear();
     _images.reserve(_paths_to_load.size());
 }
+
 std::vector<std::function<void()>> LoadStage::get_runners()
 {
     std::vector<std::function<void()>> funcs;
@@ -56,6 +57,7 @@ std::vector<std::function<void()>> LoadStage::get_runners()
 
     return funcs;
 }
+
 std::vector<size_t> LoadStage::finalize(GeoCoord &coordinate_system, MeasurementGraph &graph,
                                         jk::tree::KDTree<size_t, 3> &imageGPSLocations)
 {

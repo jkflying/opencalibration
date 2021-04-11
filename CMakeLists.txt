@@ -3,12 +3,13 @@ project(opencalibration)
 
 #============= OPTIONS ===============
 if(NOT DEFINED OPENCALIBRATION_TESTING)
-    option(OPENCALIBRATION_TESTING ON)
+    option(OPENCALIBRATION_TESTING "" ON)
 endif()
 
 if(NOT DEFINED OPENCALIBRATION_APP)
-    option(OPENCALIBRATION_TESTING ON)
+    option(OPENCALIBRATION_APP "" ON)
 endif()
+
 # =====================================
 
 set(CMAKE_CXX_STANDARD 17)
@@ -51,6 +52,9 @@ endif()
 
 include_directories(include)
 add_subdirectory(src)
+
+message("-- OPENCALIBRATION_TESTING: ${OPENCALIBRATION_TESTING}")
+message("-- OPENCALIBRATION_APP: ${OPENCALIBRATION_APP}")
 
 if (OPENCALIBRATION_APP)
     add_subdirectory(app)
