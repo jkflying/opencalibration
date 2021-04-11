@@ -112,7 +112,7 @@ std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph
                     }
                     std::lock_guard<std::mutex> lock(_measurement_mutex);
                     _all_inlier_measurements.emplace_back(
-                        inlier_measurement{node_id, std::get<0>(near_image), std::move(relations)});
+                        inlier_measurement{i, node_id, std::get<0>(near_image), std::move(relations)});
                 }
             }
         };
@@ -123,6 +123,10 @@ std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph
 
 std::vector<size_t> LinkStage::finalize(MeasurementGraph &graph)
 {
+    // put them back in the order they would have been if they were calculated serially
+    std::sort(_all_inlier_measurements.begin(), _all_inlier_measurements.end(),
+              [](const auto &a, const auto &b) { return a.loop_index < b.loop_index; });
+
     for (auto &measurements : _all_inlier_measurements)
     {
         graph.addEdge(std::move(measurements.relations), measurements.node_id, measurements.match_node_id);

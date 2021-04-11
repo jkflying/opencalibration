@@ -49,7 +49,7 @@ std::vector<std::function<void()>> LoadStage::get_runners()
                           img.model.focal_length_pixels);
 
             std::lock_guard<std::mutex> lock(_images_mutex);
-            _images.push_back(std::move(img));
+            _images.emplace_back(i, std::move(img));
         };
         funcs.push_back(run_func);
     }
@@ -61,13 +61,16 @@ std::vector<size_t> LoadStage::finalize(GeoCoord &coordinate_system, Measurement
 {
     // put the images back in order after the parallel processing
     std::sort(_images.begin(), _images.end(),
-              [](const image &img1, const image &img2) -> int { return img1.path < img2.path; });
+              [](const std::pair<size_t, image> &img1, const std::pair<size_t, image> &img2) -> int {
+                  return img1.first < img2.first;
+              });
 
     std::vector<size_t> node_ids;
     node_ids.reserve(_paths_to_load.size());
 
-    for (auto &img : _images)
+    for (auto &p : _images)
     {
+        auto &img = p.second;
         if (!coordinate_system.isInitialized())
         {
             coordinate_system.setOrigin(img.metadata.latitude, img.metadata.longitude);

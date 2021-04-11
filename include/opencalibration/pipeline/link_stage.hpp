@@ -11,6 +11,8 @@ class LinkStage
 {
     struct inlier_measurement
     {
+        size_t loop_index; // used for re-ordering multithreading component
+
         size_t node_id;
         size_t match_node_id;
         camera_relations relations;

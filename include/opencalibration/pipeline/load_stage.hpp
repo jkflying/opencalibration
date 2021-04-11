@@ -15,7 +15,7 @@ class LoadStage
 
   private:
     std::mutex _images_mutex;
-    std::vector<image> _images;
+    std::vector<std::pair<size_t, image>> _images;
 
     std::vector<std::string> _paths_to_load;
 };

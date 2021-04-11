@@ -8,7 +8,6 @@
 
 namespace
 {
-
 std::array<double, 3> to_array(const Eigen::Vector3d &v)
 {
     return {v.x(), v.y(), v.z()};
