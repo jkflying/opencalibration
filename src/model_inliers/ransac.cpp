@@ -104,7 +104,8 @@ size_t homography_model::evaluate(const std::vector<correspondence> &corrs, std:
 }
 
 bool homography_model::decompose(const std::vector<correspondence> &corrs, const std::vector<bool> &inliers,
-                                 Eigen::Quaterniond &r, Eigen::Vector3d &t)
+                                 Eigen::Quaterniond &r1, Eigen::Vector3d &t1, Eigen::Quaterniond &r2,
+                                 Eigen::Vector3d &t2)
 {
     std::vector<cv::Mat> Rs_decomp, Ts_decomp, normals_decomp;
     cv::Mat h;
@@ -113,7 +114,7 @@ bool homography_model::decompose(const std::vector<correspondence> &corrs, const
     cv::eigen2cv(Eigen::Matrix3d::Identity().eval(), I);
     size_t solutions = cv::decomposeHomographyMat(h, I, Rs_decomp, Ts_decomp, normals_decomp);
 
-    size_t best_score = 0;
+    size_t best_score = 0, second_best_score = 0;
     for (size_t i = 0; i < solutions; i++)
     {
         Eigen::Matrix3d R;
@@ -140,11 +141,17 @@ bool homography_model::decompose(const std::vector<correspondence> &corrs, const
                 score++;
             }
         }
-        if (score >= best_score)
+        if (score >= second_best_score)
         {
-            r = Eigen::Quaterniond(R);
-            t = T;
-            best_score = score;
+            r2 = Eigen::Quaterniond(R);
+            t2 = T;
+            second_best_score = score;
+            if (second_best_score >= best_score)
+            {
+                std::swap(r1, r2);
+                std::swap(t1, t2);
+                std::swap(best_score, second_best_score);
+            }
         }
     }
 

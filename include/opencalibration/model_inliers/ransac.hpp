@@ -20,8 +20,8 @@ struct homography_model
     void fitInliers(const std::vector<correspondence> &corrs, const std::vector<bool> &inliers);
 
     size_t evaluate(const std::vector<correspondence> &corrs, std::vector<bool> &inliers);
-    bool decompose(const std::vector<correspondence> &corrs, const std::vector<bool> &inliers, Eigen::Quaterniond &r,
-                   Eigen::Vector3d &t);
+    bool decompose(const std::vector<correspondence> &corrs, const std::vector<bool> &inliers, Eigen::Quaterniond &r1,
+                   Eigen::Vector3d &t1, Eigen::Quaterniond &r2, Eigen::Vector3d &t2);
     double error(const correspondence &cor);
 
     double inlier_threshold = 0.02;

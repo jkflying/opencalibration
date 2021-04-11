@@ -43,9 +43,9 @@ TEST(ransac, homography_fits_identity)
     EXPECT_NEAR((model.homography - Eigen::Matrix3d::Identity()).norm(), 0, 1e-14);
 
     // AND: the decomposition should be an identity
-    Eigen::Vector3d translation;
-    Eigen::Quaterniond orientation;
-    ASSERT_TRUE(model.decompose(matches, inliers, orientation, translation));
+    Eigen::Vector3d translation, translation2;
+    Eigen::Quaterniond orientation, orientation2;
+    ASSERT_TRUE(model.decompose(matches, inliers, orientation, translation, orientation2, translation2));
     EXPECT_NEAR(translation.norm(), 0, 1e-14);
     EXPECT_NEAR(Eigen::AngleAxisd(orientation).angle(), 0, 1e-14);
 }
@@ -80,11 +80,13 @@ TEST(ransac, homography_translation)
     EXPECT_NEAR((model.homography - expected_homography).norm(), 0, 1e-14) << model.homography;
 
     // AND: the decomposition should be an identity
-    Eigen::Vector3d translation;
-    Eigen::Quaterniond orientation;
-    ASSERT_TRUE(model.decompose(matches, inliers, orientation, translation));
-    EXPECT_NEAR((translation - Eigen::Vector3d(1, 1, 0)).norm(), 0, 1e-14) << translation.transpose();
-    EXPECT_NEAR(Eigen::AngleAxisd(orientation).angle(), 0, 1e-14) << orientation.coeffs().transpose();
+    Eigen::Vector3d translation, translation2;
+    Eigen::Quaterniond orientation, orientation2;
+    ASSERT_TRUE(model.decompose(matches, inliers, orientation, translation, orientation2, translation2));
+    EXPECT_NEAR((translation - Eigen::Vector3d(1, 1, 0)).norm(), 0, 1e-14) << translation.transpose() << std::endl
+                                                                           << translation2.transpose();
+    EXPECT_NEAR(Eigen::AngleAxisd(orientation).angle(), 0, 1e-14) << orientation.coeffs().transpose() << std::endl
+                                                                  << orientation2.coeffs().transpose();
 }
 
 TEST(ransac, homography_rotation_z)
@@ -117,9 +119,9 @@ TEST(ransac, homography_rotation_z)
     EXPECT_NEAR((model.homography - expected_homography).norm(), 0, 1e-14) << model.homography;
 
     // AND: the decomposition should be an identity
-    Eigen::Vector3d translation;
-    Eigen::Quaterniond orientation;
-    ASSERT_TRUE(model.decompose(matches, inliers, orientation, translation));
+    Eigen::Vector3d translation, translation2;
+    Eigen::Quaterniond orientation, orientation2;
+    ASSERT_TRUE(model.decompose(matches, inliers, orientation, translation, orientation2, translation2));
     EXPECT_NEAR(translation.norm(), 0, 1e-14) << translation.transpose();
     EXPECT_NEAR(Eigen::AngleAxisd(orientation).angle(), M_PI_2, 1e-14) << orientation.coeffs().transpose();
     EXPECT_NEAR((Eigen::AngleAxisd(orientation).axis() + Eigen::Vector3d::UnitZ()).norm(), 0, 1e-14)
@@ -156,9 +158,9 @@ TEST(ransac, homography_rotation_translation)
     EXPECT_NEAR((model.homography - expected_homography).norm(), 0, 1e-14) << model.homography;
 
     // AND: the decomposition should be an identity
-    Eigen::Vector3d translation;
-    Eigen::Quaterniond orientation;
-    ASSERT_TRUE(model.decompose(matches, inliers, orientation, translation));
+    Eigen::Vector3d translation, translation2;
+    Eigen::Quaterniond orientation, orientation2;
+    ASSERT_TRUE(model.decompose(matches, inliers, orientation, translation, orientation2, translation2));
     EXPECT_NEAR((translation - Eigen::Vector3d(1, -1, 0)).norm(), 0, 1e-14) << translation.transpose();
     EXPECT_NEAR(Eigen::AngleAxisd(orientation).angle(), M_PI_2, 1e-14) << orientation.coeffs().transpose();
     EXPECT_NEAR((Eigen::AngleAxisd(orientation).axis() + Eigen::Vector3d::UnitZ()).norm(), 0, 1e-14)

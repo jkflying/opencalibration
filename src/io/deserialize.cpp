@@ -179,6 +179,18 @@ template <> class Deserializer<MeasurementGraph>
                         relations.relative_translation(i) = rel_trans[i].GetDouble();
                     }
 
+                    const auto &rel_rot2 = eiter->value.GetObject()["relative_rotation2"].GetArray();
+                    for (int i = 0; i < 4; i++)
+                    {
+                        relations.relative_rotation2.coeffs()(i) = rel_rot2[i].GetDouble();
+                    }
+
+                    const auto &rel_trans2 = eiter->value.GetObject()["relative_translation2"].GetArray();
+                    for (int i = 0; i < 3; i++)
+                    {
+                        relations.relative_translation2(i) = rel_trans2[i].GetDouble();
+                    }
+
                     MeasurementGraph::Edge edge(std::move(relations), source, dest);
                     graph._edges.emplace(edge_id, std::move(edge));
                 }

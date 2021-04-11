@@ -174,7 +174,7 @@ void RelaxProblem::addMeasurementsCost(const MeasurementGraph &graph, size_t edg
         _problem->SetParameterization(pkg.source.rot_ptr->coeffs().data(), &_quat_parameterization);
 
         _problem->AddResidualBlock(new CostFunction(new PixelErrorCost(*pkg.dest.loc_ptr, dest_model, inlier.pixel_2)),
-                                  huber_loss.get(), pkg.dest.rot_ptr->coeffs().data(), points.back().data());
+                                   huber_loss.get(), pkg.dest.rot_ptr->coeffs().data(), points.back().data());
         _problem->SetParameterization(pkg.dest.rot_ptr->coeffs().data(), &_quat_parameterization);
     }
 

@@ -90,7 +90,8 @@ std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph
                 relations.relationType = camera_relations::RelationType::HOMOGRAPHY;
 
                 bool can_decompose =
-                    h.decompose(correspondences, inliers, relations.relative_rotation, relations.relative_translation);
+                    h.decompose(correspondences, inliers, relations.relative_rotation, relations.relative_translation,
+                                relations.relative_rotation2, relations.relative_translation2);
 
                 size_t num_inliers = std::count(inliers.begin(), inliers.end(), true);
 
