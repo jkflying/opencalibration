@@ -50,17 +50,17 @@ class RelaxProblem
     std::unique_ptr<ceres::HuberLoss> huber_loss;
 
   private:
-    ceres::EigenQuaternionParameterization quat_parameterization;
-    std::unique_ptr<ceres::Problem> problem;
+    ceres::EigenQuaternionParameterization _quat_parameterization;
+    std::unique_ptr<ceres::Problem> _problem;
 
-    ceres::Solver::Summary summary;
-    ceres::Solver solver;
+    ceres::Solver::Summary _summary;
+    ceres::Solver _solver;
 
-    std::unordered_map<size_t, NodePose *> nodes_to_optimize;
-    std::unordered_set<size_t> edges_used;
+    std::unordered_map<size_t, NodePose *> _nodes_to_optimize;
+    std::unordered_set<size_t> _edges_used;
 
     using VecVec3D = std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>>;
-    std::unordered_map<size_t, VecVec3D> edge_points;
+    std::unordered_map<size_t, VecVec3D> _edge_points;
 };
 
 } // namespace opencalibration

@@ -10,7 +10,7 @@ RelaxProblem::RelaxProblem() : huber_loss(new ceres::HuberLoss(M_PI_2))
     problemOptions.cost_function_ownership = ceres::TAKE_OWNERSHIP;
     problemOptions.loss_function_ownership = ceres::DO_NOT_TAKE_OWNERSHIP;
     problemOptions.local_parameterization_ownership = ceres::DO_NOT_TAKE_OWNERSHIP;
-    problem.reset(new ceres::Problem(problemOptions));
+    _problem.reset(new ceres::Problem(problemOptions));
 
     solverOptions.num_threads = 1;
     solverOptions.linear_solver_type = ceres::SPARSE_NORMAL_CHOLESKY;
@@ -19,12 +19,12 @@ RelaxProblem::RelaxProblem() : huber_loss(new ceres::HuberLoss(M_PI_2))
 
 void RelaxProblem::initialize(std::vector<NodePose> &nodes)
 {
-    nodes_to_optimize.reserve(nodes.size());
+    _nodes_to_optimize.reserve(nodes.size());
 
     for (NodePose &n : nodes)
     {
         n.orientation.normalize();
-        nodes_to_optimize.emplace(n.node_id, &n);
+        _nodes_to_optimize.emplace(n.node_id, &n);
     }
 }
 
@@ -38,7 +38,7 @@ bool RelaxProblem::shouldAddEdgeToOptimization(const std::unordered_set<size_t> 
     }
 
     // skip edges already used in this optimization problem
-    if (edges_used.find(edge_id) != edges_used.end())
+    if (_edges_used.find(edge_id) != _edges_used.end())
     {
         return false;
     }
@@ -56,8 +56,8 @@ OptimizationPackage::PoseOpt RelaxProblem::nodeid2poseopt(const MeasurementGraph
 {
     OptimizationPackage::PoseOpt po;
     po.node_id = node_id;
-    auto opt_iter = nodes_to_optimize.find(node_id);
-    if (opt_iter != nodes_to_optimize.end())
+    auto opt_iter = _nodes_to_optimize.find(node_id);
+    if (opt_iter != _nodes_to_optimize.end())
     {
         NodePose *other = opt_iter->second;
         po.loc_ptr = &other->position;
@@ -120,26 +120,26 @@ void RelaxProblem::addRelationCost(const MeasurementGraph &graph, size_t edge_id
         return;
     }
 
-    problem->AddResidualBlock(func.release(), huber_loss.get(), datas[0], datas[1]);
-    problem->SetParameterization(datas[0], &quat_parameterization);
-    problem->SetParameterization(datas[1], &quat_parameterization);
+    _problem->AddResidualBlock(func.release(), huber_loss.get(), datas[0], datas[1]);
+    _problem->SetParameterization(datas[0], &_quat_parameterization);
+    _problem->SetParameterization(datas[1], &_quat_parameterization);
 
     if (!pkg.source.optimize)
     {
-        problem->SetParameterBlockConstant(pkg.source.rot_ptr->coeffs().data());
+        _problem->SetParameterBlockConstant(pkg.source.rot_ptr->coeffs().data());
     }
     if (!pkg.dest.optimize)
     {
-        problem->SetParameterBlockConstant(pkg.dest.rot_ptr->coeffs().data());
+        _problem->SetParameterBlockConstant(pkg.dest.rot_ptr->coeffs().data());
     }
 
-    edges_used.emplace(edge_id);
+    _edges_used.emplace(edge_id);
 }
 
 void RelaxProblem::addMeasurementsCost(const MeasurementGraph &graph, size_t edge_id,
                                        const MeasurementGraph::Edge &edge)
 {
-    auto &points = edge_points[edge_id];
+    auto &points = _edge_points[edge_id];
     points.reserve(edge.payload.inlier_matches.size());
 
     OptimizationPackage pkg;
@@ -168,48 +168,48 @@ void RelaxProblem::addMeasurementsCost(const MeasurementGraph &graph, size_t edg
         // add cost functions for this 3D point from both the source and dest camera
         using CostFunction = ceres::AutoDiffCostFunction<PixelErrorCost, 2, 4, 3>;
 
-        problem->AddResidualBlock(
+        _problem->AddResidualBlock(
             new CostFunction(new PixelErrorCost(*pkg.source.loc_ptr, source_model, inlier.pixel_1)), huber_loss.get(),
             pkg.source.rot_ptr->coeffs().data(), points.back().data());
-        problem->SetParameterization(pkg.source.rot_ptr->coeffs().data(), &quat_parameterization);
+        _problem->SetParameterization(pkg.source.rot_ptr->coeffs().data(), &_quat_parameterization);
 
-        problem->AddResidualBlock(new CostFunction(new PixelErrorCost(*pkg.dest.loc_ptr, dest_model, inlier.pixel_2)),
+        _problem->AddResidualBlock(new CostFunction(new PixelErrorCost(*pkg.dest.loc_ptr, dest_model, inlier.pixel_2)),
                                   huber_loss.get(), pkg.dest.rot_ptr->coeffs().data(), points.back().data());
-        problem->SetParameterization(pkg.dest.rot_ptr->coeffs().data(), &quat_parameterization);
+        _problem->SetParameterization(pkg.dest.rot_ptr->coeffs().data(), &_quat_parameterization);
     }
 
     if (!pkg.source.optimize)
     {
-        problem->SetParameterBlockConstant(pkg.source.rot_ptr->coeffs().data());
+        _problem->SetParameterBlockConstant(pkg.source.rot_ptr->coeffs().data());
     }
     if (!pkg.dest.optimize)
     {
-        problem->SetParameterBlockConstant(pkg.dest.rot_ptr->coeffs().data());
+        _problem->SetParameterBlockConstant(pkg.dest.rot_ptr->coeffs().data());
     }
 
-    edges_used.emplace(edge_id);
+    _edges_used.emplace(edge_id);
 }
 
 void RelaxProblem::addDownwardsPrior()
 {
-    for (auto &p : nodes_to_optimize)
+    for (auto &p : _nodes_to_optimize)
     {
         double *d = p.second->orientation.coeffs().data();
-        problem->AddResidualBlock(
+        _problem->AddResidualBlock(
             new ceres::AutoDiffCostFunction<PointsDownwardsPrior, 1, 4>(new PointsDownwardsPrior()), nullptr, d);
-        problem->SetParameterization(d, &quat_parameterization);
+        _problem->SetParameterization(d, &_quat_parameterization);
     }
 }
 
 void RelaxProblem::solve()
 {
-    spdlog::debug("Start rotation relax: {} active nodes, {} edges", nodes_to_optimize.size(), edges_used.size());
+    spdlog::debug("Start rotation relax: {} active nodes, {} edges", _nodes_to_optimize.size(), _edges_used.size());
 
-    solver.Solve(solverOptions, problem.get(), &summary);
-    spdlog::info(summary.BriefReport());
-    spdlog::debug(summary.FullReport());
+    _solver.Solve(solverOptions, _problem.get(), &_summary);
+    spdlog::info(_summary.BriefReport());
+    spdlog::debug(_summary.FullReport());
 
-    for (auto &p : nodes_to_optimize)
+    for (auto &p : _nodes_to_optimize)
     {
         p.second->orientation.normalize();
     }
