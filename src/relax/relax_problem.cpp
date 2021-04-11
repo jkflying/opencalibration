@@ -7,14 +7,14 @@ namespace opencalibration
 
 RelaxProblem::RelaxProblem() : huber_loss(new ceres::HuberLoss(M_PI_2))
 {
-    problemOptions.cost_function_ownership = ceres::TAKE_OWNERSHIP;
-    problemOptions.loss_function_ownership = ceres::DO_NOT_TAKE_OWNERSHIP;
-    problemOptions.local_parameterization_ownership = ceres::DO_NOT_TAKE_OWNERSHIP;
-    _problem.reset(new ceres::Problem(problemOptions));
+    _problemOptions.cost_function_ownership = ceres::TAKE_OWNERSHIP;
+    _problemOptions.loss_function_ownership = ceres::DO_NOT_TAKE_OWNERSHIP;
+    _problemOptions.local_parameterization_ownership = ceres::DO_NOT_TAKE_OWNERSHIP;
+    _problem.reset(new ceres::Problem(_problemOptions));
 
     solverOptions.num_threads = 1;
     solverOptions.linear_solver_type = ceres::SPARSE_NORMAL_CHOLESKY;
-    solverOptions.max_num_iterations = 150;
+    solverOptions.max_num_iterations = 250;
 }
 
 void RelaxProblem::initialize(std::vector<NodePose> &nodes)
@@ -100,25 +100,11 @@ void RelaxProblem::addRelationCost(const MeasurementGraph &graph, size_t edge_id
     if (pkg.source.loc_ptr == nullptr || pkg.dest.loc_ptr == nullptr)
         return;
 
-    using CostFunction = ceres::AutoDiffCostFunction<DecomposedRotationCost, 3, 4, 4>;
+    using CostFunction = ceres::AutoDiffCostFunction<DualDecomposedRotationCost, 3, 4, 4>;
     std::unique_ptr<CostFunction> func(
-        new CostFunction(new DecomposedRotationCost(*pkg.relations, pkg.source.loc_ptr, pkg.dest.loc_ptr)));
+        new CostFunction(new DualDecomposedRotationCost(*pkg.relations, pkg.source.loc_ptr, pkg.dest.loc_ptr)));
 
-    // test-evaluate the cost function to make sure no weird data gets into the relaxation
-    Eigen::Matrix<double, 4, 3> jac[2];
-    jac[0].setConstant(NAN);
-    jac[1].setConstant(NAN);
-    double *jacdata[2] = {jac[0].data(), jac[1].data()};
-    Eigen::Vector3d res;
-    res.setConstant(NAN);
     double *datas[2] = {pkg.source.rot_ptr->coeffs().data(), pkg.dest.rot_ptr->coeffs().data()};
-    bool success = func->Evaluate(datas, res.data(), jacdata);
-
-    if (!success || !res.allFinite() || !jac[0].allFinite() || !jac[1].allFinite())
-    {
-        spdlog::warn("Bad camera relation prevented from entering minimization");
-        return;
-    }
 
     _problem->AddResidualBlock(func.release(), huber_loss.get(), datas[0], datas[1]);
     _problem->SetParameterization(datas[0], &_quat_parameterization);
@@ -126,11 +112,11 @@ void RelaxProblem::addRelationCost(const MeasurementGraph &graph, size_t edge_id
 
     if (!pkg.source.optimize)
     {
-        _problem->SetParameterBlockConstant(pkg.source.rot_ptr->coeffs().data());
+        _problem->SetParameterBlockConstant(datas[0]);
     }
     if (!pkg.dest.optimize)
     {
-        _problem->SetParameterBlockConstant(pkg.dest.rot_ptr->coeffs().data());
+        _problem->SetParameterBlockConstant(datas[1]);
     }
 
     _edges_used.emplace(edge_id);

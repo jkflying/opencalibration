@@ -95,7 +95,7 @@ std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph
 
                 size_t num_inliers = std::count(inliers.begin(), inliers.end(), true);
 
-                spdlog::debug("Matches: {}  inliers: {}  can_decompose: {}", matches.size(), num_inliers,
+                spdlog::trace("Matches: {}  inliers: {}  can_decompose: {}", matches.size(), num_inliers,
                               can_decompose);
                 if (can_decompose && num_inliers > h.MINIMUM_POINTS * 1.5)
                 {

@@ -1,3 +1,5 @@
+#pragma once
+
 #include <opencalibration/distort/distort_keypoints.hpp>
 #include <opencalibration/geometry/intersection.hpp>
 
@@ -36,17 +38,18 @@ struct PointsDownwardsPrior
 };
 
 // cost functions for rotations relative to positions
+
 struct DecomposedRotationCost
 {
-    DecomposedRotationCost(const camera_relations &relations, const Eigen::Vector3d *translation1,
-                           const Eigen::Vector3d *translation2)
+    DecomposedRotationCost(const Eigen::Quaterniond &relative_rotation, const Eigen::Vector3d &relative_translation,
+                           const Eigen::Vector3d *translation1, const Eigen::Vector3d *translation2)
         :
 
           _has_translation((*translation2 - *translation1).squaredNorm() > 1e-9 &&
-                           relations.relative_translation.squaredNorm() > 1e-9),
-          _relative_rotation(relations.relative_rotation.normalized()),
+                           relative_translation.squaredNorm() > 1e-9),
+          _relative_rotation(relative_rotation.normalized()),
           _translation_direction((*translation2 - *translation1).normalized()),
-          _relative_translation_direction(relations.relative_translation.normalized())
+          _relative_translation_direction(relative_translation.normalized())
     {
     }
 
@@ -74,7 +77,7 @@ struct DecomposedRotationCost
         }
         else
         {
-            residuals[0] = residuals[1] = T(0);
+            residuals[0] = residuals[1] = T(M_PI);
         }
 
         // relative orientation of camera1 and camera2
@@ -90,6 +93,46 @@ struct DecomposedRotationCost
     const bool _has_translation;
     const Eigen::Quaterniond _relative_rotation;
     const Eigen::Vector3d _translation_direction, _relative_translation_direction;
+};
+
+// Homographies give two valid decompositions. Use this to evaluate the cost of these paired decompositions.
+// Takes the residual from the decomposition with lower error, or whichever doesn't have NaN/Inf in it
+struct DualDecomposedRotationCost
+{
+    DualDecomposedRotationCost(const camera_relations &relations, const Eigen::Vector3d *translation1,
+                               const Eigen::Vector3d *translation2)
+        : decompose1(relations.relative_rotation, relations.relative_translation, translation1, translation2),
+          decompose2(relations.relative_rotation2, relations.relative_translation2, translation1, translation2)
+    {
+    }
+
+    template <typename T> bool operator()(const T *rotation1, const T *rotation2, T *residuals) const
+    {
+        using Vector3T = Eigen::Matrix<T, 3, 1>;
+        using Vector3TM = Eigen::Map<Vector3T>;
+
+        Vector3T res[2];
+        bool success1 = decompose1(rotation1, rotation2, res[0].data()) && res[0].allFinite();
+        bool success2 = decompose2(rotation1, rotation2, res[1].data()) && res[1].allFinite();
+
+        Vector3TM res_vec(residuals);
+        if (success1 && success2)
+        {
+            res_vec = (res[0].squaredNorm() <= res[1].squaredNorm()) ? res[0] : res[1];
+        }
+        else if (success1)
+        {
+            res_vec = res[0];
+        }
+        else if (success2)
+        {
+            res_vec = res[1];
+        }
+
+        return success1 || success2;
+    }
+
+    DecomposedRotationCost decompose1, decompose2;
 };
 
 struct PixelErrorCost

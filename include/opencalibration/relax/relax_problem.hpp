@@ -45,11 +45,11 @@ class RelaxProblem
 
     void solve();
 
-    ceres::Problem::Options problemOptions;
     ceres::Solver::Options solverOptions;
     std::unique_ptr<ceres::HuberLoss> huber_loss;
 
   private:
+    ceres::Problem::Options _problemOptions;
     ceres::EigenQuaternionParameterization _quat_parameterization;
     std::unique_ptr<ceres::Problem> _problem;
 
