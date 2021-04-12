@@ -70,7 +70,7 @@ void relaxDecompositions(const MeasurementGraph &graph, std::vector<NodePose> &n
     for (size_t edge_id : edges_to_optimize)
     {
         const MeasurementGraph::Edge *edge = graph.getEdge(edge_id);
-        if (edge != nullptr && rp.shouldAddEdgeToOptimization(edges_to_optimize, edge_id, *edge))
+        if (edge != nullptr && rp.shouldAddEdgeToOptimization(edges_to_optimize, edge_id))
         {
             rp.addRelationCost(graph, edge_id, *edge);
         }
@@ -91,7 +91,7 @@ void relaxMeasurements(const MeasurementGraph &graph, std::vector<NodePose> &nod
     for (size_t edge_id : edges_to_optimize)
     {
         const MeasurementGraph::Edge *edge = graph.getEdge(edge_id);
-        if (edge != nullptr && rp.shouldAddEdgeToOptimization(edges_to_optimize, edge_id, *edge))
+        if (edge != nullptr && rp.shouldAddEdgeToOptimization(edges_to_optimize, edge_id))
         {
             rp.addMeasurementsCost(graph, edge_id, *edge);
         }

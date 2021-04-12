@@ -32,8 +32,7 @@ void RelaxProblem::initialize(std::vector<NodePose> &nodes)
     }
 }
 
-bool RelaxProblem::shouldAddEdgeToOptimization(const std::unordered_set<size_t> &edges_to_optimize, size_t edge_id,
-                                               const MeasurementGraph::Edge &edge)
+bool RelaxProblem::shouldAddEdgeToOptimization(const std::unordered_set<size_t> &edges_to_optimize, size_t edge_id)
 {
     // skip edges not whitelisted
     if (edges_to_optimize.find(edge_id) == edges_to_optimize.end())
@@ -43,12 +42,6 @@ bool RelaxProblem::shouldAddEdgeToOptimization(const std::unordered_set<size_t> 
 
     // skip edges already used in this optimization problem
     if (_edges_used.find(edge_id) != _edges_used.end())
-    {
-        return false;
-    }
-
-    // skip unitialized edges
-    if (edge.payload.relative_rotation.coeffs().hasNaN() || edge.payload.relative_translation.hasNaN())
     {
         return false;
     }
@@ -92,6 +85,12 @@ void RelaxProblem::addRelationCost(const MeasurementGraph &graph, size_t edge_id
     pkg.dest = nodeid2poseopt(graph, edge.getDest());
 
     if (pkg.source.loc_ptr == nullptr || pkg.dest.loc_ptr == nullptr)
+        return;
+
+    if (!pkg.source.rot_ptr->coeffs().allFinite() || !pkg.dest.rot_ptr->coeffs().allFinite())
+        return;
+
+    if (!pkg.source.loc_ptr->allFinite() || !pkg.dest.loc_ptr->allFinite())
         return;
 
     using CostFunction = ceres::AutoDiffCostFunction<DualDecomposedRotationCost, 3, 4, 4>;
@@ -149,8 +148,10 @@ void RelaxProblem::addMeasurementsCost(const MeasurementGraph &graph, size_t edg
         // add cost functions for this 3D point from both the source and dest camera
         using CostFunction = ceres::AutoDiffCostFunction<PixelErrorCost, 2, 4, 3>;
 
-        std::unique_ptr<CostFunction> func1(new CostFunction(new PixelErrorCost(*pkg.source.loc_ptr, source_model, inlier.pixel_1)));
-        std::unique_ptr<CostFunction> func2(new CostFunction(new PixelErrorCost(*pkg.dest.loc_ptr, dest_model, inlier.pixel_2)));
+        std::unique_ptr<CostFunction> func1(
+            new CostFunction(new PixelErrorCost(*pkg.source.loc_ptr, source_model, inlier.pixel_1)));
+        std::unique_ptr<CostFunction> func2(
+            new CostFunction(new PixelErrorCost(*pkg.dest.loc_ptr, dest_model, inlier.pixel_2)));
 
         _problem->AddResidualBlock(func1.release(), huber_loss.get(), datas[0], points.back().data());
         _problem->AddResidualBlock(func2.release(), huber_loss.get(), datas[1], points.back().data());

@@ -32,8 +32,7 @@ class RelaxProblem
     RelaxProblem();
 
     void initialize(std::vector<NodePose> &nodes);
-    bool shouldAddEdgeToOptimization(const std::unordered_set<size_t> &edges_to_optimize, size_t edge_id,
-                                     const MeasurementGraph::Edge &edge);
+    bool shouldAddEdgeToOptimization(const std::unordered_set<size_t> &edges_to_optimize, size_t edge_id);
 
     OptimizationPackage::PoseOpt nodeid2poseopt(const MeasurementGraph &graph, size_t node_id);
 
