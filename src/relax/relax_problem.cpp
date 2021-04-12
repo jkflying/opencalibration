@@ -15,6 +15,10 @@ RelaxProblem::RelaxProblem() : huber_loss(new ceres::HuberLoss(M_PI_2))
     solverOptions.num_threads = 1;
     solverOptions.linear_solver_type = ceres::SPARSE_NORMAL_CHOLESKY;
     solverOptions.max_num_iterations = 250;
+    solverOptions.use_nonmonotonic_steps = true;
+    solverOptions.sparse_linear_algebra_library_type = ceres::EIGEN_SPARSE;
+    solverOptions.dense_linear_algebra_library_type = ceres::EIGEN;
+    solverOptions.initial_trust_region_radius = 1;
 }
 
 void RelaxProblem::initialize(std::vector<NodePose> &nodes)
@@ -132,6 +136,7 @@ void RelaxProblem::addMeasurementsCost(const MeasurementGraph &graph, size_t edg
     Eigen::Matrix3d source_rot = pkg.source.rot_ptr->toRotationMatrix();
     Eigen::Matrix3d dest_rot = pkg.dest.rot_ptr->toRotationMatrix();
 
+    double *datas[2] = {pkg.source.rot_ptr->coeffs().data(), pkg.dest.rot_ptr->coeffs().data()};
     for (const auto &inlier : edge.payload.inlier_matches)
     {
         // make 3D intersection, add it to `points`
@@ -144,23 +149,23 @@ void RelaxProblem::addMeasurementsCost(const MeasurementGraph &graph, size_t edg
         // add cost functions for this 3D point from both the source and dest camera
         using CostFunction = ceres::AutoDiffCostFunction<PixelErrorCost, 2, 4, 3>;
 
-        _problem->AddResidualBlock(
-            new CostFunction(new PixelErrorCost(*pkg.source.loc_ptr, source_model, inlier.pixel_1)), huber_loss.get(),
-            pkg.source.rot_ptr->coeffs().data(), points.back().data());
-        _problem->SetParameterization(pkg.source.rot_ptr->coeffs().data(), &_quat_parameterization);
+        std::unique_ptr<CostFunction> func1(new CostFunction(new PixelErrorCost(*pkg.source.loc_ptr, source_model, inlier.pixel_1)));
+        std::unique_ptr<CostFunction> func2(new CostFunction(new PixelErrorCost(*pkg.dest.loc_ptr, dest_model, inlier.pixel_2)));
 
-        _problem->AddResidualBlock(new CostFunction(new PixelErrorCost(*pkg.dest.loc_ptr, dest_model, inlier.pixel_2)),
-                                   huber_loss.get(), pkg.dest.rot_ptr->coeffs().data(), points.back().data());
-        _problem->SetParameterization(pkg.dest.rot_ptr->coeffs().data(), &_quat_parameterization);
+        _problem->AddResidualBlock(func1.release(), huber_loss.get(), datas[0], points.back().data());
+        _problem->AddResidualBlock(func2.release(), huber_loss.get(), datas[1], points.back().data());
+
+        _problem->SetParameterization(datas[0], &_quat_parameterization);
+        _problem->SetParameterization(datas[1], &_quat_parameterization);
     }
 
     if (!pkg.source.optimize)
     {
-        _problem->SetParameterBlockConstant(pkg.source.rot_ptr->coeffs().data());
+        _problem->SetParameterBlockConstant(datas[0]);
     }
     if (!pkg.dest.optimize)
     {
-        _problem->SetParameterBlockConstant(pkg.dest.rot_ptr->coeffs().data());
+        _problem->SetParameterBlockConstant(datas[1]);
     }
 
     _edges_used.emplace(edge_id);
