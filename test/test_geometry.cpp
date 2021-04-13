@@ -67,3 +67,38 @@ TEST(geometry, ray_intersection_inexact)
     EXPECT_DOUBLE_EQ((res.topRows<3>() - Eigen::Vector3d(1, 0, 0)).norm(), 0) << res.transpose();
     EXPECT_DOUBLE_EQ(res(3), 2 * 2);
 }
+
+TEST(geometry, plane_conversion)
+{
+    // GIVEN: a plane defined by 3 points
+    plane_3_corners p3;
+    p3.corner[0] << 0, 0, -2;
+    p3.corner[1] << 1, 0, -2;
+    p3.corner[2] << 0, 1, -2;
+
+    // WHEN: we convert it to a plane defined by a point and a normal
+    plane_norm_offset pno = cornerPlane2normOffsetPlane(p3);
+
+    // THEN: it should have the correct values
+
+    EXPECT_NEAR(0, (Eigen::Vector3d(0, 0, -2) - pno.offset).norm(), 1e-9);
+    EXPECT_NEAR(0, (Eigen::Vector3d(0, 0, 1) - pno.norm).norm(), 1e-9);
+}
+
+TEST(geometry, ray_plane_intersection)
+{
+    // GIVEN: a plane and a ray
+    plane_norm_offset pno;
+    pno.norm << 0, 0, 1;
+    pno.offset << 5, 5, 2;
+
+    ray r;
+    r.dir << 0, 0, 0.5;
+    r.offset << 3, 3, -10;
+
+    // WHEN: we calculate the intersection
+    Eigen::Vector3d i = rayPlaneIntersection(r, pno);
+
+    // THEN: it should be where we expect
+    EXPECT_NEAR(0, (Eigen::Vector3d(3, 3, 2) - i).norm(), 1e-9);
+}

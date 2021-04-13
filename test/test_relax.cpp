@@ -73,9 +73,8 @@ TEST(relax, prior_2_images)
     np.emplace_back(NodePose{id2, ori, pos});
 
     camera_relations relation;
-    relation.relative_rotation = Eigen::Quaterniond::Identity();
-    //     std::cout << relation.relative_rotation.coeffs().transpose() << std::endl;
-    relation.relative_translation << 1, 0, 0;
+    relation.relative_rotation2 = Eigen::Quaterniond::Identity();
+    relation.relative_translation2 << 1, 0, 0;
     size_t edge_id = graph.addEdge(std::move(relation), id, id2);
 
     // WHEN: we relax the relative orientations

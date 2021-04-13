@@ -4,6 +4,7 @@
 #include <opencalibration/geometry/intersection.hpp>
 #include <opencalibration/types/measurement_graph.hpp>
 #include <opencalibration/types/node_pose.hpp>
+#include <opencalibration/types/point_cloud.hpp>
 
 #include <ceres/ceres.h>
 #include <spdlog/spdlog.h>
@@ -58,8 +59,7 @@ class RelaxProblem
     std::unordered_map<size_t, NodePose *> _nodes_to_optimize;
     std::unordered_set<size_t> _edges_used;
 
-    using VecVec3D = std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>>;
-    std::unordered_map<size_t, VecVec3D> _edge_points;
+    std::unordered_map<size_t, point_cloud> _edge_points;
 };
 
 } // namespace opencalibration

@@ -34,4 +34,7 @@ Eigen::Vector4d rayIntersection(const Eigen::Vector3d &origin1, const Eigen::Vec
     return res;
 }
 
+template plane_norm_offset<double> cornerPlane2normOffsetPlane(const plane_3_corners<double> &p3);
+template Eigen::Vector3d rayPlaneIntersection(const ray<double> &r, const plane_norm_offset<double> &p);
+
 } // namespace opencalibration
