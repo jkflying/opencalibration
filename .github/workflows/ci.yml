@@ -14,16 +14,11 @@ jobs:
       with:
         submodules: 'true'
     - name: install dependencies
-      run: sudo apt-get update && sudo apt-get install ccache ninja-build libeigen3-dev libgdal-dev libceres-dev libgtest-dev rapidjson-dev libspdlog-dev libtinyxml2-dev clang-format-10 lcov
+      run: sudo apt-get update && sudo apt-get install ccache ninja-build libeigen3-dev libopencv-dev libgdal-dev libceres-dev libgtest-dev rapidjson-dev libspdlog-dev libtinyxml2-dev clang-format-10 lcov
     - name: check formatting
       run: tools/check_style.sh
     - name: ccache
       uses: hendrikmuhs/ccache-action@v1
-    - name: build OpenCV 4.5
-      run: |
-        cd .. && git clone https://github.com/opencv/opencv.git && cd opencv && git checkout 4.5.2
-        mkdir build && cd build && PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH" cmake .. -G Ninja
-        ninja && sudo ninja install
     - name: cmake
       run: mkdir build && cd build && PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH" cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Coverage
     - name: build
