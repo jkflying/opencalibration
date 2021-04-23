@@ -81,8 +81,8 @@ void relaxDecompositions(const MeasurementGraph &graph, std::vector<NodePose> &n
     rp.solve();
 }
 
-void relaxMeasurements(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                       const std::unordered_set<size_t> &edges_to_optimize)
+void relax3dPointMeasurements(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                              const std::unordered_set<size_t> &edges_to_optimize)
 {
     RelaxProblem rp;
     rp.initialize(nodes);
@@ -93,7 +93,7 @@ void relaxMeasurements(const MeasurementGraph &graph, std::vector<NodePose> &nod
         const MeasurementGraph::Edge *edge = graph.getEdge(edge_id);
         if (edge != nullptr && rp.shouldAddEdgeToOptimization(edges_to_optimize, edge_id))
         {
-            rp.addMeasurementsCost(graph, edge_id, *edge);
+            rp.addPointMeasurementsCost(graph, edge_id, *edge);
         }
     }
 
@@ -102,4 +102,25 @@ void relaxMeasurements(const MeasurementGraph &graph, std::vector<NodePose> &nod
 
     rp.solve();
 }
+
+void relaxGroundPlaneMeasurements(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                                  const std::unordered_set<size_t> &edges_to_optimize)
+{
+    RelaxProblem rp;
+    rp.initialize(nodes);
+    rp.initializeGroundPlane();
+    rp.huber_loss.reset(new ceres::HuberLoss(10));
+
+    for (size_t edge_id : edges_to_optimize)
+    {
+        const MeasurementGraph::Edge *edge = graph.getEdge(edge_id);
+        if (edge != nullptr && rp.shouldAddEdgeToOptimization(edges_to_optimize, edge_id))
+        {
+            rp.addGlobalPlaneMeasurementsCost(graph, edge_id, *edge);
+        }
+    }
+
+    rp.solve();
+}
+
 } // namespace opencalibration

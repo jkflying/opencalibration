@@ -115,8 +115,62 @@ void RelaxProblem::addRelationCost(const MeasurementGraph &graph, size_t edge_id
     _edges_used.emplace(edge_id);
 }
 
-void RelaxProblem::addMeasurementsCost(const MeasurementGraph &graph, size_t edge_id,
-                                       const MeasurementGraph::Edge &edge)
+void RelaxProblem::addGlobalPlaneMeasurementsCost(const MeasurementGraph &graph, size_t edge_id,
+                                                  const MeasurementGraph::Edge &edge)
+{
+    auto &points = _edge_points[edge_id];
+    points.reserve(edge.payload.inlier_matches.size());
+
+    OptimizationPackage pkg;
+    pkg.relations = &edge.payload;
+    pkg.source = nodeid2poseopt(graph, edge.getSource());
+    pkg.dest = nodeid2poseopt(graph, edge.getDest());
+
+    if (pkg.source.loc_ptr == nullptr || pkg.dest.loc_ptr == nullptr)
+        return;
+
+    const auto &source_model = graph.getNode(edge.getSource())->payload.model;
+    const auto &dest_model = graph.getNode(edge.getDest())->payload.model;
+
+    //     Eigen::Matrix3d source_rot = pkg.source.rot_ptr->toRotationMatrix();
+    //     Eigen::Matrix3d dest_rot = pkg.dest.rot_ptr->toRotationMatrix();
+
+    double *datas[5] = {pkg.source.rot_ptr->coeffs().data(), pkg.dest.rot_ptr->coeffs().data(),
+                        &_global_plane.corner[0].z(), &_global_plane.corner[1].z(), &_global_plane.corner[2].z()};
+    Eigen::Vector2d corner2d[3]{_global_plane.corner[0].topRows<2>(), _global_plane.corner[1].topRows<2>(),
+                                _global_plane.corner[2].topRows<2>()};
+    for (const auto &inlier : edge.payload.inlier_matches)
+    {
+        // make 3D intersection, add it to `points`
+        Eigen::Vector3d source_ray = image_to_3d(inlier.pixel_1, source_model);
+        Eigen::Vector3d dest_ray = image_to_3d(inlier.pixel_2, dest_model);
+
+        // add cost functions for this 3D point from both the source and dest camera
+        using CostFunction = ceres::AutoDiffCostFunction<PlaneIntersectionAngleCost, 3, 4, 4, 1, 1, 1>;
+
+        std::unique_ptr<CostFunction> func(new CostFunction(new PlaneIntersectionAngleCost(
+            *pkg.source.loc_ptr, *pkg.dest.loc_ptr, source_ray, dest_ray, corner2d[0], corner2d[1], corner2d[2])));
+
+        _problem->AddResidualBlock(func.release(), huber_loss.get(), datas[0], datas[1], datas[2], datas[3], datas[4]);
+
+        _problem->SetParameterization(datas[0], &_quat_parameterization);
+        _problem->SetParameterization(datas[1], &_quat_parameterization);
+    }
+
+    if (!pkg.source.optimize)
+    {
+        _problem->SetParameterBlockConstant(datas[0]);
+    }
+    if (!pkg.dest.optimize)
+    {
+        _problem->SetParameterBlockConstant(datas[1]);
+    }
+
+    _edges_used.emplace(edge_id);
+}
+
+void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_t edge_id,
+                                            const MeasurementGraph::Edge &edge)
 {
     auto &points = _edge_points[edge_id];
     points.reserve(edge.payload.inlier_matches.size());
@@ -148,16 +202,15 @@ void RelaxProblem::addMeasurementsCost(const MeasurementGraph &graph, size_t edg
         // add cost functions for this 3D point from both the source and dest camera
         using CostFunction = ceres::AutoDiffCostFunction<PixelErrorCost, 2, 4, 3>;
 
-        std::unique_ptr<CostFunction> func1(
-            new CostFunction(new PixelErrorCost(*pkg.source.loc_ptr, source_model, inlier.pixel_1)));
-        std::unique_ptr<CostFunction> func2(
-            new CostFunction(new PixelErrorCost(*pkg.dest.loc_ptr, dest_model, inlier.pixel_2)));
+        std::unique_ptr<CostFunction> func[2]{
+            std::make_unique<CostFunction>(new PixelErrorCost(*pkg.source.loc_ptr, source_model, inlier.pixel_1)),
+            std::make_unique<CostFunction>(new PixelErrorCost(*pkg.dest.loc_ptr, dest_model, inlier.pixel_2))};
 
-        _problem->AddResidualBlock(func1.release(), huber_loss.get(), datas[0], points.back().data());
-        _problem->AddResidualBlock(func2.release(), huber_loss.get(), datas[1], points.back().data());
-
-        _problem->SetParameterization(datas[0], &_quat_parameterization);
-        _problem->SetParameterization(datas[1], &_quat_parameterization);
+        for (int i = 0; i < 2; i++)
+        {
+            _problem->AddResidualBlock(func[i].release(), huber_loss.get(), datas[i], points.back().data());
+            _problem->SetParameterization(datas[i], &_quat_parameterization);
+        }
     }
 
     if (!pkg.source.optimize)
@@ -170,6 +223,48 @@ void RelaxProblem::addMeasurementsCost(const MeasurementGraph &graph, size_t edg
     }
 
     _edges_used.emplace(edge_id);
+}
+
+void RelaxProblem::initializeGroundPlane()
+{
+    // calculate average height and xy bounding box
+    Eigen::Vector2d xy_min(1e12, 1e12), xy_max(-1e12, -1e12);
+    double height = 0;
+
+    for (const auto &p : _nodes_to_optimize)
+    {
+        Eigen::Vector3d &loc = p.second->position;
+        xy_min = xy_min.cwiseMin(loc.topRows<2>());
+        xy_max = xy_max.cwiseMax(loc.topRows<2>());
+        height += loc.z();
+    }
+    height /= _nodes_to_optimize.size();
+
+    // place triangle to enclose bounding box entirely, 100m below avg height
+    /*             A
+     *            / \
+     *           /   \
+     *          /     \
+     *         /._____.\
+     *        / |     | \
+     *       /  |     |  \
+     *      /   |_____|   \
+     *     /_______________\
+     *    B                 C
+     *
+     *    BC = 2 * (max(width, height) + margin)
+     *    A-BC = BC
+     *
+     */
+
+    constexpr double margin = 50;
+    height -= margin;
+    Eigen::Vector2d center = (xy_min + xy_max) / 2;
+    const double spacing = (xy_max - xy_min).maxCoeff() + margin;
+
+    _global_plane.corner[0] << Eigen::Vector2d(-spacing, -spacing) + center, height;
+    _global_plane.corner[1] << Eigen::Vector2d(spacing, -spacing) + center, height;
+    _global_plane.corner[2] << Eigen::Vector2d(0, spacing) + center, height;
 }
 
 void RelaxProblem::addDownwardsPrior()

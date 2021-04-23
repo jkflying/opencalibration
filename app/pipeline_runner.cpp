@@ -22,7 +22,7 @@ int main(int argc, char *argv[])
     std::string input_dir = "";
     uint32_t debug_level = 2;
     std::string output_file = "";
-    int batch_size = omp_get_max_threads();
+    int batch_size = omp_get_max_threads() - 1;
     bool printHelp = false;
 
     CommandLine args("Run the opencalibration pipeline from the command line");

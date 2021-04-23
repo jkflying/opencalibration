@@ -13,7 +13,11 @@ void relaxDecompositions(const MeasurementGraph &graph, std::vector<NodePose> &n
                          const std::unordered_set<size_t> &edges_to_optimize);
 
 // TODO: keep the ray intersection points somewhere?
-void relaxMeasurements(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                       const std::unordered_set<size_t> &edges_to_optimize);
+void relax3dPointMeasurements(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                              const std::unordered_set<size_t> &edges_to_optimize);
+
+// TODO: keep the ground plane somewhere?
+void relaxGroundPlaneMeasurements(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                                  const std::unordered_set<size_t> &edges_to_optimize);
 
 } // namespace opencalibration

@@ -153,7 +153,7 @@ TEST(relax, relative_orientation_3_images)
     EXPECT_LT(Eigen::AngleAxisd(np[2].orientation).angle(), 1e-5) << np[2].orientation.coeffs().transpose();
 }
 
-TEST(relax, measurement_3_images)
+TEST(relax, measurement_3_images_points)
 {
     // GIVEN: a graph, 3 images with edges between them all, then with their rotation disturbed
     MeasurementGraph graph;
@@ -234,10 +234,99 @@ TEST(relax, measurement_3_images)
 
     // WHEN: we relax them with relative orientation
     std::unordered_set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
-    relaxMeasurements(graph, np, edges);
+    relax3dPointMeasurements(graph, np, edges);
 
     // THEN: it should put them back into the original orientation
     for (int i = 0; i < 3; i++)
         EXPECT_LT(Eigen::AngleAxisd(np[i].orientation).angle(), 1e-9)
+            << i << ": " << np[i].orientation.coeffs().transpose();
+}
+
+TEST(relax, measurement_3_images_plane)
+{
+    // GIVEN: a graph, 3 images with edges between them all, then with their rotation disturbed
+    MeasurementGraph graph;
+    std::vector<NodePose> np;
+    CameraModel model;
+    model.focal_length_pixels = 600;
+    model.principle_point << 400, 300;
+    model.pixels_cols = 800;
+    model.pixels_rows = 600;
+    model.projection_type = opencalibration::ProjectionType::PLANAR;
+
+    size_t id[3];
+
+    Eigen::Quaterniond ori(Eigen::AngleAxisd(0.2, Eigen::Vector3d::UnitZ()));
+    Eigen::Vector3d pos(9, 9, 9);
+    image img0;
+    img0.orientation = ori;
+    img0.position = pos;
+    img0.model = model;
+
+    id[0] = graph.addNode(std::move(img0));
+    np.emplace_back(NodePose{id[0], ori, pos});
+
+    ori = Eigen::Quaterniond(Eigen::AngleAxisd(-0.3, Eigen::Vector3d::UnitY()));
+    pos << 11, 9, 9;
+
+    image img1;
+    img1.orientation = ori;
+    img1.position = pos;
+    img1.model = model;
+    id[1] = graph.addNode(std::move(img1));
+    np.emplace_back(NodePose{id[1], ori, pos});
+
+    ori = Eigen::Quaterniond(Eigen::AngleAxisd(-0.3, Eigen::Vector3d::UnitX()));
+    pos << 11, 11, 9;
+
+    image img2;
+    img2.orientation = ori;
+    img2.position = pos;
+    img2.model = model;
+    id[2] = graph.addNode(std::move(img2));
+    np.emplace_back(NodePose{id[2], ori, pos});
+
+    // 3d points that they all see
+
+    std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>> vec3d;
+    vec3d.reserve(100);
+    for (int i = 0; i < 10; i++)
+    {
+        for (int j = 0; j < 10; j++)
+        {
+            vec3d.emplace_back(i + 5, j + 5, -10 + 1e-3 * i + 1e-2 * j);
+        }
+    }
+
+    camera_relations relation[3];
+
+    for (const Eigen::Vector3d &p : vec3d)
+    {
+        for (size_t i = 0; i < 3; i++)
+        {
+            size_t index[2] = {i, (i + 1) % 3};
+
+            Eigen::Vector2d pixel[2];
+            for (int j = 0; j < 2; j++)
+            {
+                // don't rotate, since all cameras start at identity
+                Eigen::Vector3d ray = (np[index[j]].position - p).normalized();
+                pixel[j] = image_from_3d(ray, model);
+            }
+            relation[i].inlier_matches.emplace_back(feature_match_denormalized{pixel[0], pixel[1]});
+        }
+    }
+
+    size_t edge_id[3];
+    for (int i = 0; i < 3; i++)
+        edge_id[i] = graph.addEdge(std::move(relation[i]), id[i], id[(i + 1) % 3]);
+
+    // WHEN: we relax them with relative orientation
+    std::unordered_set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
+    relaxGroundPlaneMeasurements(graph, np, edges);
+
+    // THEN: it should put them back into the original orientation
+    for (int i = 0; i < 3; i++)
+        EXPECT_LT(Eigen::AngleAxisd(np[i].orientation).angle(), 1e-8)
             << i << ": " << np[i].orientation.coeffs().transpose();
 }

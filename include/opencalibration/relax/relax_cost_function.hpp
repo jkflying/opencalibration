@@ -3,6 +3,8 @@
 #include <opencalibration/distort/distort_keypoints.hpp>
 #include <opencalibration/geometry/intersection.hpp>
 
+#include <opencalibration/types/plane.hpp>
+
 #include <ceres/ceres.h>
 #include <spdlog/spdlog.h>
 
@@ -170,6 +172,62 @@ struct PixelErrorCost
   private:
     const Eigen::Vector3d &loc;
     const CameraModel &model;
-    const Eigen::Vector2d &pixel;
+    const Eigen::Vector2d pixel; // unique to this measurement, keep a local copy to avoid cache thrashing
 };
+
+struct PlaneIntersectionAngleCost
+{
+    PlaneIntersectionAngleCost(const Eigen::Vector3d &camera_loc1, const Eigen::Vector3d &camera_loc2,
+                               const Eigen::Vector3d &camera_ray1, const Eigen::Vector3d &camera_ray2,
+                               const Eigen::Vector2d &plane_point1, const Eigen::Vector2d &plane_point2,
+                               const Eigen::Vector2d &plane_point3)
+        : camera_loc{camera_loc1, camera_loc2}, camera_ray{camera_ray1, camera_ray2}, plane_point{plane_point1,
+                                                                                                  plane_point2,
+                                                                                                  plane_point3}
+    {
+    }
+
+    template <typename T>
+    bool operator()(const T *rotation0, const T *rotation1, const T *z0, const T *z1, const T *z2, T *residuals) const
+    {
+        using QuaterionT = Eigen::Quaternion<T>;
+        using Vector3T = Eigen::Matrix<T, 3, 1>;
+        using QuaternionTCM = Eigen::Map<const QuaterionT>;
+        using Vector3TM = Eigen::Map<Vector3T>;
+
+        const QuaternionTCM rotation_em[2]{QuaternionTCM(rotation0), QuaternionTCM(rotation1)};
+        ray<T> rays[2];
+        for (int i = 0; i < 2; i++)
+        {
+            rays[i].dir = rotation_em[i] * camera_ray[i].cast<T>();
+            rays[i].offset = camera_loc[i].cast<T>();
+        }
+
+        const T plane_z[3]{*z0, *z1, *z2};
+        plane_3_corners<T> plane3;
+        for (int i = 0; i < 3; i++)
+            plane3.corner[i] << T(plane_point[i].x()), T(plane_point[i].y()), plane_z[i];
+
+        plane_norm_offset<T> pno = cornerPlane2normOffsetPlane(plane3);
+
+        Vector3T intersection[2];
+        for (int i = 0; i < 2; i++)
+            intersection[i] = rayPlaneIntersection(rays[i], pno);
+
+        Vector3T distance_error = intersection[0] - intersection[1];
+        T avg_dist = ((intersection[0] - camera_loc[0]).norm() + (intersection[1] - camera_loc[1]).norm()) * T(0.5);
+        Vector3T angle_error = distance_error / avg_dist;
+
+        Vector3TM final_error(residuals);
+        final_error = angle_error;
+
+        return true;
+    }
+
+  private:
+    const Eigen::Vector3d camera_loc[2];
+    const Eigen::Vector3d camera_ray[2];
+    const Eigen::Vector2d plane_point[3];
+};
+
 } // namespace opencalibration

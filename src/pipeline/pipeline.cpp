@@ -44,15 +44,15 @@ template <typename vec> vec interleave(std::initializer_list<typename std::refer
 
 namespace opencalibration
 {
-Pipeline::Pipeline(size_t batch_size)
+Pipeline::Pipeline(size_t parallelism)
     : _load_stage(new LoadStage()), _link_stage(new LinkStage()), _relax_stage(new RelaxStage()),
       _step_callback([](const StepCompletionInfo &) {})
 {
     _keep_running = true;
 
-    auto get_paths = [this, batch_size](std::vector<std::string> &paths) -> bool {
+    auto get_paths = [this, parallelism](std::vector<std::string> &paths) -> bool {
         std::lock_guard<std::mutex> guard(_queue_mutex);
-        while (_add_queue.size() > 0 && paths.size() < batch_size)
+        while (_add_queue.size() > 0 && paths.size() < parallelism)
         {
             paths.emplace_back(std::move(_add_queue.front()));
             _add_queue.pop_front();

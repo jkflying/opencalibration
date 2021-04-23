@@ -102,7 +102,7 @@ std::vector<std::function<void()>> RelaxStage::get_runners(const MeasurementGrap
         return {[&]() {
             //             if (_optimize_all)
             //             {
-            //                 relaxMeasurements(graph, _local_poses, _edges_to_optimize); // still too slow
+            //                 relaxGroundPlaneMeasurements(graph, _local_poses, _edges_to_optimize);
             //             }
             //             else
             //             {

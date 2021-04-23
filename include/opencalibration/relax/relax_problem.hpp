@@ -4,6 +4,7 @@
 #include <opencalibration/geometry/intersection.hpp>
 #include <opencalibration/types/measurement_graph.hpp>
 #include <opencalibration/types/node_pose.hpp>
+#include <opencalibration/types/plane.hpp>
 #include <opencalibration/types/point_cloud.hpp>
 
 #include <ceres/ceres.h>
@@ -39,7 +40,12 @@ class RelaxProblem
 
     void addRelationCost(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge);
 
-    void addMeasurementsCost(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge);
+    void addPointMeasurementsCost(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge);
+
+    void addGlobalPlaneMeasurementsCost(const MeasurementGraph &graph, size_t edge_id,
+                                        const MeasurementGraph::Edge &edge);
+
+    void initializeGroundPlane();
 
     void addDownwardsPrior();
 
@@ -59,6 +65,8 @@ class RelaxProblem
     std::unordered_map<size_t, NodePose *> _nodes_to_optimize;
     std::unordered_set<size_t> _edges_used;
 
+    // Surface models
+    plane_3_corners<double> _global_plane;
     std::unordered_map<size_t, point_cloud> _edge_points;
 };
 

@@ -35,7 +35,7 @@ class Pipeline
     };
     using StepCompletionCallback = std::function<void(const StepCompletionInfo &)>;
 
-    Pipeline(size_t batch_size = 1);
+    Pipeline(size_t parallelism = 1);
     ~Pipeline();
 
     Status getStatus();
