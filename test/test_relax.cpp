@@ -166,37 +166,24 @@ TEST(relax, measurement_3_images_points)
     model.projection_type = opencalibration::ProjectionType::PLANAR;
 
     size_t id[3];
+    Eigen::Quaterniond ori0(Eigen::AngleAxisd(0.2, Eigen::Vector3d::UnitZ()));
+    Eigen::Quaterniond ori1(Eigen::AngleAxisd(-0.3, Eigen::Vector3d::UnitY()));
+    Eigen::Quaterniond ori2(Eigen::AngleAxisd(-0.3, Eigen::Vector3d::UnitX()));
+    Eigen::Quaterniond ground_ori[3]{ori0, ori1, ori2};
+    Eigen::Vector3d pos0(9, 9, 9);
+    Eigen::Vector3d pos1(11, 9, 9);
+    Eigen::Vector3d pos2(11, 11, 9);
+    Eigen::Vector3d ground_pos[3]{pos0, pos1, pos2};
 
-    Eigen::Quaterniond ori(Eigen::AngleAxisd(0.1, Eigen::Vector3d::UnitZ()));
-    Eigen::Vector3d pos(9, 9, 9);
-    image img0;
-    img0.orientation = ori;
-    img0.position = pos;
-    img0.model = model;
-
-    id[0] = graph.addNode(std::move(img0));
-    np.emplace_back(NodePose{id[0], ori, pos});
-
-    ori = Eigen::Quaterniond(Eigen::AngleAxisd(-0.1, Eigen::Vector3d::UnitY()));
-    pos << 11, 9, 9;
-
-    image img1;
-    img1.orientation = ori;
-    img1.position = pos;
-    img1.model = model;
-    id[1] = graph.addNode(std::move(img1));
-    np.emplace_back(NodePose{id[1], ori, pos});
-
-    ori = Eigen::Quaterniond(Eigen::AngleAxisd(-0.1, Eigen::Vector3d::UnitX()));
-    pos << 11, 11, 9;
-
-    image img2;
-    img2.orientation = ori;
-    img2.position = pos;
-    img2.model = model;
-    id[2] = graph.addNode(std::move(img2));
-    np.emplace_back(NodePose{id[2], ori, pos});
-
+    for (int i = 0; i < 3; i++)
+    {
+        image img;
+        img.orientation = ground_ori[i];
+        img.position = ground_pos[i];
+        img.model = model;
+        id[i] = graph.addNode(std::move(img));
+        np.emplace_back(NodePose{id[i], ground_ori[i], ground_pos[i]});
+    }
     // 3d points that they all see
 
     std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>> vec3d;
@@ -205,32 +192,33 @@ TEST(relax, measurement_3_images_points)
     {
         for (int j = 0; j < 10; j++)
         {
-            vec3d.emplace_back(i + 5, j + 5, (i + j) % 2);
-        }
-    }
-
-    camera_relations relation[3];
-
-    for (const Eigen::Vector3d &p : vec3d)
-    {
-        for (size_t i = 0; i < 3; i++)
-        {
-            size_t index[2] = {i, (i + 1) % 3};
-
-            Eigen::Vector2d pixel[2];
-            for (int j = 0; j < 2; j++)
-            {
-                // don't rotate, since all cameras start at identity
-                Eigen::Vector3d ray = (np[index[j]].position - p).normalized();
-                pixel[j] = image_from_3d(ray, model);
-            }
-            relation[i].inlier_matches.emplace_back(feature_match_denormalized{pixel[0], pixel[1]});
+            vec3d.emplace_back(i + 5, j + 5, -10 + (i + j) % 2);
         }
     }
 
     size_t edge_id[3];
-    for (int i = 0; i < 3; i++)
-        edge_id[i] = graph.addEdge(std::move(relation[i]), id[i], id[(i + 1) % 3]);
+    for (size_t i = 0; i < 3; i++)
+    {
+        camera_relations relation;
+        size_t index[2] = {i, (i + 1) % 3};
+        for (const Eigen::Vector3d &p : vec3d)
+        {
+
+            Eigen::Vector2d pixel[2];
+            for (int j = 0; j < 2; j++)
+            {
+                Eigen::Vector3d ray = np[index[j]].orientation.inverse() * (np[index[j]].position - p).normalized();
+                pixel[j] = image_from_3d(ray, model);
+            }
+            relation.inlier_matches.emplace_back(feature_match_denormalized{pixel[0], pixel[1]});
+        }
+        edge_id[i] = graph.addEdge(std::move(relation), id[index[0]], id[index[1]]);
+    }
+
+    // add some noise to the orientations
+    np[0].orientation *= Eigen::Quaterniond(Eigen::AngleAxisd(-0.05, Eigen::Vector3d::UnitY()));
+    np[1].orientation *= Eigen::Quaterniond(Eigen::AngleAxisd(0.05, Eigen::Vector3d::UnitZ()));
+    np[2].orientation *= Eigen::Quaterniond(Eigen::AngleAxisd(0.05, Eigen::Vector3d::UnitX()));
 
     // WHEN: we relax them with relative orientation
     std::unordered_set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
@@ -238,8 +226,9 @@ TEST(relax, measurement_3_images_points)
 
     // THEN: it should put them back into the original orientation
     for (int i = 0; i < 3; i++)
-        EXPECT_LT(Eigen::AngleAxisd(np[i].orientation).angle(), 1e-9)
-            << i << ": " << np[i].orientation.coeffs().transpose();
+        EXPECT_LT(Eigen::AngleAxisd(np[i].orientation.inverse() * ground_ori[i]).angle(), 1e-8)
+            << i << ": " << np[i].orientation.coeffs().transpose() << std::endl
+            << "g: " << ground_ori[i].coeffs().transpose();
 }
 
 TEST(relax, measurement_3_images_plane)
@@ -255,37 +244,24 @@ TEST(relax, measurement_3_images_plane)
     model.projection_type = opencalibration::ProjectionType::PLANAR;
 
     size_t id[3];
+    Eigen::Quaterniond ori0(Eigen::AngleAxisd(0.2, Eigen::Vector3d::UnitZ()));
+    Eigen::Quaterniond ori1(Eigen::AngleAxisd(-0.3, Eigen::Vector3d::UnitY()));
+    Eigen::Quaterniond ori2(Eigen::AngleAxisd(-0.3, Eigen::Vector3d::UnitX()));
+    Eigen::Quaterniond ground_ori[3]{ori0, ori1, ori2};
+    Eigen::Vector3d pos0(9, 9, 9);
+    Eigen::Vector3d pos1(11, 9, 9);
+    Eigen::Vector3d pos2(11, 11, 9);
+    Eigen::Vector3d ground_pos[3]{pos0, pos1, pos2};
 
-    Eigen::Quaterniond ori(Eigen::AngleAxisd(0.2, Eigen::Vector3d::UnitZ()));
-    Eigen::Vector3d pos(9, 9, 9);
-    image img0;
-    img0.orientation = ori;
-    img0.position = pos;
-    img0.model = model;
-
-    id[0] = graph.addNode(std::move(img0));
-    np.emplace_back(NodePose{id[0], ori, pos});
-
-    ori = Eigen::Quaterniond(Eigen::AngleAxisd(-0.3, Eigen::Vector3d::UnitY()));
-    pos << 11, 9, 9;
-
-    image img1;
-    img1.orientation = ori;
-    img1.position = pos;
-    img1.model = model;
-    id[1] = graph.addNode(std::move(img1));
-    np.emplace_back(NodePose{id[1], ori, pos});
-
-    ori = Eigen::Quaterniond(Eigen::AngleAxisd(-0.3, Eigen::Vector3d::UnitX()));
-    pos << 11, 11, 9;
-
-    image img2;
-    img2.orientation = ori;
-    img2.position = pos;
-    img2.model = model;
-    id[2] = graph.addNode(std::move(img2));
-    np.emplace_back(NodePose{id[2], ori, pos});
-
+    for (int i = 0; i < 3; i++)
+    {
+        image img;
+        img.orientation = ground_ori[i];
+        img.position = ground_pos[i];
+        img.model = model;
+        id[i] = graph.addNode(std::move(img));
+        np.emplace_back(NodePose{id[i], ground_ori[i], ground_pos[i]});
+    }
     // 3d points that they all see
 
     std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>> vec3d;
@@ -298,28 +274,29 @@ TEST(relax, measurement_3_images_plane)
         }
     }
 
-    camera_relations relation[3];
-
-    for (const Eigen::Vector3d &p : vec3d)
+    size_t edge_id[3];
+    for (size_t i = 0; i < 3; i++)
     {
-        for (size_t i = 0; i < 3; i++)
+        camera_relations relation;
+        size_t index[2] = {i, (i + 1) % 3};
+        for (const Eigen::Vector3d &p : vec3d)
         {
-            size_t index[2] = {i, (i + 1) % 3};
 
             Eigen::Vector2d pixel[2];
             for (int j = 0; j < 2; j++)
             {
-                // don't rotate, since all cameras start at identity
-                Eigen::Vector3d ray = (np[index[j]].position - p).normalized();
+                Eigen::Vector3d ray = np[index[j]].orientation.inverse() * (np[index[j]].position - p).normalized();
                 pixel[j] = image_from_3d(ray, model);
             }
-            relation[i].inlier_matches.emplace_back(feature_match_denormalized{pixel[0], pixel[1]});
+            relation.inlier_matches.emplace_back(feature_match_denormalized{pixel[0], pixel[1]});
         }
+        edge_id[i] = graph.addEdge(std::move(relation), id[index[0]], id[index[1]]);
     }
 
-    size_t edge_id[3];
-    for (int i = 0; i < 3; i++)
-        edge_id[i] = graph.addEdge(std::move(relation[i]), id[i], id[(i + 1) % 3]);
+    // add some noise to the orientations
+    np[0].orientation = Eigen::AngleAxisd(-0.3, Eigen::Vector3d::UnitY());
+    np[1].orientation = Eigen::AngleAxisd(0.2, Eigen::Vector3d::UnitZ());
+    np[2].orientation = Eigen::AngleAxisd(0.2, Eigen::Vector3d::UnitX());
 
     // WHEN: we relax them with relative orientation
     std::unordered_set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
@@ -327,6 +304,7 @@ TEST(relax, measurement_3_images_plane)
 
     // THEN: it should put them back into the original orientation
     for (int i = 0; i < 3; i++)
-        EXPECT_LT(Eigen::AngleAxisd(np[i].orientation).angle(), 1e-8)
-            << i << ": " << np[i].orientation.coeffs().transpose();
+        EXPECT_LT(Eigen::AngleAxisd(np[i].orientation.inverse() * ground_ori[i]).angle(), 1e-8)
+            << i << ": " << np[i].orientation.coeffs().transpose() << std::endl
+            << "g: " << ground_ori[i].coeffs().transpose();
 }
