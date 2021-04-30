@@ -234,7 +234,7 @@ TEST_F(relax_, measurement_3_images_points)
 {
     // GIVEN: a graph, 3 images with edges between them all, then with their rotation disturbed
     init_cameras();
-    add_point_measurements(generate_planar_points());
+    add_point_measurements(generate_3d_points());
     add_ori_noise({-0.05, 0.05, 0.05});
 
     // WHEN: we relax them with relative orientation
