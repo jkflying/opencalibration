@@ -93,7 +93,10 @@ void RelaxProblem::addRelationCost(const MeasurementGraph &graph, size_t edge_id
     if (!pkg.source.loc_ptr->allFinite() || !pkg.dest.loc_ptr->allFinite())
         return;
 
-    using CostFunction = ceres::AutoDiffCostFunction<DualDecomposedRotationCost, 3, 4, 4>;
+    using CostFunction =
+        ceres::AutoDiffCostFunction<DualDecomposedRotationCost, DualDecomposedRotationCost::NUM_RESIDUALS,
+                                    DualDecomposedRotationCost::NUM_PARAMETERS_1,
+                                    DualDecomposedRotationCost::NUM_PARAMETERS_2>;
     std::unique_ptr<CostFunction> func(
         new CostFunction(new DualDecomposedRotationCost(*pkg.relations, pkg.source.loc_ptr, pkg.dest.loc_ptr)));
 
@@ -146,7 +149,11 @@ void RelaxProblem::addGlobalPlaneMeasurementsCost(const MeasurementGraph &graph,
         Eigen::Vector3d dest_ray = image_to_3d(inlier.pixel_2, dest_model);
 
         // add cost functions for this 3D point from both the source and dest camera
-        using CostFunction = ceres::AutoDiffCostFunction<PlaneIntersectionAngleCost, 3, 4, 4, 1, 1, 1>;
+        using CostFunction = ceres::AutoDiffCostFunction<
+            PlaneIntersectionAngleCost, PlaneIntersectionAngleCost::NUM_RESIDUALS,
+            PlaneIntersectionAngleCost::NUM_PARAMETERS_1, PlaneIntersectionAngleCost::NUM_PARAMETERS_2,
+            PlaneIntersectionAngleCost::NUM_PARAMETERS_3, PlaneIntersectionAngleCost::NUM_PARAMETERS_4,
+            PlaneIntersectionAngleCost::NUM_PARAMETERS_5>;
 
         std::unique_ptr<CostFunction> func(new CostFunction(new PlaneIntersectionAngleCost(
             *pkg.source.loc_ptr, *pkg.dest.loc_ptr, source_ray, dest_ray, corner2d[0], corner2d[1], corner2d[2])));
@@ -200,7 +207,9 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
         points.emplace_back(intersection.topRows<3>());
 
         // add cost functions for this 3D point from both the source and dest camera
-        using CostFunction = ceres::AutoDiffCostFunction<PixelErrorCost, 2, 4, 3>;
+        using CostFunction =
+            ceres::AutoDiffCostFunction<PixelErrorCost, PixelErrorCost::NUM_RESIDUALS, PixelErrorCost::NUM_PARAMETERS_1,
+                                        PixelErrorCost::NUM_PARAMETERS_2>;
 
         std::unique_ptr<CostFunction> func[2]{
             std::make_unique<CostFunction>(new PixelErrorCost(*pkg.source.loc_ptr, source_model, inlier.pixel_1)),
@@ -272,8 +281,9 @@ void RelaxProblem::addDownwardsPrior()
     for (auto &p : _nodes_to_optimize)
     {
         double *d = p.second->orientation.coeffs().data();
-        _problem->AddResidualBlock(
-            new ceres::AutoDiffCostFunction<PointsDownwardsPrior, 1, 4>(new PointsDownwardsPrior()), nullptr, d);
+        using CostFunction = ceres::AutoDiffCostFunction<PointsDownwardsPrior, PointsDownwardsPrior::NUM_RESIDUALS,
+                                                         PointsDownwardsPrior::NUM_PARAMETERS_1>;
+        _problem->AddResidualBlock(new CostFunction(new PointsDownwardsPrior()), nullptr, d);
         _problem->SetParameterization(d, &_quat_parameterization);
     }
 }

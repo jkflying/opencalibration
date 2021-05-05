@@ -66,6 +66,7 @@ void relaxDecompositions(const MeasurementGraph &graph, std::vector<NodePose> &n
 {
     RelaxProblem rp;
     rp.initialize(nodes);
+    rp.solverOptions.initial_trust_region_radius = 0.1;
 
     for (size_t edge_id : edges_to_optimize)
     {

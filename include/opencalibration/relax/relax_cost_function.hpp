@@ -5,7 +5,7 @@
 
 #include <opencalibration/types/plane.hpp>
 
-#include <ceres/ceres.h>
+#include <ceres/jet.h>
 #include <spdlog/spdlog.h>
 
 #include <unordered_set>
@@ -15,11 +15,14 @@ namespace opencalibration
 
 template <typename T> T angleBetweenUnitVectors(const Eigen::Matrix<T, 3, 1> &n1, const Eigen::Matrix<T, 3, 1> &n2)
 {
-    return acos(T(0.99999) * n1.dot(n2));
+    return acos(std::clamp<T>(n1.dot(n2), T(-1 + 1e-12), T(1 - 1e-12)));
 }
 
 struct PointsDownwardsPrior
 {
+    static const int NUM_RESIDUALS = 1;
+    static const int NUM_PARAMETERS_1 = 4;
+
     static constexpr double weight = 1e-3;
     template <typename T> bool operator()(const T *rotation1, T *residuals) const
     {
@@ -43,6 +46,10 @@ struct PointsDownwardsPrior
 
 struct DecomposedRotationCost
 {
+    static const int NUM_RESIDUALS = 3;
+    static const int NUM_PARAMETERS_1 = 4;
+    static const int NUM_PARAMETERS_2 = 4;
+
     DecomposedRotationCost(const Eigen::Quaterniond &relative_rotation, const Eigen::Vector3d &relative_translation,
                            const Eigen::Vector3d *translation1, const Eigen::Vector3d *translation2)
         :
@@ -83,7 +90,7 @@ struct DecomposedRotationCost
         }
 
         // relative orientation of camera1 and camera2
-        const QuaterionT rotation2_1 = rotation1_em.inverse() * rotation2_em;
+        const QuaterionT rotation2_1 = rotation1_em * rotation2_em.inverse();
         residuals[2] = Eigen::AngleAxis<T>(_relative_rotation.cast<T>() * rotation2_1).angle();
 
         return true;
@@ -101,6 +108,10 @@ struct DecomposedRotationCost
 // Takes the residual from the decomposition with lower error, or whichever doesn't have NaN/Inf in it
 struct DualDecomposedRotationCost
 {
+    static const int NUM_RESIDUALS = DecomposedRotationCost::NUM_RESIDUALS;
+    static const int NUM_PARAMETERS_1 = 4;
+    static const int NUM_PARAMETERS_2 = 4;
+
     DualDecomposedRotationCost(const camera_relations &relations, const Eigen::Vector3d *translation1,
                                const Eigen::Vector3d *translation2)
         : decompose1(relations.relative_rotation, relations.relative_translation, translation1, translation2),
@@ -110,14 +121,14 @@ struct DualDecomposedRotationCost
 
     template <typename T> bool operator()(const T *rotation1, const T *rotation2, T *residuals) const
     {
-        using Vector3T = Eigen::Matrix<T, 3, 1>;
-        using Vector3TM = Eigen::Map<Vector3T>;
+        using VectorRT = Eigen::Matrix<T, NUM_RESIDUALS, 1>;
+        using VectorRTM = Eigen::Map<VectorRT>;
 
-        Vector3T res[2];
+        VectorRT res[2];
         bool success1 = decompose1(rotation1, rotation2, res[0].data()) && res[0].allFinite();
         bool success2 = decompose2(rotation1, rotation2, res[1].data()) && res[1].allFinite();
 
-        Vector3TM res_vec(residuals);
+        VectorRTM res_vec(residuals);
         if (success1 && success2)
         {
             res_vec = (res[0].squaredNorm() <= res[1].squaredNorm()) ? res[0] : res[1];
@@ -139,6 +150,10 @@ struct DualDecomposedRotationCost
 
 struct PixelErrorCost
 {
+    static const int NUM_RESIDUALS = 2;
+    static const int NUM_PARAMETERS_1 = 4;
+    static const int NUM_PARAMETERS_2 = 3;
+
     PixelErrorCost(const Eigen::Vector3d &camera_loc, const CameraModel &camera_model,
                    const Eigen::Vector2d &camera_pixel)
         : loc(camera_loc), model(camera_model), pixel(camera_pixel)
@@ -177,6 +192,13 @@ struct PixelErrorCost
 
 struct PlaneIntersectionAngleCost
 {
+    static const int NUM_RESIDUALS = 3;
+    static const int NUM_PARAMETERS_1 = 4;
+    static const int NUM_PARAMETERS_2 = 4;
+    static const int NUM_PARAMETERS_3 = 1;
+    static const int NUM_PARAMETERS_4 = 1;
+    static const int NUM_PARAMETERS_5 = 1;
+
     PlaneIntersectionAngleCost(const Eigen::Vector3d &camera_loc1, const Eigen::Vector3d &camera_loc2,
                                const Eigen::Vector3d &camera_ray1, const Eigen::Vector3d &camera_ray2,
                                const Eigen::Vector2d &plane_point1, const Eigen::Vector2d &plane_point2,

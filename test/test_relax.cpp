@@ -1,5 +1,6 @@
 #include <opencalibration/distort/distort_keypoints.hpp>
 #include <opencalibration/relax/relax.hpp>
+#include <opencalibration/relax/relax_cost_function.hpp>
 #include <opencalibration/types/measurement_graph.hpp>
 #include <opencalibration/types/node_pose.hpp>
 #include <opencalibration/types/point_cloud.hpp>
@@ -23,9 +24,10 @@ struct relax_ : public ::testing::Test
 
     void init_cameras()
     {
-        ground_ori[0] = Eigen::Quaterniond(Eigen::AngleAxisd(0.2, Eigen::Vector3d::UnitZ()));
-        ground_ori[1] = Eigen::Quaterniond(Eigen::AngleAxisd(-0.3, Eigen::Vector3d::UnitY()));
-        ground_ori[2] = Eigen::Quaterniond(Eigen::AngleAxisd(-0.3, Eigen::Vector3d::UnitX()));
+        auto down = Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX());
+        ground_ori[0] = Eigen::Quaterniond(Eigen::AngleAxisd(0.2, Eigen::Vector3d::UnitZ()) * down);
+        ground_ori[1] = Eigen::Quaterniond(Eigen::AngleAxisd(-0.3, Eigen::Vector3d::UnitY()) * down);
+        ground_ori[2] = Eigen::Quaterniond(Eigen::AngleAxisd(-0.3, Eigen::Vector3d::UnitX()) * down);
         ground_pos[0] = Eigen::Vector3d(9, 9, 9);
         ground_pos[1] = Eigen::Vector3d(11, 9, 9);
         ground_pos[2] = Eigen::Vector3d(11, 11, 9);
@@ -104,8 +106,9 @@ struct relax_ : public ::testing::Test
             camera_relations relation;
             size_t index[2] = {i, (i + 1) % 3};
 
-            Eigen::Quaterniond actual_r = np[index[0]].orientation * np[index[1]].orientation.inverse();
-            Eigen::Vector3d actual_t = actual_r * (np[index[1]].position - np[index[0]].position).normalized();
+            Eigen::Quaterniond actual_r = np[index[1]].orientation * np[index[0]].orientation.inverse();
+            Eigen::Vector3d actual_t =
+                np[index[0]].orientation.inverse() * (np[index[1]].position - np[index[0]].position).normalized();
 
             if (i == 0 || i == 2)
             {
@@ -129,6 +132,75 @@ struct relax_ : public ::testing::Test
         np[2].orientation *= Eigen::Quaterniond(Eigen::AngleAxisd(noise[2], Eigen::Vector3d::UnitX()));
     }
 };
+
+TEST_F(relax_, downwards_prior_cost_function)
+{
+    // GIVEN: a starting angle
+    Eigen::Quaterniond q = Eigen::Quaterniond::Identity() * Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX());
+
+    // WHEN: we get the cost of the downwards prior
+    PointsDownwardsPrior p;
+    double r = NAN;
+    EXPECT_TRUE(p(q.coeffs().data(), &r));
+
+    // THEN: it should be the amount away from vertical
+    EXPECT_NEAR(r, 0, 1e-8);
+
+    // WHEN: we shift it 0.3 rad away from vertical
+    q = q * Eigen::AngleAxisd(0.3, Eigen::Vector3d::UnitX());
+    EXPECT_TRUE(p(q.coeffs().data(), &r));
+
+    // THEN: it should have a residual of 0.3 * weight
+    EXPECT_NEAR(r, 0.3 * p.weight, 1e-9);
+}
+
+TEST_F(relax_, rel_rot_cost_function)
+{
+    // GIVEN: two cameras
+    init_cameras();
+    Eigen::Quaterniond rel_rot = ground_ori[1] * ground_ori[0].inverse();
+    Eigen::Vector3d rel_pos = ground_ori[0].inverse() * (ground_pos[1] - ground_pos[0]);
+    DecomposedRotationCost cost(rel_rot, rel_pos, &ground_pos[0], &ground_pos[1]);
+
+    {
+        // WHEN: we get the relative orientation cost with a perfect guess
+        Eigen::Quaterniond q[2]{ground_ori[0], ground_ori[1]};
+        double r[3]{NAN, NAN, NAN};
+        bool success = cost(q[0].coeffs().data(), q[1].coeffs().data(), r);
+
+        // THEN: they should have residuals of 0
+        EXPECT_TRUE(success);
+        EXPECT_NEAR(r[0], 0., 1e-5);
+        EXPECT_NEAR(r[1], 0., 1e-5);
+        EXPECT_NEAR(r[2], 0., 1e-12);
+    }
+
+    {
+        // WHEN: we get a relative orientation cost with a fixed offset guess
+        Eigen::Quaterniond q[2]{ground_ori[0] * Eigen::AngleAxisd(0.3, Eigen::Vector3d::UnitZ()), ground_ori[1]};
+        double r[3]{NAN, NAN, NAN};
+        bool success = cost(q[0].coeffs().data(), q[1].coeffs().data(), r);
+
+        // THEN: we should get that fixed offset as the residuals
+        EXPECT_TRUE(success);
+        EXPECT_NEAR(r[0], 0.3, 1e-12);
+        EXPECT_NEAR(r[1], 0.0, 1e-5);
+        EXPECT_NEAR(r[2], 0.3, 1e-12);
+    }
+
+    {
+        // WHEN: we get a relative orientation cost with a fixed offset guess
+        Eigen::Quaterniond q[2]{ground_ori[0], ground_ori[1] * Eigen::AngleAxisd(-0.3, Eigen::Vector3d::UnitZ())};
+        double r[3]{NAN, NAN, NAN};
+        bool success = cost(q[0].coeffs().data(), q[1].coeffs().data(), r);
+
+        // THEN: we should get that fixed offset as the residuals
+        EXPECT_TRUE(success);
+        EXPECT_NEAR(r[0], 0.0, 1e-5);
+        EXPECT_NEAR(r[1], 0.3, 1e-12);
+        EXPECT_NEAR(r[2], 0.3, 1e-12);
+    }
+}
 
 TEST(relax, no_images)
 {
@@ -210,13 +282,6 @@ TEST_F(relax_, relative_orientation_3_images)
     // GIVEN: a graph, 3 images with edges between them all, then with their rotation disturbed
     init_cameras();
 
-    // TODO: make it work with images that aren't pointed down to start with
-    for (int i = 0; i < 3; i++)
-    {
-        np[i].orientation = Eigen::Quaterniond::Identity();
-        ground_ori[i] = Eigen::Quaterniond::Identity();
-    }
-
     add_edge_measurements();
     add_ori_noise({-1, 1, 1});
 
@@ -261,7 +326,7 @@ TEST_F(relax_, measurement_3_images_plane)
 
     // THEN: it should put them back into the original orientation
     for (int i = 0; i < 3; i++)
-        EXPECT_LT(Eigen::AngleAxisd(np[i].orientation.inverse() * ground_ori[i]).angle(), 1e-9)
+        EXPECT_LT(Eigen::AngleAxisd(np[i].orientation.inverse() * ground_ori[i]).angle(), 1e-8)
             << i << ": " << np[i].orientation.coeffs().transpose() << std::endl
             << "g: " << ground_ori[i].coeffs().transpose();
 }
