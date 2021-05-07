@@ -2,6 +2,7 @@
 
 #include <opencalibration/io/serialize.hpp>
 
+#include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/spdlog.h>
 
 #include "CommandLine.hpp"
@@ -22,12 +23,14 @@ int main(int argc, char *argv[])
     std::string input_dir = "";
     uint32_t debug_level = 2;
     std::string output_file = "";
-    int batch_size = omp_get_max_threads() - 1;
+    std::string log_file = "";
+    int batch_size = omp_get_max_threads();
     bool printHelp = false;
 
     CommandLine args("Run the opencalibration pipeline from the command line");
     args.addArgument({"-i", "--input"}, &input_dir, "Input directory of images");
     args.addArgument({"-d", "--debug"}, &debug_level, "none=0, critical=1, error=2, warn=3, info=4, debug=5");
+    args.addArgument({"-l", "--log-file"}, &log_file, "Output logging file, overwrites existing files");
     args.addArgument({"-o", "--output"}, &output_file, "Output geojson file");
     args.addArgument({"-b", "--batch-size"}, &batch_size, "Processing batch size");
     args.addArgument({"-h", "--help"}, &printHelp, "You must specify at least an input file");
@@ -78,6 +81,11 @@ int main(int argc, char *argv[])
         break;
     }
     spdlog::set_level(level);
+    if (log_file.size() > 0)
+    {
+        auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(log_file);
+        spdlog::default_logger()->sinks().push_back(std::move(file_sink));
+    }
 
     spdlog::info("Log level set to {}", log_level_str);
     spdlog::info("Pipeline batch size set to {}", batch_size);
