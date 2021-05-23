@@ -2,6 +2,7 @@
 
 #include <opencalibration/distort/distort_keypoints.hpp>
 #include <opencalibration/geometry/intersection.hpp>
+#include <opencalibration/relax/grid_filter.hpp>
 #include <opencalibration/types/measurement_graph.hpp>
 #include <opencalibration/types/node_pose.hpp>
 #include <opencalibration/types/plane.hpp>
@@ -40,6 +41,8 @@ class RelaxProblem
 
     void addRelationCost(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge);
 
+    void gridFilterMatchesPerImage(const MeasurementGraph &graph, const std::unordered_set<size_t> &edges_to_optimize);
+
     void addPointMeasurementsCost(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge);
 
     void addGlobalPlaneMeasurementsCost(const MeasurementGraph &graph, size_t edge_id,
@@ -58,6 +61,8 @@ class RelaxProblem
     ceres::Problem::Options _problemOptions;
     ceres::EigenQuaternionParameterization _quat_parameterization;
     std::unique_ptr<ceres::Problem> _problem;
+
+    std::unordered_map<size_t, GridFilter<const feature_match_denormalized *>> _grid_filter;
 
     ceres::Solver::Summary _summary;
     ceres::Solver _solver;

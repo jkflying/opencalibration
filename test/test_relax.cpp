@@ -326,7 +326,7 @@ TEST_F(relax_, measurement_3_images_plane)
 
     // THEN: it should put them back into the original orientation
     for (int i = 0; i < 3; i++)
-        EXPECT_LT(Eigen::AngleAxisd(np[i].orientation.inverse() * ground_ori[i]).angle(), 1e-8)
+        EXPECT_LT(Eigen::AngleAxisd(np[i].orientation.inverse() * ground_ori[i]).angle(), 1e-7)
             << i << ": " << np[i].orientation.coeffs().transpose() << std::endl
             << "g: " << ground_ori[i].coeffs().transpose();
 }

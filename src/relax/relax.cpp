@@ -89,6 +89,8 @@ void relax3dPointMeasurements(const MeasurementGraph &graph, std::vector<NodePos
     rp.initialize(nodes);
     rp.huber_loss.reset(new ceres::HuberLoss(10));
 
+    rp.gridFilterMatchesPerImage(graph, edges_to_optimize);
+
     for (size_t edge_id : edges_to_optimize)
     {
         const MeasurementGraph::Edge *edge = graph.getEdge(edge_id);
@@ -111,6 +113,7 @@ void relaxGroundPlaneMeasurements(const MeasurementGraph &graph, std::vector<Nod
     rp.initialize(nodes);
     rp.initializeGroundPlane();
     rp.huber_loss.reset(new ceres::HuberLoss(10));
+    rp.gridFilterMatchesPerImage(graph, edges_to_optimize);
 
     for (size_t edge_id : edges_to_optimize)
     {

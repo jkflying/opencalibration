@@ -131,6 +131,51 @@ OptimizationPackage::PoseOpt RelaxProblem::nodeid2poseopt(const MeasurementGraph
     return po;
 }
 
+void RelaxProblem::gridFilterMatchesPerImage(const MeasurementGraph &graph,
+                                             const std::unordered_set<size_t> &edges_to_optimize)
+{
+    for (size_t edge_id : edges_to_optimize)
+    {
+        auto *edge_ptr = graph.getEdge(edge_id);
+        if (edge_ptr == nullptr)
+            continue;
+
+        const MeasurementGraph::Edge &edge = *edge_ptr;
+
+        OptimizationPackage pkg;
+        pkg.relations = &edge.payload;
+        pkg.source = nodeid2poseopt(graph, edge.getSource());
+        pkg.dest = nodeid2poseopt(graph, edge.getDest());
+
+        if (pkg.source.loc_ptr == nullptr || pkg.dest.loc_ptr == nullptr)
+            return;
+
+        const auto &source_model = graph.getNode(edge.getSource())->payload.model;
+        const auto &dest_model = graph.getNode(edge.getDest())->payload.model;
+
+        Eigen::Matrix3d source_rot = pkg.source.rot_ptr->toRotationMatrix();
+        Eigen::Matrix3d dest_rot = pkg.dest.rot_ptr->toRotationMatrix();
+
+        auto &source_filter = _grid_filter[edge.getSource()];
+        auto &dest_filter = _grid_filter[edge.getDest()];
+
+        for (const auto &inlier : edge.payload.inlier_matches)
+        {
+            // make 3D intersection, add it to `points`
+            Eigen::Vector3d source_ray = source_rot * image_to_3d(inlier.pixel_1, source_model);
+            Eigen::Vector3d dest_ray = dest_rot * image_to_3d(inlier.pixel_2, dest_model);
+            Eigen::Vector4d intersection =
+                rayIntersection(*pkg.source.loc_ptr, source_ray, *pkg.dest.loc_ptr, dest_ray);
+
+            const double score = intersection[3] < 0 ? 0. : 1. / (1. + intersection[3]);
+            source_filter.addMeasurement(inlier.pixel_1.x() / source_model.pixels_cols,
+                                         inlier.pixel_1.y() / source_model.pixels_rows, score, &inlier);
+            dest_filter.addMeasurement(inlier.pixel_2.x() / dest_model.pixels_cols,
+                                       inlier.pixel_2.y() / dest_model.pixels_rows, score, &inlier);
+        }
+    }
+}
+
 void RelaxProblem::addRelationCost(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge)
 {
     OptimizationPackage pkg;
@@ -189,15 +234,20 @@ void RelaxProblem::addGlobalPlaneMeasurementsCost(const MeasurementGraph &graph,
     const auto &source_model = graph.getNode(edge.getSource())->payload.model;
     const auto &dest_model = graph.getNode(edge.getDest())->payload.model;
 
-    //     Eigen::Matrix3d source_rot = pkg.source.rot_ptr->toRotationMatrix();
-    //     Eigen::Matrix3d dest_rot = pkg.dest.rot_ptr->toRotationMatrix();
+    auto source_whitelist = _grid_filter[edge.getSource()].getBestMeasurementsPerCell();
+    auto dest_whitelist = _grid_filter[edge.getDest()].getBestMeasurementsPerCell();
 
     double *datas[5] = {pkg.source.rot_ptr->coeffs().data(), pkg.dest.rot_ptr->coeffs().data(),
                         &_global_plane.corner[0].z(), &_global_plane.corner[1].z(), &_global_plane.corner[2].z()};
     Eigen::Vector2d corner2d[3]{_global_plane.corner[0].topRows<2>(), _global_plane.corner[1].topRows<2>(),
                                 _global_plane.corner[2].topRows<2>()};
+    bool points_added = false;
     for (const auto &inlier : edge.payload.inlier_matches)
     {
+        if (source_whitelist.find(&inlier) == source_whitelist.end() &&
+            dest_whitelist.find(&inlier) == dest_whitelist.end())
+            continue;
+
         // make 3D intersection, add it to `points`
         Eigen::Vector3d source_ray = image_to_3d(inlier.pixel_1, source_model);
         Eigen::Vector3d dest_ray = image_to_3d(inlier.pixel_2, dest_model);
@@ -213,18 +263,21 @@ void RelaxProblem::addGlobalPlaneMeasurementsCost(const MeasurementGraph &graph,
             *pkg.source.loc_ptr, *pkg.dest.loc_ptr, source_ray, dest_ray, corner2d[0], corner2d[1], corner2d[2])));
 
         _problem->AddResidualBlock(func.release(), huber_loss.get(), datas[0], datas[1], datas[2], datas[3], datas[4]);
-
+        points_added = true;
+    }
+    if (points_added)
+    {
         _problem->SetParameterization(datas[0], &_quat_parameterization);
         _problem->SetParameterization(datas[1], &_quat_parameterization);
-    }
 
-    if (!pkg.source.optimize)
-    {
-        _problem->SetParameterBlockConstant(datas[0]);
-    }
-    if (!pkg.dest.optimize)
-    {
-        _problem->SetParameterBlockConstant(datas[1]);
+        if (!pkg.source.optimize)
+        {
+            _problem->SetParameterBlockConstant(datas[0]);
+        }
+        if (!pkg.dest.optimize)
+        {
+            _problem->SetParameterBlockConstant(datas[1]);
+        }
     }
 
     _edges_used.emplace(edge_id);
@@ -247,12 +300,21 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
     const auto &source_model = graph.getNode(edge.getSource())->payload.model;
     const auto &dest_model = graph.getNode(edge.getDest())->payload.model;
 
+    auto source_whitelist = _grid_filter[edge.getSource()].getBestMeasurementsPerCell();
+    auto dest_whitelist = _grid_filter[edge.getDest()].getBestMeasurementsPerCell();
+
     Eigen::Matrix3d source_rot = pkg.source.rot_ptr->toRotationMatrix();
     Eigen::Matrix3d dest_rot = pkg.dest.rot_ptr->toRotationMatrix();
 
     double *datas[2] = {pkg.source.rot_ptr->coeffs().data(), pkg.dest.rot_ptr->coeffs().data()};
+    bool points_added = false;
     for (const auto &inlier : edge.payload.inlier_matches)
     {
+
+        if (source_whitelist.find(&inlier) == source_whitelist.end() &&
+            dest_whitelist.find(&inlier) == dest_whitelist.end())
+            continue;
+
         // make 3D intersection, add it to `points`
         Eigen::Vector3d source_ray = source_rot * image_to_3d(inlier.pixel_1, source_model);
         Eigen::Vector3d dest_ray = dest_rot * image_to_3d(inlier.pixel_2, dest_model);
@@ -272,17 +334,22 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
         for (int i = 0; i < 2; i++)
         {
             _problem->AddResidualBlock(func[i].release(), huber_loss.get(), datas[i], points.back().data());
-            _problem->SetParameterization(datas[i], &_quat_parameterization);
         }
+        points_added = true;
     }
 
-    if (!pkg.source.optimize)
+    if (points_added)
     {
-        _problem->SetParameterBlockConstant(datas[0]);
-    }
-    if (!pkg.dest.optimize)
-    {
-        _problem->SetParameterBlockConstant(datas[1]);
+        _problem->SetParameterization(datas[0], &_quat_parameterization);
+        _problem->SetParameterization(datas[1], &_quat_parameterization);
+        if (!pkg.source.optimize)
+        {
+            _problem->SetParameterBlockConstant(datas[0]);
+        }
+        if (!pkg.dest.optimize)
+        {
+            _problem->SetParameterBlockConstant(datas[1]);
+        }
     }
 
     _edges_used.emplace(edge_id);

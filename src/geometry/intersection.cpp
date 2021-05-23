@@ -28,7 +28,7 @@ Eigen::Vector4d rayIntersection(const Eigen::Vector3d &origin1, const Eigen::Vec
 
         Eigen::Vector3d p1 = (origin1 + t * normal1), p2 = (origin2 + s * normal2);
         res.topRows<3>() = 0.5 * (p1 + p2);
-        res(3) = (p1 - p2).squaredNorm();
+        res(3) = (p1 - p2).squaredNorm() * (t >= 0 && s >= 0 ? 1 : -1);
     }
 
     return res;

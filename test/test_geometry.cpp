@@ -63,7 +63,16 @@ TEST(geometry, ray_intersection_inexact)
     // WHEN: there is a ray intersection
     auto res = rayIntersection(point1, normal1, point2, normal2);
 
-    // THEN: the results should be (1,0,0), and with a distance of 2
+    // THEN: the results should be (1,0,0), and with a distance of 2, behind the normals so negative
+    EXPECT_DOUBLE_EQ((res.topRows<3>() - Eigen::Vector3d(1, 0, 0)).norm(), 0) << res.transpose();
+    EXPECT_DOUBLE_EQ(res(3), -2 * 2);
+
+    // WHEN: we reverse the normals and try again
+    normal1 *= -1;
+    normal2 *= -1;
+    res = rayIntersection(point1, normal1, point2, normal2);
+
+    // THEN: the results should be (1,0,0), and with a distance of 2, in front of the normal so positive
     EXPECT_DOUBLE_EQ((res.topRows<3>() - Eigen::Vector3d(1, 0, 0)).norm(), 0) << res.transpose();
     EXPECT_DOUBLE_EQ(res(3), 2 * 2);
 }
