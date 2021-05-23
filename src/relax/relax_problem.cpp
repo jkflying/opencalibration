@@ -2,6 +2,59 @@
 
 #include <opencalibration/relax/relax_cost_function.hpp>
 
+#include <glog/log_severity.h>
+
+namespace
+{
+
+class SpdLogSink : public google::LogSink
+{
+  public:
+    void send(google::LogSeverity severity, const char *full_filename, const char *base_filename, int line,
+              const struct ::tm *tm_time, const char *message, size_t message_len) override
+    {
+        // unused, maybe integrate them somehow?
+        (void)full_filename;
+        (void)base_filename;
+        (void)line;
+        (void)tm_time;
+
+        spdlog::level::level_enum level;
+        switch (severity)
+        {
+        case google::GLOG_INFO:
+            level = spdlog::level::debug;
+            break;
+        case google::GLOG_WARNING:
+            level = spdlog::level::info;
+            break;
+        case google::GLOG_ERROR:
+            level = spdlog::level::warn;
+            break;
+        case google::GLOG_FATAL:
+            level = spdlog::level::err;
+            break;
+        default:
+            level = spdlog::level::critical;
+        }
+        spdlog::log(level, "{}", std::string_view(message, message_len));
+    }
+};
+
+struct RegisterCeresLogger
+{
+    SpdLogSink sink;
+
+    RegisterCeresLogger()
+    {
+        google::InitGoogleLogging("opencalibration");
+        google::AddLogSink(&sink);
+    }
+};
+
+static RegisterCeresLogger *__init_at_load = new RegisterCeresLogger();
+} // namespace
+
 namespace opencalibration
 {
 
@@ -19,6 +72,7 @@ RelaxProblem::RelaxProblem() : huber_loss(new ceres::HuberLoss(M_PI_2))
     solverOptions.sparse_linear_algebra_library_type = ceres::EIGEN_SPARSE;
     solverOptions.dense_linear_algebra_library_type = ceres::EIGEN;
     solverOptions.initial_trust_region_radius = 1;
+    solverOptions.logging_type = ceres::SILENT;
 }
 
 void RelaxProblem::initialize(std::vector<NodePose> &nodes)
