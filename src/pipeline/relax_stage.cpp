@@ -20,13 +20,12 @@ namespace opencalibration
 void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &node_ids,
                       const jk::tree::KDTree<size_t, 3> &imageGPSLocations, bool force_optimize_all)
 {
-    _local_poses.clear();
+    _directly_connected.clear();
     _edges_to_optimize.clear();
+    _ids_added.clear();
+    _local_poses.clear();
 
     int connection_order_to_include = 1;
-
-    std::unordered_set<size_t> ids_added;
-    std::unordered_set<size_t> directly_connected;
 
     _local_poses.reserve(node_ids.size());
 
@@ -36,34 +35,6 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
         _last_graph_size_full_relax = graph.size_nodes();
     }
 
-    auto build_optimization_edges = [&](size_t node_id) {
-        const auto *node = graph.getNode(node_id);
-        auto knn = imageGPSLocations.searchKnn(to_array(node->payload.position), 10);
-        std::unordered_set<size_t> ideally_connected_nodes(knn.size());
-        for (const auto &edge : knn)
-        {
-            ideally_connected_nodes.insert(edge.payload);
-        }
-        ideally_connected_nodes.erase(node_id);
-        for (size_t edge_id : node->getEdges())
-        {
-            const auto *edge = graph.getEdge(edge_id);
-            if (edge->getSource() == node_id &&
-                ideally_connected_nodes.find(edge->getDest()) != ideally_connected_nodes.end())
-            {
-                _edges_to_optimize.insert(edge_id);
-                directly_connected.insert(edge->getDest());
-            }
-            else if (edge->getDest() == node_id &&
-                     ideally_connected_nodes.find(edge->getSource()) != ideally_connected_nodes.end())
-            {
-                _edges_to_optimize.insert(edge_id);
-                directly_connected.insert(edge->getSource());
-            }
-        }
-        ids_added.insert(node_id);
-    };
-
     for (size_t node_id : node_ids)
     {
         const auto *node = graph.getNode(node_id);
@@ -72,14 +43,14 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
         pose.orientation = node->payload.orientation;
         pose.position = node->payload.position;
         _local_poses.push_back(pose);
-        build_optimization_edges(pose.node_id);
+        build_optimization_edges(graph, imageGPSLocations, pose.node_id);
     }
 
     for (int i = 0; i < connection_order_to_include; i++)
     {
         // remove already added node ids from nodes to still connect
-        auto newly_connected = directly_connected;
-        for (size_t id : ids_added)
+        auto newly_connected = _directly_connected;
+        for (size_t id : _ids_added)
         {
             newly_connected.erase(id);
         }
@@ -95,7 +66,7 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
             pose.orientation = node->payload.orientation;
             pose.position = node->payload.position;
             _local_poses.push_back(pose);
-            build_optimization_edges(pose.node_id);
+            build_optimization_edges(graph, imageGPSLocations, pose.node_id);
         }
     }
 
@@ -103,7 +74,7 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
     {
         for (auto iter = graph.nodebegin(); iter != graph.nodeend(); ++iter)
         {
-            if (ids_added.find(iter->first) != ids_added.end())
+            if (_ids_added.find(iter->first) != _ids_added.end())
             {
                 continue;
             }
@@ -117,7 +88,7 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
             pose.orientation = iter->second.payload.orientation;
             pose.position = iter->second.payload.position;
             _local_poses.push_back(pose);
-            build_optimization_edges(pose.node_id);
+            build_optimization_edges(graph, imageGPSLocations, pose.node_id);
         }
     }
 
@@ -125,6 +96,37 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
 
     spdlog::info("Queueing {} image nodes, {} edges for graph relaxation", _local_poses.size(),
                  _edges_to_optimize.size());
+}
+
+void RelaxStage::build_optimization_edges(const MeasurementGraph &graph,
+                                          const jk::tree::KDTree<size_t, 3> &imageGPSLocations, size_t node_id)
+{
+
+    const auto *node = graph.getNode(node_id);
+    auto knn = imageGPSLocations.searchKnn(to_array(node->payload.position), 10);
+    std::unordered_set<size_t> ideally_connected_nodes(knn.size());
+    for (const auto &edge : knn)
+    {
+        ideally_connected_nodes.insert(edge.payload);
+    }
+    ideally_connected_nodes.erase(node_id);
+    for (size_t edge_id : node->getEdges())
+    {
+        const auto *edge = graph.getEdge(edge_id);
+        if (edge->getSource() == node_id &&
+            ideally_connected_nodes.find(edge->getDest()) != ideally_connected_nodes.end())
+        {
+            _edges_to_optimize.insert(edge_id);
+            _directly_connected.insert(edge->getDest());
+        }
+        else if (edge->getDest() == node_id &&
+                 ideally_connected_nodes.find(edge->getSource()) != ideally_connected_nodes.end())
+        {
+            _edges_to_optimize.insert(edge_id);
+            _directly_connected.insert(edge->getSource());
+        }
+    }
+    _ids_added.insert(node_id);
 }
 
 std::vector<std::function<void()>> RelaxStage::get_runners(const MeasurementGraph &graph)
