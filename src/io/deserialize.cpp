@@ -167,28 +167,21 @@ template <> class Deserializer<MeasurementGraph>
                         relations.relationType = camera_relations::RelationType::UNKNOWN;
                     }
 
-                    const auto &rel_rot = eiter->value.GetObject()["relative_rotation"].GetArray();
-                    for (int i = 0; i < 4; i++)
+                    const auto &rel_pose = eiter->value.GetObject()["relative_pose"].GetArray();
+                    for (size_t i = 0; i < rel_pose.Size(); i++)
                     {
-                        relations.relative_rotation.coeffs()(i) = rel_rot[i].GetDouble();
-                    }
+                        relations.relative_poses[i].score = rel_pose[i].GetObject()["score"].GetInt();
+                        const auto &rel_ori = rel_pose[i].GetObject()["orientation"].GetArray();
+                        for (int j = 0; j < 4; j++)
+                        {
+                            relations.relative_poses[i].orientation.coeffs()(j) = rel_ori[j].GetDouble();
+                        }
 
-                    const auto &rel_trans = eiter->value.GetObject()["relative_translation"].GetArray();
-                    for (int i = 0; i < 3; i++)
-                    {
-                        relations.relative_translation(i) = rel_trans[i].GetDouble();
-                    }
-
-                    const auto &rel_rot2 = eiter->value.GetObject()["relative_rotation2"].GetArray();
-                    for (int i = 0; i < 4; i++)
-                    {
-                        relations.relative_rotation2.coeffs()(i) = rel_rot2[i].GetDouble();
-                    }
-
-                    const auto &rel_trans2 = eiter->value.GetObject()["relative_translation2"].GetArray();
-                    for (int i = 0; i < 3; i++)
-                    {
-                        relations.relative_translation2(i) = rel_trans2[i].GetDouble();
+                        const auto &rel_pos = rel_pose[i].GetObject()["position"].GetArray();
+                        for (int j = 0; j < 3; j++)
+                        {
+                            relations.relative_poses[i].position(j) = rel_pos[j].GetDouble();
+                        }
                     }
 
                     MeasurementGraph::Edge edge(std::move(relations), source, dest);

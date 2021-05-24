@@ -112,13 +112,15 @@ struct relax_ : public ::testing::Test
 
             if (i == 0 || i == 2)
             {
-                relation.relative_translation = actual_t;
-                relation.relative_rotation = actual_r;
+                relation.relative_poses[0].position = actual_t;
+                relation.relative_poses[0].orientation = actual_r;
+                relation.relative_poses[0].score = 0;
             }
             if (i == 1 || i == 2)
             {
-                relation.relative_translation2 = actual_t;
-                relation.relative_rotation2 = actual_r;
+                relation.relative_poses[1].score = 1;
+                relation.relative_poses[1].position = actual_t;
+                relation.relative_poses[1].orientation = actual_r;
             }
 
             edge_id[i] = graph.addEdge(std::move(relation), id[index[0]], id[index[1]]);
@@ -265,8 +267,9 @@ TEST(relax, prior_2_images)
     np.emplace_back(NodePose{id2, ori, pos});
 
     camera_relations relation;
-    relation.relative_rotation2 = Eigen::Quaterniond::Identity();
-    relation.relative_translation2 << 1, 0, 0;
+    relation.relative_poses[0].orientation = Eigen::Quaterniond::Identity();
+    relation.relative_poses[0].position << 1, 0, 0;
+    relation.relative_poses[0].score = 0;
     size_t edge_id = graph.addEdge(std::move(relation), id, id2);
 
     // WHEN: we relax the relative orientations

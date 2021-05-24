@@ -45,9 +45,10 @@ TEST(ransac, homography_fits_identity)
     // AND: the decomposition should be an identity
     Eigen::Vector3d translation, translation2;
     Eigen::Quaterniond orientation, orientation2;
-    ASSERT_TRUE(model.decompose(matches, inliers, orientation, translation, orientation2, translation2));
-    EXPECT_NEAR(translation.norm(), 0, 1e-14);
-    EXPECT_NEAR(Eigen::AngleAxisd(orientation).angle(), 0, 1e-14);
+    std::array<decomposed_pose, 4> poses;
+    ASSERT_TRUE(model.decompose(matches, inliers, poses));
+    EXPECT_NEAR(poses[0].position.norm(), 0, 1e-14);
+    EXPECT_NEAR(Eigen::AngleAxisd(poses[0].orientation).angle(), 0, 1e-14);
 }
 
 class ransac_p : public ::testing::TestWithParam<std::tuple<Eigen::Quaterniond, Eigen::Vector3d>>
@@ -63,7 +64,7 @@ TEST_P(ransac_p, homography_rotation_translation)
     Eigen::Vector3d T = std::get<1>(GetParam());
 
     auto perspective = [](Eigen::Vector3d v, Eigen::Quaterniond R, Eigen::Vector3d T) -> Eigen::Vector3d {
-        Eigen::Vector3d cam_loc(0, 0, 20);
+        Eigen::Vector3d cam_loc(0, 0, 10);
 
         Eigen::Vector3d ray = R.inverse() * (v - (cam_loc + T));
         Eigen::Vector2d pixel = ray.hnormalized() * 600;
@@ -98,17 +99,20 @@ TEST_P(ransac_p, homography_rotation_translation)
     EXPECT_EQ(std::count(inliers.begin(), inliers.end(), true), 4);
 
     // AND: the decomposition should be what was input
-    Eigen::Vector3d translation, translation2;
-    Eigen::Quaterniond orientation, orientation2;
-    ASSERT_TRUE(model.decompose(matches, inliers, orientation, translation, orientation2, translation2));
+    std::array<decomposed_pose, 4> poses;
+    ASSERT_TRUE(model.decompose(matches, inliers, poses));
 
-    double T_min = std::min((down * translation.normalized() - T.normalized()).norm(),
-                            (down * translation2.normalized() - T.normalized()).norm());
-    EXPECT_NEAR(T_min, 0, 1e-7) << (down * translation).transpose() << "\n" << (down * translation2).transpose();
+    double T_err[4];
+    double R_err[4];
+    double min_err = INFINITY;
+    for (size_t i = 0; i < poses.size(); i++)
+    {
+        T_err[i] = (down * poses[i].position.normalized() - T.normalized()).norm();
+        R_err[i] = Eigen::AngleAxisd((down * poses[i].orientation * down.inverse()).inverse() * R).angle();
+        min_err = std::min(min_err, T_err[i] + R_err[i]);
+    }
 
-    double R_min = std::min(Eigen::AngleAxisd(orientation.inverse() * down.inverse() * R * down).angle(),
-                            Eigen::AngleAxisd(orientation2.inverse() * down.inverse() * R * down).angle());
-    EXPECT_NEAR(R_min, 0, 1e-7) << orientation.coeffs().transpose() << "\n" << orientation.coeffs().transpose();
+    EXPECT_NEAR(min_err, 0, 1e-7);
 
     if (::testing::Test::HasFailure())
     {
@@ -123,7 +127,11 @@ INSTANTIATE_TEST_SUITE_P(
                                        Eigen::Quaterniond(Eigen::AngleAxisd(-M_PI_2, Eigen::Vector3d::UnitZ()))
                                        // TODO: get these working
                                        // Eigen::Quaterniond(Eigen::AngleAxisd(0.2, Eigen::Vector3d::UnitX())),
-                                       // Eigen::Quaterniond(Eigen::AngleAxisd(-0.2, Eigen::Vector3d::UnitY()))
+                                       //  Eigen::Quaterniond(Eigen::AngleAxisd(-0.2, Eigen::Vector3d::UnitY()))
                                        ),
-                       testing::Values(Eigen::Vector3d::Zero(), Eigen::Vector3d(1, 1, 0), Eigen::Vector3d(1, -1, 0),
-                                       Eigen::Vector3d(-1, 1, 0), Eigen::Vector3d(-1, -1, 0))));
+                       testing::Values(Eigen::Vector3d::Zero(), Eigen::Vector3d(1, 0, 0), Eigen::Vector3d(1, -1, 0),
+                                       Eigen::Vector3d(-1, 1, 0), Eigen::Vector3d(-1, -1, 0)
+
+                                           )
+
+                           ));

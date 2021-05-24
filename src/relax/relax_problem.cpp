@@ -193,11 +193,11 @@ void RelaxProblem::addRelationCost(const MeasurementGraph &graph, size_t edge_id
         return;
 
     using CostFunction =
-        ceres::AutoDiffCostFunction<DualDecomposedRotationCost, DualDecomposedRotationCost::NUM_RESIDUALS,
-                                    DualDecomposedRotationCost::NUM_PARAMETERS_1,
-                                    DualDecomposedRotationCost::NUM_PARAMETERS_2>;
+        ceres::AutoDiffCostFunction<MultiDecomposedRotationCost, MultiDecomposedRotationCost::NUM_RESIDUALS,
+                                    MultiDecomposedRotationCost::NUM_PARAMETERS_1,
+                                    MultiDecomposedRotationCost::NUM_PARAMETERS_2>;
     std::unique_ptr<CostFunction> func(
-        new CostFunction(new DualDecomposedRotationCost(*pkg.relations, pkg.source.loc_ptr, pkg.dest.loc_ptr)));
+        new CostFunction(new MultiDecomposedRotationCost(*pkg.relations, pkg.source.loc_ptr, pkg.dest.loc_ptr)));
 
     double *datas[2] = {pkg.source.rot_ptr->coeffs().data(), pkg.dest.rot_ptr->coeffs().data()};
 

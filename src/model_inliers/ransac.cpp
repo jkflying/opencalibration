@@ -104,8 +104,7 @@ size_t homography_model::evaluate(const std::vector<correspondence> &corrs, std:
 }
 
 bool homography_model::decompose(const std::vector<correspondence> &corrs, const std::vector<bool> &inliers,
-                                 Eigen::Quaterniond &r1, Eigen::Vector3d &t1, Eigen::Quaterniond &r2,
-                                 Eigen::Vector3d &t2)
+                                 std::array<decomposed_pose, 4> &poses)
 {
     std::vector<cv::Mat> Rs_decomp, Ts_decomp, normals_decomp;
     cv::Mat h;
@@ -114,7 +113,6 @@ bool homography_model::decompose(const std::vector<correspondence> &corrs, const
     cv::eigen2cv(Eigen::Matrix3d::Identity().eval(), I);
     size_t solutions = cv::decomposeHomographyMat(h, I, Rs_decomp, Ts_decomp, normals_decomp);
 
-    size_t best_score = 0, second_best_score = 0;
     for (size_t i = 0; i < solutions; i++)
     {
         Eigen::Matrix3d R;
@@ -126,7 +124,7 @@ bool homography_model::decompose(const std::vector<correspondence> &corrs, const
         Eigen::Vector3d N;
         cv::cv2eigen(normals_decomp[i], N);
 
-        size_t score = 0;
+        poses[i].score = 0;
 
         for (size_t j = 0; j < corrs.size(); j++)
         {
@@ -138,31 +136,28 @@ bool homography_model::decompose(const std::vector<correspondence> &corrs, const
             double dot2 = (R * N).dot(corrs[j].measurement2);
             if (dot1 >= 0 && dot2 >= 0)
             {
-                score++;
+                poses[i].score++;
             }
         }
-        if (score >= second_best_score)
-        {
-            r2 = Eigen::Quaterniond(R);
-            t2 = T;
-            second_best_score = score;
-            if (second_best_score >= best_score)
-            {
-                std::swap(r1, r2);
-                std::swap(t1, t2);
-                std::swap(best_score, second_best_score);
-            }
-        }
+        poses[i].orientation = Eigen::Quaterniond(R);
+        poses[i].position = T;
     }
+    for (size_t i = solutions; i < poses.size(); i++)
+    {
+        poses[i].score = -1;
+    }
+    std::stable_sort(poses.begin(), poses.end(),
+                     [](const decomposed_pose &p1, const decomposed_pose &p2) { return p1.score >= p2.score; });
 
-    return best_score > 0;
+    return poses[0].score > 0;
 }
 
 template <int n> double fast_pow(double d);
 
 template <> inline double fast_pow<4>(double d)
 {
-    return (d * d) * (d * d);
+    double t = d * d;
+    return t * t;
 }
 
 template <typename Model>
@@ -187,7 +182,7 @@ double ransac(const std::vector<correspondence> &matches, Model &model, std::vec
     Model best_model;
     double best_inlier_count = 0;
 
-    std::default_random_engine generator;
+    std::default_random_engine generator(42);
 
     auto random_k_from_n = [&generator](int n) {
         std::array<size_t, Model::MINIMUM_POINTS> indices;

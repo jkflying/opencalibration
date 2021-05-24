@@ -431,34 +431,32 @@ template <> class Serializer<MeasurementGraph>
                         break;
                     }
 
-                    writer.Key("relative_rotation");
+                    writer.Key("relative_pose");
                     writer.StartArray();
-                    for (int i = 0; i < 4; i++)
+                    for (const auto &pose : edge.payload.relative_poses)
                     {
-                        writer.Double(edge.payload.relative_rotation.coeffs()(i));
-                    }
-                    writer.EndArray();
+                        writer.StartObject();
 
-                    writer.Key("relative_translation");
-                    writer.StartArray();
-                    for (int i = 0; i < 3; i++)
-                    {
-                        writer.Double(edge.payload.relative_translation(i));
-                    }
-                    writer.EndArray();
-                    writer.Key("relative_rotation2");
-                    writer.StartArray();
-                    for (int i = 0; i < 4; i++)
-                    {
-                        writer.Double(edge.payload.relative_rotation2.coeffs()(i));
-                    }
-                    writer.EndArray();
+                        writer.Key("score");
+                        writer.Int(pose.score);
 
-                    writer.Key("relative_translation2");
-                    writer.StartArray();
-                    for (int i = 0; i < 3; i++)
-                    {
-                        writer.Double(edge.payload.relative_translation2(i));
+                        writer.Key("orientation");
+                        writer.StartArray();
+                        for (int i = 0; i < 4; i++)
+                        {
+                            writer.Double(pose.orientation.coeffs()(i));
+                        }
+                        writer.EndArray();
+
+                        writer.Key("position");
+                        writer.StartArray();
+                        for (int i = 0; i < 3; i++)
+                        {
+                            writer.Double(pose.position(i));
+                        }
+                        writer.EndArray();
+
+                        writer.EndObject();
                     }
                     writer.EndArray();
                 }

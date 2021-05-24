@@ -34,9 +34,8 @@ TEST(ransac, homography_filter_correspondences)
     // THEN: there should be roughly the right number
     EXPECT_GT(score, 0.5);
 
-    Eigen::Quaterniond R, R2;
-    Eigen::Vector3d T, T2;
-    EXPECT_EQ(model.decompose(correspondences, inliers, R, T, R2, T2), true);
+    std::array<decomposed_pose, 4> poses;
+    EXPECT_EQ(model.decompose(correspondences, inliers, poses), true);
 
     // AND: they should correspond (visual inspection)
     bool visual_inspection = false;

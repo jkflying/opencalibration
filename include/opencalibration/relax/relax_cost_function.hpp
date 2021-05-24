@@ -106,17 +106,23 @@ struct DecomposedRotationCost
 
 // Homographies give two valid decompositions. Use this to evaluate the cost of these paired decompositions.
 // Takes the residual from the decomposition with lower error, or whichever doesn't have NaN/Inf in it
-struct DualDecomposedRotationCost
+struct MultiDecomposedRotationCost
 {
     static const int NUM_RESIDUALS = DecomposedRotationCost::NUM_RESIDUALS;
     static const int NUM_PARAMETERS_1 = 4;
     static const int NUM_PARAMETERS_2 = 4;
 
-    DualDecomposedRotationCost(const camera_relations &relations, const Eigen::Vector3d *translation1,
-                               const Eigen::Vector3d *translation2)
-        : decompose1(relations.relative_rotation, relations.relative_translation, translation1, translation2),
-          decompose2(relations.relative_rotation2, relations.relative_translation2, translation1, translation2)
+    MultiDecomposedRotationCost(const camera_relations &relations, const Eigen::Vector3d *translation1,
+                                const Eigen::Vector3d *translation2)
     {
+        decompose.reserve(relations.relative_poses.size());
+        for (const auto &pose : relations.relative_poses)
+        {
+            if (pose.score >= 0)
+            {
+                decompose.emplace_back(pose.orientation, pose.position, translation1, translation2);
+            }
+        }
     }
 
     template <typename T> bool operator()(const T *rotation1, const T *rotation2, T *residuals) const
@@ -124,28 +130,27 @@ struct DualDecomposedRotationCost
         using VectorRT = Eigen::Matrix<T, NUM_RESIDUALS, 1>;
         using VectorRTM = Eigen::Map<VectorRT>;
 
-        VectorRT res[2];
-        bool success1 = decompose1(rotation1, rotation2, res[0].data()) && res[0].allFinite();
-        bool success2 = decompose2(rotation1, rotation2, res[1].data()) && res[1].allFinite();
+        T lowest_res_norm(std::numeric_limits<double>::infinity());
+        VectorRT lowest_res;
+        lowest_res.fill(T(NAN));
+        for (size_t i = 0; i < decompose.size(); i++)
+        {
+            VectorRT res;
+            if (decompose[i](rotation1, rotation2, res.data()) && res.allFinite() &&
+                res.squaredNorm() < lowest_res_norm)
+            {
+                lowest_res_norm = res.squaredNorm();
+                lowest_res = res;
+            }
+        }
 
         VectorRTM res_vec(residuals);
-        if (success1 && success2)
-        {
-            res_vec = (res[0].squaredNorm() <= res[1].squaredNorm()) ? res[0] : res[1];
-        }
-        else if (success1)
-        {
-            res_vec = res[0];
-        }
-        else if (success2)
-        {
-            res_vec = res[1];
-        }
+        res_vec = lowest_res;
 
-        return success1 || success2;
+        return ceres::IsFinite(lowest_res_norm);
     }
 
-    DecomposedRotationCost decompose1, decompose2;
+    std::vector<DecomposedRotationCost> decompose;
 };
 
 struct PixelErrorCost
