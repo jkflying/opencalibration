@@ -105,6 +105,8 @@ std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph
                             feature_match_denormalized fmd;
                             fmd.pixel_1 = img.features[matches[i].feature_index_1].location;
                             fmd.pixel_2 = std::get<1>(near_image).get().features[matches[i].feature_index_2].location;
+                            fmd.feature_index_1 = matches[i].feature_index_1;
+                            fmd.feature_index_2 = matches[i].feature_index_2;
                             relations.inlier_matches.push_back(fmd);
                         }
                     }

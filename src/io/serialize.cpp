@@ -405,6 +405,9 @@ template <> class Serializer<MeasurementGraph>
                         }
                         writer.EndArray();
 
+                        writer.Int64(pair.feature_index_1);
+                        writer.Int64(pair.feature_index_2);
+
                         writer.EndArray();
                     }
                     writer.EndArray();

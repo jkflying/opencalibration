@@ -39,9 +39,9 @@ struct image
         bool feat = features == other.features;
         bool mod = model == other.model;
         bool pos =
-            position == other.position || (position.array().isNaN().all() && other.position.array().isNaN().all());
-        bool ori = orientation.coeffs() == other.orientation.coeffs() ||
-                   (orientation.coeffs().array().isNaN().all() && other.orientation.coeffs().array().isNaN().all());
+            (position.array().isNaN().all() && other.position.array().isNaN().all()) || position == other.position;
+        bool ori = (orientation.coeffs().array().isNaN().all() && other.orientation.coeffs().array().isNaN().all()) ||
+                   orientation.coeffs() == other.orientation.coeffs();
 
         return pat && met && feat && mod && pos && ori;
     }

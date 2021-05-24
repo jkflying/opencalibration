@@ -146,6 +146,8 @@ template <> class Deserializer<MeasurementGraph>
                         fmd.pixel_1[1] = kp[0].GetArray()[1].GetDouble();
                         fmd.pixel_2[0] = kp[1].GetArray()[0].GetDouble();
                         fmd.pixel_2[1] = kp[1].GetArray()[1].GetDouble();
+                        fmd.feature_index_1 = kp[2].GetInt64();
+                        fmd.feature_index_2 = kp[3].GetInt64();
                         relations.inlier_matches.push_back(fmd);
                     }
                     const auto &relation = eiter->value.GetObject()["relation"].GetArray();
