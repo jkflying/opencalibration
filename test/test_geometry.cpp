@@ -13,7 +13,8 @@ TEST(geometry, ray_intersection_nan_infinite_intersection)
     auto res = rayIntersection(center, normal, center, normal);
 
     // THEN: the results should be NaN
-    EXPECT_TRUE(res.array().isNaN().all());
+    EXPECT_TRUE(res.first.array().isNaN().all());
+    EXPECT_TRUE(std::isnan(res.second));
 }
 
 TEST(geometry, ray_intersection_never)
@@ -25,7 +26,8 @@ TEST(geometry, ray_intersection_never)
     auto res = rayIntersection(center1, normal, center2, normal);
 
     // THEN: the results should be NaN
-    EXPECT_TRUE(res.array().isNaN().all());
+    EXPECT_TRUE(res.first.array().isNaN().all());
+    EXPECT_TRUE(std::isnan(res.second));
 }
 
 TEST(geometry, ray_intersection_exact_at_origin)
@@ -38,7 +40,8 @@ TEST(geometry, ray_intersection_exact_at_origin)
     auto res = rayIntersection(point1, normal1, point2, normal2);
 
     // THEN: the results should be (0,0,0)
-    EXPECT_DOUBLE_EQ((res - Eigen::Vector4d(0, 0, 0, 0)).norm(), 0) << res.transpose();
+    EXPECT_DOUBLE_EQ((res.first - Eigen::Vector3d(0, 0, 0)).norm(), 0) << res.first.transpose();
+    EXPECT_DOUBLE_EQ(res.second, 0);
 }
 
 TEST(geometry, ray_intersection_offset_from_origin)
@@ -51,7 +54,8 @@ TEST(geometry, ray_intersection_offset_from_origin)
     auto res = rayIntersection(point1, normal1, point2, normal2);
 
     // THEN: the results should be (1,0,0)
-    EXPECT_DOUBLE_EQ((res - Eigen::Vector4d(1, 0, 0, 0)).norm(), 0) << res.transpose();
+    EXPECT_DOUBLE_EQ((res.first - Eigen::Vector3d(1, 0, 0)).norm(), 0) << res.first.transpose();
+    EXPECT_DOUBLE_EQ(res.second, 0);
 }
 
 TEST(geometry, ray_intersection_inexact)
@@ -64,8 +68,8 @@ TEST(geometry, ray_intersection_inexact)
     auto res = rayIntersection(point1, normal1, point2, normal2);
 
     // THEN: the results should be (1,0,0), and with a distance of 2, behind the normals so negative
-    EXPECT_DOUBLE_EQ((res.topRows<3>() - Eigen::Vector3d(1, 0, 0)).norm(), 0) << res.transpose();
-    EXPECT_DOUBLE_EQ(res(3), -2 * 2);
+    EXPECT_DOUBLE_EQ((res.first - Eigen::Vector3d(1, 0, 0)).norm(), 0) << res.first.transpose();
+    EXPECT_DOUBLE_EQ(res.second, -2 * 2);
 
     // WHEN: we reverse the normals and try again
     normal1 *= -1;
@@ -73,8 +77,8 @@ TEST(geometry, ray_intersection_inexact)
     res = rayIntersection(point1, normal1, point2, normal2);
 
     // THEN: the results should be (1,0,0), and with a distance of 2, in front of the normal so positive
-    EXPECT_DOUBLE_EQ((res.topRows<3>() - Eigen::Vector3d(1, 0, 0)).norm(), 0) << res.transpose();
-    EXPECT_DOUBLE_EQ(res(3), 2 * 2);
+    EXPECT_DOUBLE_EQ((res.first - Eigen::Vector3d(1, 0, 0)).norm(), 0) << res.first.transpose();
+    EXPECT_DOUBLE_EQ(res.second, 2 * 2);
 }
 
 TEST(geometry, plane_conversion)

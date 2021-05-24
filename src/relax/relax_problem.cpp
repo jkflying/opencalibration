@@ -164,10 +164,9 @@ void RelaxProblem::gridFilterMatchesPerImage(const MeasurementGraph &graph,
             // make 3D intersection, add it to `points`
             Eigen::Vector3d source_ray = source_rot * image_to_3d(inlier.pixel_1, source_model);
             Eigen::Vector3d dest_ray = dest_rot * image_to_3d(inlier.pixel_2, dest_model);
-            Eigen::Vector4d intersection =
-                rayIntersection(*pkg.source.loc_ptr, source_ray, *pkg.dest.loc_ptr, dest_ray);
+            auto intersection = rayIntersection(*pkg.source.loc_ptr, source_ray, *pkg.dest.loc_ptr, dest_ray);
 
-            const double score = intersection[3] < 0 ? 0. : 1. / (1. + intersection[3]);
+            const double score = intersection.second < 0 ? 0. : 1. / (1. + intersection.second);
             if (score > 0)
             {
                 source_filter.addMeasurement(inlier.pixel_1.x() / source_model.pixels_cols,
@@ -318,12 +317,14 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
             dest_whitelist.find(&inlier) == dest_whitelist.end())
             continue;
 
+        // TODO: look for a previous point added from one of the matches so that we add more constraints to the same
+        // point instead of adding more unknowns to the problem
+
         // make 3D intersection, add it to `points`
         Eigen::Vector3d source_ray = source_rot * image_to_3d(inlier.pixel_1, source_model);
         Eigen::Vector3d dest_ray = dest_rot * image_to_3d(inlier.pixel_2, dest_model);
-        Eigen::Vector4d intersection = rayIntersection(*pkg.source.loc_ptr, source_ray, *pkg.dest.loc_ptr, dest_ray);
-
-        points.emplace_back(intersection.topRows<3>());
+        auto intersection = rayIntersection(*pkg.source.loc_ptr, source_ray, *pkg.dest.loc_ptr, dest_ray);
+        points.emplace_back(intersection.first);
 
         // add cost functions for this 3D point from both the source and dest camera
         using CostFunction =
@@ -390,6 +391,7 @@ void RelaxProblem::initializeGroundPlane()
      *
      */
 
+    // TODO: use a robust RANSAC based plane fit of the ray-ray intersections instead
     constexpr double margin = 50;
     height -= margin;
     Eigen::Vector2d center = (xy_min + xy_max) / 2;

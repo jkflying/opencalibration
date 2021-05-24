@@ -14,8 +14,8 @@ namespace opencalibration
  * 4th dimension is used to indicate the squared distance between the rays.
  *
  */
-Eigen::Vector4d rayIntersection(const Eigen::Vector3d &origin1, const Eigen::Vector3d &normal1,
-                                const Eigen::Vector3d &origin2, const Eigen::Vector3d &normal2);
+std::pair<Eigen::Vector3d, double> rayIntersection(const Eigen::Vector3d &origin1, const Eigen::Vector3d &normal1,
+                                                   const Eigen::Vector3d &origin2, const Eigen::Vector3d &normal2);
 
 template <typename T> plane_norm_offset<T> cornerPlane2normOffsetPlane(const plane_3_corners<T> &p3)
 {

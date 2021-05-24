@@ -4,10 +4,12 @@
 
 namespace opencalibration
 {
-Eigen::Vector4d rayIntersection(const Eigen::Vector3d &origin1, const Eigen::Vector3d &normal1,
-                                const Eigen::Vector3d &origin2, const Eigen::Vector3d &normal2)
+std::pair<Eigen::Vector3d, double> rayIntersection(const Eigen::Vector3d &origin1, const Eigen::Vector3d &normal1,
+                                                   const Eigen::Vector3d &origin2, const Eigen::Vector3d &normal2)
 {
-    Eigen::Vector4d res{NAN, NAN, NAN, NAN};
+    Eigen::Vector3d res{NAN, NAN, NAN};
+    double error = NAN;
+
     double n1dn1 = normal1.dot(normal1);
     double n1dn2 = normal1.dot(normal2);
     double n2dn2 = normal2.dot(normal2);
@@ -28,13 +30,10 @@ Eigen::Vector4d rayIntersection(const Eigen::Vector3d &origin1, const Eigen::Vec
 
         Eigen::Vector3d p1 = (origin1 + t * normal1), p2 = (origin2 + s * normal2);
         res.topRows<3>() = 0.5 * (p1 + p2);
-        res(3) = (p1 - p2).squaredNorm() * (t >= 0 && s >= 0 ? 1 : -1);
+        error = (p1 - p2).squaredNorm() * (t >= 0 && s >= 0 ? 1 : -1);
     }
 
-    return res;
+    return std::make_pair(res, error);
 }
-
-template plane_norm_offset<double> cornerPlane2normOffsetPlane(const plane_3_corners<double> &p3);
-template Eigen::Vector3d rayPlaneIntersection(const ray<double> &r, const plane_norm_offset<double> &p);
 
 } // namespace opencalibration
