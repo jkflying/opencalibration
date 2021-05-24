@@ -67,7 +67,7 @@ class Pipeline
     std::condition_variable _queue_condition_variable;
     std::mutex _queue_mutex;
     std::deque<std::string> _add_queue;
-    bool _keep_running;
+    std::atomic<bool> _keep_running;
 
     enum class ThreadStatus
     {

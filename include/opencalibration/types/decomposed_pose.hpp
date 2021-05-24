@@ -6,9 +6,9 @@ namespace opencalibration
 {
 struct decomposed_pose
 {
-    int score{-1};
     Eigen::Quaterniond orientation{NAN, NAN, NAN, NAN};
     Eigen::Vector3d position{NAN, NAN, NAN};
+    int score{-1};
 
     bool operator==(const decomposed_pose &other) const
     {

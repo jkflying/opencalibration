@@ -67,7 +67,7 @@ RelaxProblem::RelaxProblem() : huber_loss(new ceres::HuberLoss(M_PI_2))
 
     solverOptions.num_threads = 1;
     solverOptions.linear_solver_type = ceres::SPARSE_NORMAL_CHOLESKY;
-    solverOptions.max_num_iterations = 250;
+    solverOptions.max_num_iterations = 500;
     solverOptions.use_nonmonotonic_steps = true;
     solverOptions.sparse_linear_algebra_library_type = ceres::EIGEN_SPARSE;
     solverOptions.dense_linear_algebra_library_type = ceres::EIGEN;
