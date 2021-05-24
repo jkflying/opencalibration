@@ -321,7 +321,7 @@ TEST_F(relax_, measurement_3_images_plane)
     // GIVEN: a graph, 3 images with edges between them all, then with their rotation disturbed
     init_cameras();
     add_point_measurements(generate_planar_points());
-    add_ori_noise({-0.3, 0.2, 0.2});
+    add_ori_noise({-0.1, 0.1, 0.1});
 
     // WHEN: we relax them with relative orientation
     std::unordered_set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
