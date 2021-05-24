@@ -11,7 +11,10 @@ void initializeOrientation(const MeasurementGraph &graph, std::vector<NodePose> 
     static const Eigen::Quaterniond DOWN_ORIENTED_NORTH(Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()));
     for (NodePose &node_pose : nodes)
     {
-        node_pose.orientation = DOWN_ORIENTED_NORTH;
+        if (!node_pose.orientation.coeffs().allFinite())
+        {
+            node_pose.orientation = DOWN_ORIENTED_NORTH;
+        }
     }
 }
 

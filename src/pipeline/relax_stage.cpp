@@ -23,6 +23,11 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
     _local_poses.clear();
     _edges_to_optimize.clear();
 
+    int connection_order_to_include = 1;
+
+    std::unordered_set<size_t> ids_added;
+    std::unordered_set<size_t> directly_connected;
+
     _local_poses.reserve(node_ids.size());
 
     _optimize_all = force_optimize_all || graph.size_nodes() > 1.5 * _last_graph_size_full_relax;
@@ -43,14 +48,20 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
         for (size_t edge_id : node->getEdges())
         {
             const auto *edge = graph.getEdge(edge_id);
-            if ((edge->getSource() == node_id &&
-                 ideally_connected_nodes.find(edge->getDest()) != ideally_connected_nodes.end()) ||
-                (edge->getDest() == node_id &&
-                 ideally_connected_nodes.find(edge->getSource()) != ideally_connected_nodes.end()))
+            if (edge->getSource() == node_id &&
+                ideally_connected_nodes.find(edge->getDest()) != ideally_connected_nodes.end())
             {
                 _edges_to_optimize.insert(edge_id);
+                directly_connected.insert(edge->getDest());
+            }
+            else if (edge->getDest() == node_id &&
+                     ideally_connected_nodes.find(edge->getSource()) != ideally_connected_nodes.end())
+            {
+                _edges_to_optimize.insert(edge_id);
+                directly_connected.insert(edge->getSource());
             }
         }
+        ids_added.insert(node_id);
     };
 
     for (size_t node_id : node_ids)
@@ -64,15 +75,32 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
         build_optimization_edges(pose.node_id);
     }
 
-    initializeOrientation(graph, _local_poses);
+    for (int i = 0; i < connection_order_to_include; i++)
+    {
+        // remove already added node ids from nodes to still connect
+        auto newly_connected = directly_connected;
+        for (size_t id : ids_added)
+        {
+            newly_connected.erase(id);
+        }
+
+        _local_poses.reserve(_local_poses.size() + newly_connected.size());
+
+        // add nodes that are directly connected
+        for (size_t node_id : newly_connected)
+        {
+            const auto *node = graph.getNode(node_id);
+            NodePose pose;
+            pose.node_id = node_id;
+            pose.orientation = node->payload.orientation;
+            pose.position = node->payload.position;
+            _local_poses.push_back(pose);
+            build_optimization_edges(pose.node_id);
+        }
+    }
 
     if (_optimize_all)
     {
-        std::unordered_set<size_t> ids_added;
-        for (size_t node_id : node_ids)
-        {
-            ids_added.insert(node_id);
-        }
         for (auto iter = graph.nodebegin(); iter != graph.nodeend(); ++iter)
         {
             if (ids_added.find(iter->first) != ids_added.end())
@@ -83,6 +111,7 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
             {
                 continue;
             }
+
             NodePose pose;
             pose.node_id = iter->first;
             pose.orientation = iter->second.payload.orientation;
@@ -91,6 +120,9 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
             build_optimization_edges(pose.node_id);
         }
     }
+
+    initializeOrientation(graph, _local_poses);
+
     spdlog::info("Queueing {} image nodes, {} edges for graph relaxation", _local_poses.size(),
                  _edges_to_optimize.size());
 }

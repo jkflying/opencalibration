@@ -168,10 +168,13 @@ void RelaxProblem::gridFilterMatchesPerImage(const MeasurementGraph &graph,
                 rayIntersection(*pkg.source.loc_ptr, source_ray, *pkg.dest.loc_ptr, dest_ray);
 
             const double score = intersection[3] < 0 ? 0. : 1. / (1. + intersection[3]);
-            source_filter.addMeasurement(inlier.pixel_1.x() / source_model.pixels_cols,
-                                         inlier.pixel_1.y() / source_model.pixels_rows, score, &inlier);
-            dest_filter.addMeasurement(inlier.pixel_2.x() / dest_model.pixels_cols,
-                                       inlier.pixel_2.y() / dest_model.pixels_rows, score, &inlier);
+            if (score > 0)
+            {
+                source_filter.addMeasurement(inlier.pixel_1.x() / source_model.pixels_cols,
+                                             inlier.pixel_1.y() / source_model.pixels_rows, score, &inlier);
+                dest_filter.addMeasurement(inlier.pixel_2.x() / dest_model.pixels_cols,
+                                           inlier.pixel_2.y() / dest_model.pixels_rows, score, &inlier);
+            }
         }
     }
 }
