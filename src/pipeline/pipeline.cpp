@@ -123,7 +123,7 @@ void Pipeline::process_images(const std::vector<std::string> &paths_to_load,
 
     fvec funcs = interleave<fvec>({load_funcs, link_funcs, relax_funcs});
 
-#pragma omp parallel for schedule(dynamic)
+#pragma omp parallel for schedule(dynamic, 1)
     for (int i = 0; i < (int)funcs.size(); i++)
     {
         funcs[i]();

@@ -66,7 +66,7 @@ void relaxGroundPlaneMeasurements(const MeasurementGraph &graph, std::vector<Nod
     RelaxProblem rp;
     rp.initialize(nodes);
     rp.initializeGroundPlane();
-    rp.huber_loss.reset(new ceres::HuberLoss(10));
+    rp.huber_loss.reset(new ceres::HuberLoss(1 * M_PI / 180));
     rp.gridFilterMatchesPerImage(graph, edges_to_optimize);
 
     for (size_t edge_id : edges_to_optimize)

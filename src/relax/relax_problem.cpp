@@ -58,7 +58,7 @@ static RegisterCeresLogger *__init_at_load = new RegisterCeresLogger();
 namespace opencalibration
 {
 
-RelaxProblem::RelaxProblem() : huber_loss(new ceres::HuberLoss(M_PI_2))
+RelaxProblem::RelaxProblem() : huber_loss(new ceres::HuberLoss(10 * M_PI / 180))
 {
     _problemOptions.cost_function_ownership = ceres::TAKE_OWNERSHIP;
     _problemOptions.loss_function_ownership = ceres::DO_NOT_TAKE_OWNERSHIP;
