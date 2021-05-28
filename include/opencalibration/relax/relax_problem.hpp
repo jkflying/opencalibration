@@ -29,6 +29,27 @@ struct OptimizationPackage
     } source, dest;
 };
 
+struct TrackLink
+{
+    size_t edge_id, denormalized_match_index;
+
+    int operator<(const TrackLink& other)
+    {
+        return std::make_pair(edge_id, denormalized_match_index) < std::make_pair(other.edge_id, other.denormalized_match_index);
+    }
+
+    int operator==(const TrackLink &other)
+    {
+        return edge_id == other.edge_id && denormalized_match_index == other.denormalized_match_index;
+    }
+};
+
+struct FeatureTrack
+{
+    Eigen::Vector3d point;
+    std::vector<TrackLink> measurements;
+};
+
 class RelaxProblem
 {
   public:
@@ -43,6 +64,8 @@ class RelaxProblem
 
     void gridFilterMatchesPerImage(const MeasurementGraph &graph, const std::unordered_set<size_t> &edges_to_optimize);
 
+    void insertEdgeTracks(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge);
+    void compileEdgeTracks(const MeasurementGraph &graph);
     void addPointMeasurementsCost(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge);
 
     void addGlobalPlaneMeasurementsCost(const MeasurementGraph &graph, size_t edge_id,
@@ -73,6 +96,38 @@ class RelaxProblem
     // Surface models
     plane_3_corners<double> _global_plane;
     std::unordered_map<size_t, point_cloud> _edge_points;
+    std::vector<FeatureTrack, Eigen::aligned_allocator<FeatureTrack>> _tracks;
+
+    // temporary for building tracks
+    struct pair_xor_hash
+    {
+        template <class T1, class T2> std::size_t operator()(std::pair<T1, T2> const &pair) const
+        {
+            // XOR is good enough for (random edge_id) ^ (incremental index)
+            return pair.first ^ pair.second;
+        }
+    };
+
+    struct NodeIdFeatureIndex
+    {
+        size_t node_id, feature_index;
+        bool operator==(const NodeIdFeatureIndex& nifi) const
+        {
+            return nifi.node_id == node_id && nifi.feature_index == feature_index;
+        }
+    };
+
+    struct NodeIdFeatureIndexHash
+    {
+        size_t operator() (const NodeIdFeatureIndex& nifi) const
+        {
+            return nifi.node_id ^ nifi.feature_index;
+        }
+    };
+
+    std::unordered_map<NodeIdFeatureIndex, std::vector<std::pair<TrackLink, NodeIdFeatureIndex>>,
+                       NodeIdFeatureIndexHash>
+        _edge_id_feature_index_tracklinks;
 };
 
 } // namespace opencalibration

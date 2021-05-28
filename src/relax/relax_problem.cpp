@@ -2,7 +2,6 @@
 
 #include <opencalibration/relax/relax_cost_function.hpp>
 
-
 namespace opencalibration
 {
 
@@ -233,6 +232,71 @@ void RelaxProblem::addGlobalPlaneMeasurementsCost(const MeasurementGraph &graph,
     _edges_used.emplace(edge_id);
 }
 
+void RelaxProblem::insertEdgeTracks(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge)
+{
+    auto &points = _edge_points[edge_id];
+    points.reserve(edge.payload.inlier_matches.size());
+
+    OptimizationPackage pkg;
+    pkg.relations = &edge.payload;
+    pkg.source = nodeid2poseopt(graph, edge.getSource());
+    pkg.dest = nodeid2poseopt(graph, edge.getDest());
+
+    if (pkg.source.loc_ptr == nullptr || pkg.dest.loc_ptr == nullptr)
+        return;
+
+    for (size_t i = 0; i < edge.payload.inlier_matches.size(); i++)
+    {
+        const auto &inlier = edge.payload.inlier_matches[i];
+
+        auto map_index_1 = NodeIdFeatureIndex{edge.getSource(), inlier.feature_index_1};
+        auto map_index_2 = NodeIdFeatureIndex{edge.getDest(), inlier.feature_index_2};
+
+        _edge_id_feature_index_tracklinks[map_index_1].emplace_back(TrackLink{edge_id, i}, map_index_2);
+        _edge_id_feature_index_tracklinks[map_index_2].emplace_back(TrackLink{edge_id, i}, map_index_1);
+    }
+}
+void RelaxProblem::compileEdgeTracks(const MeasurementGraph &graph)
+{
+    std::vector<NodeIdFeatureIndex> visit_queue;
+    std::unordered_set<size_t> visited_nodes; // a single track can only have one measurement from each node
+
+    while (_edge_id_feature_index_tracklinks.size() > 0)
+    {
+        visit_queue.clear();
+        visited_nodes.clear();
+
+        FeatureTrack track;
+
+        // initialize, then depth first search for all connected nodes
+        visit_queue.push_back(_edge_id_feature_index_tracklinks.begin()->first);
+        while (visit_queue.size() > 0)
+        {
+            NodeIdFeatureIndex key = visit_queue.back();
+            visited_nodes.insert(key.node_id);
+            visit_queue.pop_back();
+
+            for (const auto &element : _edge_id_feature_index_tracklinks[key])
+            {
+                track.measurements.push_back(element.first);
+                if (visited_nodes.find(element.second.node_id) == visited_nodes.end())
+                {
+                    visit_queue.push_back(element.second);
+                }
+            }
+            _edge_id_feature_index_tracklinks.erase(key);
+        }
+
+        // get rid of duplicates, which (among other things) would unbalance 3D point location
+        std::sort(track.measurements.begin(), track.measurements.end());
+        track.measurements.erase(std::unique(track.measurements.begin(), track.measurements.end()), track.measurements.end());
+
+        // TODO: generate 3d point from track
+        (void)graph;
+
+        _tracks.push_back(std::move(track));
+    }
+}
 void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_t edge_id,
                                             const MeasurementGraph::Edge &edge)
 {
@@ -377,3 +441,4 @@ void RelaxProblem::solve()
 }
 
 } // namespace opencalibration
+
