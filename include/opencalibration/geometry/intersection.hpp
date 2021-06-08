@@ -15,6 +15,7 @@ namespace opencalibration
  *
  */
 std::pair<Eigen::Vector3d, double> rayIntersection(const ray_d &r1, const ray_d &r2);
+std::pair<Eigen::Vector3d, double> rayIntersection(const std::vector<ray_d> &rays);
 
 template <typename T> plane_norm_offset<T> cornerPlane2normOffsetPlane(const plane_3_corners<T> &p3)
 {

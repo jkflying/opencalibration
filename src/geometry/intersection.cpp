@@ -35,4 +35,21 @@ std::pair<Eigen::Vector3d, double> rayIntersection(const ray_d &r1, const ray_d 
     return std::make_pair(res, error);
 }
 
+std::pair<Eigen::Vector3d, double> rayIntersection(const std::vector<ray_d> &rays)
+{
+    Eigen::Vector3d res{NAN, NAN, NAN};
+    double error = NAN;
+
+    if (rays.size() > 1)
+    {
+        auto init = rayIntersection(rays[0], rays[1]);
+        res = init.first;
+        error = init.second;
+
+        // TODO: better optimization taking into account multiple rays and a robust cost function
+    }
+
+    return std::make_pair(res, error);
+}
+
 } // namespace opencalibration

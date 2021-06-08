@@ -257,7 +257,7 @@ void RelaxProblem::insertEdgeTracks(const MeasurementGraph &graph, size_t edge_i
         _edge_id_feature_index_tracklinks[map_index_2].emplace_back(TrackLink{edge_id, i}, map_index_1);
     }
 }
-void RelaxProblem::compileEdgeTracks(const MeasurementGraph &graph)
+void RelaxProblem::compileEdgeTracks()
 {
     std::vector<NodeIdFeatureIndex> visit_queue;
     std::unordered_set<size_t> visited_nodes; // a single track can only have one measurement from each node
@@ -293,12 +293,72 @@ void RelaxProblem::compileEdgeTracks(const MeasurementGraph &graph)
         track.measurements.erase(std::unique(track.measurements.begin(), track.measurements.end()),
                                  track.measurements.end());
 
-        // TODO: generate 3d point from track
-        (void)graph;
-
         _tracks.push_back(std::move(track));
     }
 }
+
+void RelaxProblem::addTrackCosts(const MeasurementGraph &graph)
+{
+    for (auto &track : _tracks)
+    {
+        // generate 3d point from track
+        // and add cost function against 3d point for each measurement
+        std::vector<ray_d> rays;
+        for (auto m : track.measurements)
+        {
+            auto *edge = graph.getEdge(m.edge_id);
+
+            OptimizationPackage pkg;
+            pkg.relations = &edge->payload;
+            pkg.source = nodeid2poseopt(graph, edge->getSource());
+            pkg.dest = nodeid2poseopt(graph, edge->getDest());
+
+            const auto &source_model = graph.getNode(edge->getSource())->payload.model;
+            const auto &dest_model = graph.getNode(edge->getDest())->payload.model;
+
+            if (pkg.source.loc_ptr == nullptr || pkg.dest.loc_ptr == nullptr)
+                continue;
+
+            const feature_match_denormalized &inlier = edge->payload.inlier_matches[m.denormalized_match_index];
+
+            Eigen::Vector3d source_ray = (*pkg.source.rot_ptr) * image_to_3d(inlier.pixel_1, source_model);
+            Eigen::Vector3d dest_ray = (*pkg.dest.rot_ptr) * image_to_3d(inlier.pixel_2, dest_model);
+            rays.emplace_back(ray_d{source_ray, *pkg.source.loc_ptr});
+            rays.emplace_back(ray_d{dest_ray, *pkg.dest.loc_ptr});
+
+            double *datas[2] = {pkg.source.rot_ptr->coeffs().data(), pkg.dest.rot_ptr->coeffs().data()};
+
+            using CostFunction =
+                ceres::AutoDiffCostFunction<PixelErrorCost, PixelErrorCost::NUM_RESIDUALS,
+                                            PixelErrorCost::NUM_PARAMETERS_1, PixelErrorCost::NUM_PARAMETERS_2>;
+
+            std::unique_ptr<CostFunction> func[2]{
+                std::make_unique<CostFunction>(new PixelErrorCost(*pkg.source.loc_ptr, source_model, inlier.pixel_1)),
+                std::make_unique<CostFunction>(new PixelErrorCost(*pkg.dest.loc_ptr, dest_model, inlier.pixel_2))};
+
+            for (int i = 0; i < 2; i++)
+            {
+                _problem->AddResidualBlock(func[i].release(), huber_loss.get(), datas[i], track.point.data());
+            }
+
+            _problem->SetParameterization(datas[0], &_quat_parameterization);
+            _problem->SetParameterization(datas[1], &_quat_parameterization);
+
+            if (!pkg.source.optimize)
+            {
+                _problem->SetParameterBlockConstant(datas[0]);
+            }
+            if (!pkg.dest.optimize)
+            {
+                _problem->SetParameterBlockConstant(datas[1]);
+            }
+        }
+
+        std::pair<Eigen::Vector3d, double> point_error = rayIntersection(rays);
+        track.point = point_error.first;
+    }
+}
+
 void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_t edge_id,
                                             const MeasurementGraph::Edge &edge)
 {

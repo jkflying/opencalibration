@@ -1,5 +1,7 @@
-#include <glog/log_severity.h>
+// clang-format off
 #include <glog/logging.h>
+#include <glog/log_severity.h>
+// clang-format on
 #include <spdlog/spdlog.h>
 
 namespace
