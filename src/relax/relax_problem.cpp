@@ -111,7 +111,8 @@ void RelaxProblem::gridFilterMatchesPerImage(const MeasurementGraph &graph,
             // make 3D intersection, add it to `points`
             Eigen::Vector3d source_ray = source_rot * image_to_3d(inlier.pixel_1, source_model);
             Eigen::Vector3d dest_ray = dest_rot * image_to_3d(inlier.pixel_2, dest_model);
-            auto intersection = rayIntersection(*pkg.source.loc_ptr, source_ray, *pkg.dest.loc_ptr, dest_ray);
+            auto intersection =
+                rayIntersection(ray_d{source_ray, *pkg.source.loc_ptr}, ray_d{dest_ray, *pkg.dest.loc_ptr});
 
             const double score = intersection.second < 0 ? 0. : 1. / (1. + intersection.second);
             if (score > 0)
@@ -289,7 +290,8 @@ void RelaxProblem::compileEdgeTracks(const MeasurementGraph &graph)
 
         // get rid of duplicates, which (among other things) would unbalance 3D point location
         std::sort(track.measurements.begin(), track.measurements.end());
-        track.measurements.erase(std::unique(track.measurements.begin(), track.measurements.end()), track.measurements.end());
+        track.measurements.erase(std::unique(track.measurements.begin(), track.measurements.end()),
+                                 track.measurements.end());
 
         // TODO: generate 3d point from track
         (void)graph;
@@ -335,7 +337,7 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
         // make 3D intersection, add it to `points`
         Eigen::Vector3d source_ray = source_rot * image_to_3d(inlier.pixel_1, source_model);
         Eigen::Vector3d dest_ray = dest_rot * image_to_3d(inlier.pixel_2, dest_model);
-        auto intersection = rayIntersection(*pkg.source.loc_ptr, source_ray, *pkg.dest.loc_ptr, dest_ray);
+        auto intersection = rayIntersection(ray_d{source_ray, *pkg.source.loc_ptr}, ray_d{dest_ray, *pkg.dest.loc_ptr});
         points.emplace_back(intersection.first);
 
         // add cost functions for this 3D point from both the source and dest camera
@@ -441,4 +443,3 @@ void RelaxProblem::solve()
 }
 
 } // namespace opencalibration
-

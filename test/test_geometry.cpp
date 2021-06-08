@@ -10,7 +10,7 @@ TEST(geometry, ray_intersection_nan_infinite_intersection)
     Eigen::Vector3d center(0, 0, 0), normal(0, 0, 1);
 
     // WHEN: there is an infinite intersection because it is with itself
-    auto res = rayIntersection(center, normal, center, normal);
+    auto res = rayIntersection(ray_d{normal, center}, ray_d{normal, center});
 
     // THEN: the results should be NaN
     EXPECT_TRUE(res.first.array().isNaN().all());
@@ -23,7 +23,7 @@ TEST(geometry, ray_intersection_never)
     Eigen::Vector3d center1(0, 0, 0), center2(1, 0, 0), normal(0, 0, 1);
 
     // WHEN: there is no intersection because it is parallel forever
-    auto res = rayIntersection(center1, normal, center2, normal);
+    auto res = rayIntersection(ray_d{normal, center1}, ray_d{normal, center2});
 
     // THEN: the results should be NaN
     EXPECT_TRUE(res.first.array().isNaN().all());
@@ -37,7 +37,7 @@ TEST(geometry, ray_intersection_exact_at_origin)
     Eigen::Vector3d point2(0, 10, 0), normal2(0, 1, 0);
 
     // WHEN: there is a ray intersection
-    auto res = rayIntersection(point1, normal1, point2, normal2);
+    auto res = rayIntersection(ray_d{normal1, point1}, ray_d{normal2, point2});
 
     // THEN: the results should be (0,0,0)
     EXPECT_DOUBLE_EQ((res.first - Eigen::Vector3d(0, 0, 0)).norm(), 0) << res.first.transpose();
@@ -51,7 +51,7 @@ TEST(geometry, ray_intersection_offset_from_origin)
     Eigen::Vector3d point2(1, 1, 0), normal2(0, 1, 0);
 
     // WHEN: there is a ray intersection
-    auto res = rayIntersection(point1, normal1, point2, normal2);
+    auto res = rayIntersection(ray_d{normal1, point1}, ray_d{normal2, point2});
 
     // THEN: the results should be (1,0,0)
     EXPECT_DOUBLE_EQ((res.first - Eigen::Vector3d(1, 0, 0)).norm(), 0) << res.first.transpose();
@@ -65,7 +65,7 @@ TEST(geometry, ray_intersection_inexact)
     Eigen::Vector3d point2(0, 1, 0), normal2(0, 1, 0);
 
     // WHEN: there is a ray intersection
-    auto res = rayIntersection(point1, normal1, point2, normal2);
+    auto res = rayIntersection(ray_d{normal1, point1}, ray_d{normal2, point2});
 
     // THEN: the results should be (1,0,0), and with a distance of 2, behind the normals so negative
     EXPECT_DOUBLE_EQ((res.first - Eigen::Vector3d(1, 0, 0)).norm(), 0) << res.first.transpose();
@@ -74,7 +74,7 @@ TEST(geometry, ray_intersection_inexact)
     // WHEN: we reverse the normals and try again
     normal1 *= -1;
     normal2 *= -1;
-    res = rayIntersection(point1, normal1, point2, normal2);
+    res = rayIntersection(ray_d{normal1, point1}, ray_d{normal2, point2});
 
     // THEN: the results should be (1,0,0), and with a distance of 2, in front of the normal so positive
     EXPECT_DOUBLE_EQ((res.first - Eigen::Vector3d(1, 0, 0)).norm(), 0) << res.first.transpose();
@@ -105,7 +105,7 @@ TEST(geometry, ray_plane_intersection)
     pno.norm << 0, 0, 1;
     pno.offset << 5, 5, 2;
 
-    ray r;
+    ray_d r;
     r.dir << 0, 0, 0.5;
     r.offset << 3, 3, -10;
 

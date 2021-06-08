@@ -1,5 +1,5 @@
-#include <glog/logging.h>
 #include <glog/log_severity.h>
+#include <glog/logging.h>
 #include <spdlog/spdlog.h>
 
 namespace

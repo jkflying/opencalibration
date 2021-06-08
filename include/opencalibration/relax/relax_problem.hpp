@@ -33,9 +33,10 @@ struct TrackLink
 {
     size_t edge_id, denormalized_match_index;
 
-    int operator<(const TrackLink& other)
+    int operator<(const TrackLink &other)
     {
-        return std::make_pair(edge_id, denormalized_match_index) < std::make_pair(other.edge_id, other.denormalized_match_index);
+        return std::make_pair(edge_id, denormalized_match_index) <
+               std::make_pair(other.edge_id, other.denormalized_match_index);
     }
 
     int operator==(const TrackLink &other)
@@ -46,7 +47,7 @@ struct TrackLink
 
 struct FeatureTrack
 {
-    Eigen::Vector3d point;
+    Eigen::Vector3d point{NAN, NAN, NAN};
     std::vector<TrackLink> measurements;
 };
 
@@ -99,19 +100,10 @@ class RelaxProblem
     std::vector<FeatureTrack, Eigen::aligned_allocator<FeatureTrack>> _tracks;
 
     // temporary for building tracks
-    struct pair_xor_hash
-    {
-        template <class T1, class T2> std::size_t operator()(std::pair<T1, T2> const &pair) const
-        {
-            // XOR is good enough for (random edge_id) ^ (incremental index)
-            return pair.first ^ pair.second;
-        }
-    };
-
     struct NodeIdFeatureIndex
     {
         size_t node_id, feature_index;
-        bool operator==(const NodeIdFeatureIndex& nifi) const
+        bool operator==(const NodeIdFeatureIndex &nifi) const
         {
             return nifi.node_id == node_id && nifi.feature_index == feature_index;
         }
@@ -119,12 +111,11 @@ class RelaxProblem
 
     struct NodeIdFeatureIndexHash
     {
-        size_t operator() (const NodeIdFeatureIndex& nifi) const
+        size_t operator()(const NodeIdFeatureIndex &nifi) const
         {
             return nifi.node_id ^ nifi.feature_index;
         }
     };
-
     std::unordered_map<NodeIdFeatureIndex, std::vector<std::pair<TrackLink, NodeIdFeatureIndex>>,
                        NodeIdFeatureIndexHash>
         _edge_id_feature_index_tracklinks;
