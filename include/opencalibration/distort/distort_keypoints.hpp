@@ -5,6 +5,8 @@
 #include <opencalibration/types/feature_2d.hpp>
 #include <opencalibration/types/feature_match.hpp>
 
+#include <eigen3/Eigen/Geometry>
+
 #include <vector>
 
 namespace opencalibration
@@ -25,8 +27,7 @@ Eigen::Matrix<T, 2, 1> image_from_3d(const Eigen::Matrix<T, 3, 1> &ray, const Di
     switch (model.projection_type)
     {
     case ProjectionType::PLANAR: {
-        Eigen::Matrix<T, 2, 1> on_plane(ray.x() / ray.z(), ray.y() / ray.z());
-        pixel_location = on_plane * model.focal_length_pixels + model.principle_point;
+        pixel_location = ray.hnormalized() * model.focal_length_pixels + model.principle_point;
         break;
     }
     case ProjectionType::UNKNOWN:

@@ -81,20 +81,28 @@ struct relax_ : public ::testing::Test
     {
         for (size_t i = 0; i < 3; i++)
         {
-            camera_relations relation;
-            size_t index[2] = {i, (i + 1) % 3};
-            size_t counter = 0;
             for (const Eigen::Vector3d &p : points)
             {
-                counter++;
+                Eigen::Vector3d ray = np[i].orientation.inverse() * (np[i].position - p).normalized();
+                Eigen::Vector2d pixel = image_from_3d(ray, model);
+                feature_2d feat;
+                feat.location = pixel;
+                graph.getNode(np[i].node_id)->payload.features.emplace_back(feat);
+            }
+        }
+
+        for (size_t i = 0; i < 3; i++)
+        {
+            camera_relations relation;
+            size_t index[2] = {i, (i + 1) % 3};
+            for (size_t counter = 0; counter < points.size(); counter++)
+            {
                 Eigen::Vector2d pixel[2];
                 for (int j = 0; j < 2; j++)
                 {
-                    Eigen::Vector3d ray = np[index[j]].orientation.inverse() * (np[index[j]].position - p).normalized();
-                    pixel[j] = image_from_3d(ray, model);
+                    pixel[j] = graph.getNode(np[index[j]].node_id)->payload.features[counter].location;
                 }
-                relation.inlier_matches.emplace_back(
-                    feature_match_denormalized{pixel[0], pixel[1], counter, 1000 + counter});
+                relation.inlier_matches.emplace_back(feature_match_denormalized{pixel[0], pixel[1], counter, counter});
             }
             edge_id[i] = graph.addEdge(std::move(relation), id[index[0]], id[index[1]]);
         }

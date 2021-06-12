@@ -28,27 +28,26 @@ struct OptimizationPackage
         size_t node_id = 0;
     } source, dest;
 };
-
-struct TrackLink
+struct NodeIdFeatureIndex
 {
-    size_t edge_id, denormalized_match_index;
-
-    int operator<(const TrackLink &other)
+    size_t node_id, feature_index;
+    bool operator==(const NodeIdFeatureIndex &nifi) const
     {
-        return std::make_pair(edge_id, denormalized_match_index) <
-               std::make_pair(other.edge_id, other.denormalized_match_index);
+        return nifi.node_id == node_id && nifi.feature_index == feature_index;
     }
 
-    int operator==(const TrackLink &other)
+    bool operator<(const NodeIdFeatureIndex &nifi) const
     {
-        return edge_id == other.edge_id && denormalized_match_index == other.denormalized_match_index;
+        return std::make_pair(node_id, feature_index) < std::make_pair(nifi.node_id, nifi.feature_index);
     }
 };
+
 
 struct FeatureTrack
 {
     Eigen::Vector3d point{NAN, NAN, NAN};
-    std::vector<TrackLink> measurements;
+    double error {NAN};
+    std::vector<NodeIdFeatureIndex> measurements;
 };
 
 class RelaxProblem
@@ -101,15 +100,6 @@ class RelaxProblem
     std::vector<FeatureTrack, Eigen::aligned_allocator<FeatureTrack>> _tracks;
 
     // temporary for building tracks
-    struct NodeIdFeatureIndex
-    {
-        size_t node_id, feature_index;
-        bool operator==(const NodeIdFeatureIndex &nifi) const
-        {
-            return nifi.node_id == node_id && nifi.feature_index == feature_index;
-        }
-    };
-
     struct NodeIdFeatureIndexHash
     {
         size_t operator()(const NodeIdFeatureIndex &nifi) const
@@ -117,9 +107,7 @@ class RelaxProblem
             return nifi.node_id ^ nifi.feature_index;
         }
     };
-    std::unordered_map<NodeIdFeatureIndex, std::vector<std::pair<TrackLink, NodeIdFeatureIndex>>,
-                       NodeIdFeatureIndexHash>
-        _edge_id_feature_index_tracklinks;
+    std::unordered_map<NodeIdFeatureIndex, std::vector<NodeIdFeatureIndex>, NodeIdFeatureIndexHash> _node_id_feature_index_tracklinks;
 };
 
 } // namespace opencalibration

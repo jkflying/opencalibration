@@ -29,7 +29,7 @@ template <typename T> class GridFilter
         _map[index].push_back(std::make_pair(score, value));
     }
 
-    std::unordered_set<T> getBestMeasurementsPerCell()
+    std::unordered_set<T> getBestMeasurementsPerCell() const
     {
         std::unordered_set<T> best_measurements;
         best_measurements.reserve(_map.size()); // 1 per bucket
