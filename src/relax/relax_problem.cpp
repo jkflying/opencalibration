@@ -365,7 +365,6 @@ void RelaxProblem::addTrackCosts(const MeasurementGraph &graph)
             continue;
         }
 
-
         for (const auto &nifi : track.measurements)
         {
             OptimizationPackage::PoseOpt po = nodeid2poseopt(graph, nifi.node_id);
@@ -375,7 +374,6 @@ void RelaxProblem::addTrackCosts(const MeasurementGraph &graph)
             const auto &image = graph.getNode(nifi.node_id)->payload;
             double *data = po.rot_ptr->coeffs().data();
 
-
             using CostFunction =
                 ceres::AutoDiffCostFunction<PixelErrorCost, PixelErrorCost::NUM_RESIDUALS,
                                             PixelErrorCost::NUM_PARAMETERS_1, PixelErrorCost::NUM_PARAMETERS_2>;
@@ -383,8 +381,8 @@ void RelaxProblem::addTrackCosts(const MeasurementGraph &graph)
             std::unique_ptr<CostFunction> func = std::make_unique<CostFunction>(
                 new PixelErrorCost(*po.loc_ptr, image.model, image.features[nifi.feature_index].location));
 
-            Eigen::Vector2d res {NAN, NAN};
-            const double * args[2] = {data, track.point.data()};
+            Eigen::Vector2d res{NAN, NAN};
+            const double *args[2] = {data, track.point.data()};
             func->Evaluate(args, res.data(), nullptr);
 
             if (!res.array().allFinite())

@@ -42,11 +42,10 @@ struct NodeIdFeatureIndex
     }
 };
 
-
 struct FeatureTrack
 {
     Eigen::Vector3d point{NAN, NAN, NAN};
-    double error {NAN};
+    double error{NAN};
     std::vector<NodeIdFeatureIndex> measurements;
 };
 
@@ -107,7 +106,8 @@ class RelaxProblem
             return nifi.node_id ^ nifi.feature_index;
         }
     };
-    std::unordered_map<NodeIdFeatureIndex, std::vector<NodeIdFeatureIndex>, NodeIdFeatureIndexHash> _node_id_feature_index_tracklinks;
+    std::unordered_map<NodeIdFeatureIndex, std::vector<NodeIdFeatureIndex>, NodeIdFeatureIndexHash>
+        _node_id_feature_index_tracklinks;
 };
 
 } // namespace opencalibration

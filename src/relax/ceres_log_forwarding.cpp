@@ -50,5 +50,5 @@ struct RegisterCeresLogger
     }
 };
 
-static RegisterCeresLogger* __init_at_load = new RegisterCeresLogger("opencalibration");
+static RegisterCeresLogger *__init_at_load = new RegisterCeresLogger("opencalibration");
 } // namespace
