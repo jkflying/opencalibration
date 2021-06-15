@@ -22,6 +22,66 @@ RelaxProblem::RelaxProblem() : huber_loss(new ceres::HuberLoss(10 * M_PI / 180))
     solverOptions.logging_type = ceres::SILENT;
 }
 
+void RelaxProblem::setupDecompositionProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                                             const std::unordered_set<size_t> &edges_to_optimize)
+{
+    initialize(nodes);
+    solverOptions.initial_trust_region_radius = 0.1;
+
+    for (size_t edge_id : edges_to_optimize)
+    {
+        const MeasurementGraph::Edge *edge = graph.getEdge(edge_id);
+        if (edge != nullptr && shouldAddEdgeToOptimization(edges_to_optimize, edge_id))
+        {
+            addRelationCost(graph, edge_id, *edge);
+        }
+    }
+
+    addDownwardsPrior();
+}
+
+void RelaxProblem::setupGroundPlaneProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                                           const std::unordered_set<size_t> &edges_to_optimize)
+{
+    initialize(nodes);
+    initializeGroundPlane();
+    huber_loss.reset(new ceres::HuberLoss(1 * M_PI / 180));
+    gridFilterMatchesPerImage(graph, edges_to_optimize);
+
+    for (size_t edge_id : edges_to_optimize)
+    {
+        const MeasurementGraph::Edge *edge = graph.getEdge(edge_id);
+        if (edge != nullptr && shouldAddEdgeToOptimization(edges_to_optimize, edge_id))
+        {
+            addGlobalPlaneMeasurementsCost(graph, edge_id, *edge);
+        }
+    }
+}
+
+void RelaxProblem::setup3dPointProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                                       const std::unordered_set<size_t> &edges_to_optimize)
+{
+    initialize(nodes);
+    huber_loss.reset(new ceres::HuberLoss(10));
+
+    gridFilterMatchesPerImage(graph, edges_to_optimize);
+
+    for (size_t edge_id : edges_to_optimize)
+    {
+        const MeasurementGraph::Edge *edge = graph.getEdge(edge_id);
+        if (edge != nullptr && shouldAddEdgeToOptimization(edges_to_optimize, edge_id))
+        {
+            addPointMeasurementsCost(graph, edge_id, *edge);
+            //             insertEdgeTracks(graph, edge_id, *edge);
+        }
+    }
+    //     compileEdgeTracks();
+    //     addTrackCosts(graph);
+
+    solverOptions.max_num_iterations = 300;
+    solverOptions.linear_solver_type = ceres::SPARSE_SCHUR;
+}
+
 void RelaxProblem::initialize(std::vector<NodePose> &nodes)
 {
     _nodes_to_optimize.reserve(nodes.size());
@@ -170,7 +230,7 @@ void RelaxProblem::addRelationCost(const MeasurementGraph &graph, size_t edge_id
 void RelaxProblem::addGlobalPlaneMeasurementsCost(const MeasurementGraph &graph, size_t edge_id,
                                                   const MeasurementGraph::Edge &edge)
 {
-    auto &points = _edge_points[edge_id];
+    auto &points = _edge_tracks[edge_id];
     points.reserve(edge.payload.inlier_matches.size());
 
     OptimizationPackage pkg;
@@ -235,7 +295,7 @@ void RelaxProblem::addGlobalPlaneMeasurementsCost(const MeasurementGraph &graph,
 
 void RelaxProblem::insertEdgeTracks(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge)
 {
-    auto &points = _edge_points[edge_id];
+    auto &points = _edge_tracks[edge_id];
     points.reserve(edge.payload.inlier_matches.size());
 
     OptimizationPackage pkg;
@@ -405,7 +465,7 @@ void RelaxProblem::addTrackCosts(const MeasurementGraph &graph)
 void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_t edge_id,
                                             const MeasurementGraph::Edge &edge)
 {
-    auto &points = _edge_points[edge_id];
+    auto &points = _edge_tracks[edge_id];
     points.reserve(edge.payload.inlier_matches.size());
 
     OptimizationPackage pkg;
@@ -438,7 +498,12 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
         Eigen::Vector3d source_ray = source_rot * image_to_3d(inlier.pixel_1, source_model);
         Eigen::Vector3d dest_ray = dest_rot * image_to_3d(inlier.pixel_2, dest_model);
         auto intersection = rayIntersection(ray_d{source_ray, *pkg.source.loc_ptr}, ray_d{dest_ray, *pkg.dest.loc_ptr});
-        points.emplace_back(intersection.first);
+        NodeIdFeatureIndex nifi[2];
+        nifi[0].node_id = edge.getSource();
+        nifi[0].feature_index = inlier.feature_index_1;
+        nifi[1].node_id = edge.getDest();
+        nifi[1].feature_index = inlier.feature_index_2;
+        points.emplace_back(FeatureTrack{intersection.first, intersection.second, {nifi[0], nifi[1]}});
 
         // add cost functions for this 3D point from both the source and dest camera
         using CostFunction =
@@ -451,7 +516,7 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
 
         for (int i = 0; i < 2; i++)
         {
-            _problem->AddResidualBlock(func[i].release(), huber_loss.get(), datas[i], points.back().data());
+            _problem->AddResidualBlock(func[i].release(), huber_loss.get(), datas[i], points.back().point.data());
         }
         points_added = true;
     }

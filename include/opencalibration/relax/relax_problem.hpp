@@ -53,7 +53,18 @@ class RelaxProblem
 {
   public:
     RelaxProblem();
+    void setupDecompositionProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                                   const std::unordered_set<size_t> &edges_to_optimize);
 
+    void setupGroundPlaneProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                                 const std::unordered_set<size_t> &edges_to_optimize);
+
+    void setup3dPointProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                             const std::unordered_set<size_t> &edges_to_optimize);
+
+    void solve();
+
+  protected:
     void initialize(std::vector<NodePose> &nodes);
     bool shouldAddEdgeToOptimization(const std::unordered_set<size_t> &edges_to_optimize, size_t edge_id);
 
@@ -75,12 +86,9 @@ class RelaxProblem
 
     void addDownwardsPrior();
 
-    void solve();
-
     ceres::Solver::Options solverOptions;
     std::unique_ptr<ceres::HuberLoss> huber_loss;
 
-  private:
     ceres::Problem::Options _problemOptions;
     ceres::EigenQuaternionParameterization _quat_parameterization;
     std::unique_ptr<ceres::Problem> _problem;
@@ -94,16 +102,17 @@ class RelaxProblem
     std::unordered_set<size_t> _edges_used;
 
     // Surface models
+    using track_vec = std::vector<FeatureTrack, Eigen::aligned_allocator<FeatureTrack>>;
     plane_3_corners<double> _global_plane;
-    std::unordered_map<size_t, point_cloud> _edge_points;
-    std::vector<FeatureTrack, Eigen::aligned_allocator<FeatureTrack>> _tracks;
+    std::unordered_map<size_t, track_vec> _edge_tracks;
+    track_vec _tracks;
 
     // temporary for building tracks
     struct NodeIdFeatureIndexHash
     {
         size_t operator()(const NodeIdFeatureIndex &nifi) const
         {
-            return nifi.node_id ^ nifi.feature_index;
+            return nifi.node_id ^ nifi.feature_index; // random number XOR incrementing number is safe
         }
     };
     std::unordered_map<NodeIdFeatureIndex, std::vector<NodeIdFeatureIndex>, NodeIdFeatureIndexHash>

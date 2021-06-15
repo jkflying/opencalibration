@@ -1,6 +1,8 @@
+#include <jk/KDTree.h>
 #include <opencalibration/distort/distort_keypoints.hpp>
 #include <opencalibration/relax/relax.hpp>
 #include <opencalibration/relax/relax_cost_function.hpp>
+#include <opencalibration/relax/relax_problem.hpp>
 #include <opencalibration/types/measurement_graph.hpp>
 #include <opencalibration/types/node_pose.hpp>
 #include <opencalibration/types/point_cloud.hpp>
@@ -142,6 +144,16 @@ struct relax_ : public ::testing::Test
         np[0].orientation *= Eigen::Quaterniond(Eigen::AngleAxisd(noise[0], Eigen::Vector3d::UnitY()));
         np[1].orientation *= Eigen::Quaterniond(Eigen::AngleAxisd(noise[1], Eigen::Vector3d::UnitZ()));
         np[2].orientation *= Eigen::Quaterniond(Eigen::AngleAxisd(noise[2], Eigen::Vector3d::UnitX()));
+    }
+
+    void add_ori_noise_graph(std::array<double, 3> noise)
+    {
+        graph.getNode(id[0])->payload.orientation *=
+            Eigen::Quaterniond(Eigen::AngleAxisd(noise[0], Eigen::Vector3d::UnitY()));
+        graph.getNode(id[1])->payload.orientation *=
+            Eigen::Quaterniond(Eigen::AngleAxisd(noise[1], Eigen::Vector3d::UnitZ()));
+        graph.getNode(id[2])->payload.orientation *=
+            Eigen::Quaterniond(Eigen::AngleAxisd(noise[2], Eigen::Vector3d::UnitX()));
     }
 };
 
@@ -342,4 +354,104 @@ TEST_F(relax_, measurement_3_images_plane)
         EXPECT_LT(Eigen::AngleAxisd(np[i].orientation.inverse() * ground_ori[i]).angle(), 1e-7)
             << i << ": " << np[i].orientation.coeffs().transpose() << std::endl
             << "g: " << ground_ori[i].coeffs().transpose();
+}
+
+class TestRelaxProblem : public RelaxProblem
+{
+  public:
+    const std::unordered_map<size_t, track_vec> &test_get_edge_tracks() const
+    {
+        return _edge_tracks;
+    }
+
+    const ceres::Solver::Summary &test_get_solver_summary() const
+    {
+        return _summary;
+    }
+};
+
+TEST_F(relax_, measurement_3_images_points_internals_point_triangulation_exact)
+{
+    // GIVEN: a graph, 3 images with edges between them all, with zero noise
+    init_cameras();
+    auto points = generate_3d_points();
+    add_point_measurements(points);
+
+    // AND: some noise in the graph, since we shouldn't be using those orientations anyways...
+    add_ori_noise_graph({-0.1, 0.1, 0.1});
+
+    // WHEN: we set up the problem
+    std::unordered_set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
+    TestRelaxProblem rp;
+    rp.setup3dPointProblem(graph, np, edges);
+
+    auto vec2arr = [](const Eigen::Vector3d &vec) { return std::array<double, 3>{vec.x(), vec.y(), vec.z()}; };
+
+    // THEN: the 3D points should be in the correct locations
+    jk::tree::KDTree<size_t, 3> points_tree;
+    for (size_t i = 0; i < points.size(); i++)
+        points_tree.addPoint(vec2arr(points[i]), i);
+
+    for (const auto &edge_tracks : rp.test_get_edge_tracks())
+    {
+        for (const auto &track : edge_tracks.second)
+        {
+            auto nearest = points_tree.search(vec2arr(track.point));
+            EXPECT_LT(nearest.distance, 1e-8);
+        }
+    }
+
+    // WHEN: we run the solver
+    rp.solve();
+
+    // THEN: it should exit after 1 iteration ( + 1 for numerical issues)
+    EXPECT_LE(rp.test_get_solver_summary().iterations.size(), 2);
+    EXPECT_LT(rp.test_get_solver_summary().initial_cost, 1e-10);
+    EXPECT_LT(rp.test_get_solver_summary().final_cost, 1e-10);
+}
+
+TEST_F(relax_, measurement_3_images_points_internals_point_triangulation_noise)
+{
+    // GIVEN: a graph, 3 images with edges between them all, with some noise
+    init_cameras();
+    auto points = generate_3d_points();
+    auto vec2arr = [](const Eigen::Vector3d &vec) { return std::array<double, 3>{vec.x(), vec.y(), vec.z()}; };
+    jk::tree::KDTree<size_t, 3> points_tree;
+    for (size_t i = 0; i < points.size(); i++)
+        points_tree.addPoint(vec2arr(points[i]), i);
+    add_point_measurements(points);
+    add_ori_noise({-0.1, 0.1, 0.1});
+
+    // WHEN: we set up the problem and
+    std::unordered_set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
+    TestRelaxProblem rp;
+    rp.setup3dPointProblem(graph, np, edges);
+
+    // THEN: the 3D points shouldn't be well triangulated
+    for (const auto &edge_tracks : rp.test_get_edge_tracks())
+    {
+        for (const auto &track : edge_tracks.second)
+        {
+            auto nearest = points_tree.search(vec2arr(track.point));
+            EXPECT_GT(nearest.distance, 1);
+        }
+    }
+
+    // WHEN: we solve the problem
+    rp.solve();
+
+    // THEN: the 3D points should be in the correct locations
+    for (const auto &edge_tracks : rp.test_get_edge_tracks())
+    {
+        for (const auto &track : edge_tracks.second)
+        {
+            auto nearest = points_tree.search(vec2arr(track.point));
+            EXPECT_LT(nearest.distance, 1e-8);
+        }
+    }
+
+    // AND: it took many iterations, and started with lots of error, but it minimizes to almost zero error
+    EXPECT_GT(rp.test_get_solver_summary().iterations.size(), 10);
+    EXPECT_GT(rp.test_get_solver_summary().initial_cost, 1e4);
+    EXPECT_LT(rp.test_get_solver_summary().final_cost, 1e-10);
 }
