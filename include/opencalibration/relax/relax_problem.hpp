@@ -3,6 +3,7 @@
 #include <opencalibration/distort/distort_keypoints.hpp>
 #include <opencalibration/geometry/intersection.hpp>
 #include <opencalibration/relax/grid_filter.hpp>
+#include <opencalibration/types/feature_track.hpp>
 #include <opencalibration/types/measurement_graph.hpp>
 #include <opencalibration/types/node_pose.hpp>
 #include <opencalibration/types/plane.hpp>
@@ -28,26 +29,6 @@ struct OptimizationPackage
         size_t node_id = 0;
     } source, dest;
 };
-struct NodeIdFeatureIndex
-{
-    size_t node_id, feature_index;
-    bool operator==(const NodeIdFeatureIndex &nifi) const
-    {
-        return nifi.node_id == node_id && nifi.feature_index == feature_index;
-    }
-
-    bool operator<(const NodeIdFeatureIndex &nifi) const
-    {
-        return std::make_pair(node_id, feature_index) < std::make_pair(nifi.node_id, nifi.feature_index);
-    }
-};
-
-struct FeatureTrack
-{
-    Eigen::Vector3d point{NAN, NAN, NAN};
-    double error{NAN};
-    std::vector<NodeIdFeatureIndex> measurements;
-};
 
 class RelaxProblem
 {
@@ -61,6 +42,9 @@ class RelaxProblem
 
     void setup3dPointProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                              const std::unordered_set<size_t> &edges_to_optimize);
+
+    void setup3dTracksProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                              const std::unordered_set<size_t> &edges_to_optimize);
 
     void solve();
 
@@ -108,15 +92,7 @@ class RelaxProblem
     track_vec _tracks;
 
     // temporary for building tracks
-    struct NodeIdFeatureIndexHash
-    {
-        size_t operator()(const NodeIdFeatureIndex &nifi) const
-        {
-            return nifi.node_id ^ nifi.feature_index; // random number XOR incrementing number is safe
-        }
-    };
-    std::unordered_map<NodeIdFeatureIndex, std::vector<NodeIdFeatureIndex>, NodeIdFeatureIndexHash>
-        _node_id_feature_index_tracklinks;
+    std::unordered_map<NodeIdFeatureIndex, std::vector<NodeIdFeatureIndex>> _node_id_feature_index_tracklinks;
 };
 
 } // namespace opencalibration

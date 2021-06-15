@@ -1,6 +1,6 @@
 #include <opencalibration/relax/relax_problem.hpp>
 
-#include <opencalibration/relax/relax_cost_function.hpp>
+#include <opencalibration/relax/autodiff_cost_function.hpp>
 
 namespace opencalibration
 {
@@ -72,11 +72,29 @@ void RelaxProblem::setup3dPointProblem(const MeasurementGraph &graph, std::vecto
         if (edge != nullptr && shouldAddEdgeToOptimization(edges_to_optimize, edge_id))
         {
             addPointMeasurementsCost(graph, edge_id, *edge);
-            //             insertEdgeTracks(graph, edge_id, *edge);
         }
     }
-    //     compileEdgeTracks();
-    //     addTrackCosts(graph);
+
+    solverOptions.max_num_iterations = 300;
+    solverOptions.linear_solver_type = ceres::SPARSE_SCHUR;
+}
+
+void RelaxProblem::setup3dTracksProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                                        const std::unordered_set<size_t> &edges_to_optimize)
+{
+    initialize(nodes);
+    huber_loss.reset(new ceres::HuberLoss(10));
+
+    for (size_t edge_id : edges_to_optimize)
+    {
+        const MeasurementGraph::Edge *edge = graph.getEdge(edge_id);
+        if (edge != nullptr && shouldAddEdgeToOptimization(edges_to_optimize, edge_id))
+        {
+            insertEdgeTracks(graph, edge_id, *edge);
+        }
+    }
+    compileEdgeTracks();
+    addTrackCosts(graph);
 
     solverOptions.max_num_iterations = 300;
     solverOptions.linear_solver_type = ceres::SPARSE_SCHUR;
@@ -202,12 +220,8 @@ void RelaxProblem::addRelationCost(const MeasurementGraph &graph, size_t edge_id
     if (!pkg.source.loc_ptr->allFinite() || !pkg.dest.loc_ptr->allFinite())
         return;
 
-    using CostFunction =
-        ceres::AutoDiffCostFunction<MultiDecomposedRotationCost, MultiDecomposedRotationCost::NUM_RESIDUALS,
-                                    MultiDecomposedRotationCost::NUM_PARAMETERS_1,
-                                    MultiDecomposedRotationCost::NUM_PARAMETERS_2>;
-    std::unique_ptr<CostFunction> func(
-        new CostFunction(new MultiDecomposedRotationCost(*pkg.relations, pkg.source.loc_ptr, pkg.dest.loc_ptr)));
+    std::unique_ptr<ceres::CostFunction> func(
+        newAutoDiffMultiDecomposedRotationCost(*pkg.relations, pkg.source.loc_ptr, pkg.dest.loc_ptr));
 
     double *datas[2] = {pkg.source.rot_ptr->coeffs().data(), pkg.dest.rot_ptr->coeffs().data()};
 
@@ -263,14 +277,8 @@ void RelaxProblem::addGlobalPlaneMeasurementsCost(const MeasurementGraph &graph,
         Eigen::Vector3d dest_ray = image_to_3d(inlier.pixel_2, dest_model);
 
         // add cost functions for this 3D point from both the source and dest camera
-        using CostFunction = ceres::AutoDiffCostFunction<
-            PlaneIntersectionAngleCost, PlaneIntersectionAngleCost::NUM_RESIDUALS,
-            PlaneIntersectionAngleCost::NUM_PARAMETERS_1, PlaneIntersectionAngleCost::NUM_PARAMETERS_2,
-            PlaneIntersectionAngleCost::NUM_PARAMETERS_3, PlaneIntersectionAngleCost::NUM_PARAMETERS_4,
-            PlaneIntersectionAngleCost::NUM_PARAMETERS_5>;
-
-        std::unique_ptr<CostFunction> func(new CostFunction(new PlaneIntersectionAngleCost(
-            *pkg.source.loc_ptr, *pkg.dest.loc_ptr, source_ray, dest_ray, corner2d[0], corner2d[1], corner2d[2])));
+        std::unique_ptr<ceres::CostFunction> func(newAutoDiffPlaneIntersectionAngleCost(
+            *pkg.source.loc_ptr, *pkg.dest.loc_ptr, source_ray, dest_ray, corner2d[0], corner2d[1], corner2d[2]));
 
         _problem->AddResidualBlock(func.release(), huber_loss.get(), datas[0], datas[1], datas[2], datas[3], datas[4]);
         points_added = true;
@@ -290,7 +298,7 @@ void RelaxProblem::addGlobalPlaneMeasurementsCost(const MeasurementGraph &graph,
         }
     }
 
-    _edges_used.emplace(edge_id);
+    _edges_used.insert(edge_id);
 }
 
 void RelaxProblem::insertEdgeTracks(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge)
@@ -316,6 +324,7 @@ void RelaxProblem::insertEdgeTracks(const MeasurementGraph &graph, size_t edge_i
         _node_id_feature_index_tracklinks[map_index_1].emplace_back(map_index_2);
         _node_id_feature_index_tracklinks[map_index_2].emplace_back(map_index_1);
     }
+    _edges_used.insert(edge_id);
 }
 void RelaxProblem::compileEdgeTracks()
 {
@@ -434,12 +443,8 @@ void RelaxProblem::addTrackCosts(const MeasurementGraph &graph)
             const auto &image = graph.getNode(nifi.node_id)->payload;
             double *data = po.rot_ptr->coeffs().data();
 
-            using CostFunction =
-                ceres::AutoDiffCostFunction<PixelErrorCost, PixelErrorCost::NUM_RESIDUALS,
-                                            PixelErrorCost::NUM_PARAMETERS_1, PixelErrorCost::NUM_PARAMETERS_2>;
-
-            std::unique_ptr<CostFunction> func = std::make_unique<CostFunction>(
-                new PixelErrorCost(*po.loc_ptr, image.model, image.features[nifi.feature_index].location));
+            std::unique_ptr<ceres::CostFunction> func(
+                newAutoDiffPixelErrorCost(*po.loc_ptr, image.model, image.features[nifi.feature_index].location));
 
             Eigen::Vector2d res{NAN, NAN};
             const double *args[2] = {data, track.point.data()};
@@ -506,13 +511,9 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
         points.emplace_back(FeatureTrack{intersection.first, intersection.second, {nifi[0], nifi[1]}});
 
         // add cost functions for this 3D point from both the source and dest camera
-        using CostFunction =
-            ceres::AutoDiffCostFunction<PixelErrorCost, PixelErrorCost::NUM_RESIDUALS, PixelErrorCost::NUM_PARAMETERS_1,
-                                        PixelErrorCost::NUM_PARAMETERS_2>;
-
-        std::unique_ptr<CostFunction> func[2]{
-            std::make_unique<CostFunction>(new PixelErrorCost(*pkg.source.loc_ptr, source_model, inlier.pixel_1)),
-            std::make_unique<CostFunction>(new PixelErrorCost(*pkg.dest.loc_ptr, dest_model, inlier.pixel_2))};
+        std::unique_ptr<ceres::CostFunction> func[2];
+        func[0].reset(newAutoDiffPixelErrorCost(*pkg.source.loc_ptr, source_model, inlier.pixel_1));
+        func[1].reset(newAutoDiffPixelErrorCost(*pkg.dest.loc_ptr, dest_model, inlier.pixel_2));
 
         for (int i = 0; i < 2; i++)
         {
@@ -586,9 +587,7 @@ void RelaxProblem::addDownwardsPrior()
     for (auto &p : _nodes_to_optimize)
     {
         double *d = p.second->orientation.coeffs().data();
-        using CostFunction = ceres::AutoDiffCostFunction<PointsDownwardsPrior, PointsDownwardsPrior::NUM_RESIDUALS,
-                                                         PointsDownwardsPrior::NUM_PARAMETERS_1>;
-        _problem->AddResidualBlock(new CostFunction(new PointsDownwardsPrior()), nullptr, d);
+        _problem->AddResidualBlock(newAutoDiffPointsDownwardsPrior(), nullptr, d);
         _problem->SetParameterization(d, &_quat_parameterization);
     }
 }
