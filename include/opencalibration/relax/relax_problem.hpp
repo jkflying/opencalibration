@@ -46,6 +46,7 @@ class RelaxProblem
     void setup3dTracksProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                               const std::unordered_set<size_t> &edges_to_optimize);
 
+    void relaxTracksOnly();
     void solve();
 
   protected:

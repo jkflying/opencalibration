@@ -326,11 +326,12 @@ void RelaxProblem::insertEdgeTracks(const MeasurementGraph &graph, size_t edge_i
     }
     _edges_used.insert(edge_id);
 }
+
 void RelaxProblem::compileEdgeTracks()
 {
+
     std::vector<NodeIdFeatureIndex> visit_queue;
     std::unordered_set<size_t> visited_nodes; // a single track can only have one measurement from each node
-
     while (_node_id_feature_index_tracklinks.size() > 0)
     {
         visit_queue.clear();
@@ -412,7 +413,8 @@ void RelaxProblem::addTrackCosts(const MeasurementGraph &graph)
             const auto &image = graph.getNode(nifi.node_id)->payload;
             const auto &loc = image.features[nifi.feature_index].location;
 
-            node_id_track_index_grid_filter[nifi.node_id].addMeasurement(loc.x(), loc.y(), score, i);
+            node_id_track_index_grid_filter[nifi.node_id].addMeasurement(loc.x() / image.model.pixels_cols,
+                                                                         loc.y() / image.model.pixels_rows, score, i);
         }
     }
 
@@ -425,15 +427,24 @@ void RelaxProblem::addTrackCosts(const MeasurementGraph &graph)
         }
     }
 
-    const size_t track_filter_threshold = 1;
-    for (size_t i = 0; i < _tracks.size(); i++)
     {
-        auto &track = _tracks[i];
-        if (tracks_included[i] < track_filter_threshold || !std::isfinite(track.error))
-        {
-            continue;
-        }
+        track_vec tracks_to_optimize;
+        tracks_to_optimize.reserve(_tracks.size());
 
+        const size_t track_filter_threshold = 1;
+        for (size_t i = 0; i < _tracks.size(); i++)
+        {
+            auto &track = _tracks[i];
+            if (tracks_included[i] >= track_filter_threshold && std::isfinite(track.error))
+            {
+                tracks_to_optimize.emplace_back(std::move(track));
+            }
+        }
+        std::swap(tracks_to_optimize, _tracks);
+    }
+
+    for (auto &track : _tracks)
+    {
         for (const auto &nifi : track.measurements)
         {
             OptimizationPackage::PoseOpt po = nodeid2poseopt(graph, nifi.node_id);
@@ -463,6 +474,47 @@ void RelaxProblem::addTrackCosts(const MeasurementGraph &graph)
             {
                 _problem->SetParameterBlockConstant(data);
             }
+        }
+    }
+}
+
+void RelaxProblem::relaxTracksOnly()
+{
+    // optimize just the 3d points to start, since we don't do proper triangulation
+
+    std::vector<double *> params;
+    _problem->GetParameterBlocks(&params);
+
+    std::vector<bool> isConst;
+    isConst.reserve(params.size());
+    std::unordered_set<double *> params_set;
+    for (double *p : params)
+    {
+        isConst.push_back(_problem->IsParameterBlockConstant(p));
+        _problem->SetParameterBlockConstant(p);
+        params_set.insert(p);
+    }
+    for (auto &t : _tracks)
+    {
+        if (params_set.find(t.point.data()) != params_set.end())
+            _problem->SetParameterBlockVariable(t.point.data());
+    }
+    for (auto &et : _edge_tracks)
+        for (auto &t : et.second)
+            if (params_set.find(t.point.data()) != params_set.end())
+                _problem->SetParameterBlockVariable(t.point.data());
+
+    spdlog::debug("optimizing 3d points only");
+    solve();
+    for (size_t i = 0; i < params.size(); i++)
+    {
+        if (isConst[i])
+        {
+            _problem->SetParameterBlockConstant(params[i]);
+        }
+        else
+        {
+            _problem->SetParameterBlockVariable(params[i]);
         }
     }
 }

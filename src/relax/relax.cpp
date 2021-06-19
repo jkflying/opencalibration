@@ -30,7 +30,8 @@ void relax3dPointMeasurements(const MeasurementGraph &graph, std::vector<NodePos
                               const std::unordered_set<size_t> &edges_to_optimize)
 {
     RelaxProblem rp;
-    rp.setup3dPointProblem(graph, nodes, edges_to_optimize);
+    rp.setup3dTracksProblem(graph, nodes, edges_to_optimize);
+    rp.relaxTracksOnly();
     rp.solve();
 }
 
