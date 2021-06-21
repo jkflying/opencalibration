@@ -93,7 +93,8 @@ void RelaxProblem::setup3dTracksProblem(const MeasurementGraph &graph, std::vect
             insertEdgeTracks(graph, edge_id, *edge);
         }
     }
-    compileEdgeTracks();
+    compileEdgeTracks(graph);
+    filterTracks(graph);
     addTrackCosts(graph);
 
     solverOptions.max_num_iterations = 300;
@@ -327,49 +328,45 @@ void RelaxProblem::insertEdgeTracks(const MeasurementGraph &graph, size_t edge_i
     _edges_used.insert(edge_id);
 }
 
-void RelaxProblem::compileEdgeTracks()
+void RelaxProblem::compileEdgeTracks(const MeasurementGraph &graph)
 {
+    // start quick and dirty, just make pairs of measurements
+    using key_t = std::pair<NodeIdFeatureIndex, NodeIdFeatureIndex>;
 
-    std::vector<NodeIdFeatureIndex> visit_queue;
-    std::unordered_set<size_t> visited_nodes; // a single track can only have one measurement from each node
-    while (_node_id_feature_index_tracklinks.size() > 0)
+    struct key_t_hash
     {
-        visit_queue.clear();
-        visited_nodes.clear();
-
-        FeatureTrack track;
-
-        // initialize, then depth first search for all connected nodes
-        visit_queue.push_back(_node_id_feature_index_tracklinks.begin()->first);
-        while (visit_queue.size() > 0)
+        size_t operator()(const key_t &key) const
         {
-            NodeIdFeatureIndex key = visit_queue.back();
-            visited_nodes.insert(key.node_id);
-            visit_queue.pop_back();
-
-            for (const auto &nifi : _node_id_feature_index_tracklinks[key])
-            {
-                track.measurements.push_back(nifi);
-                if (visited_nodes.find(nifi.node_id) == visited_nodes.end())
-                {
-                    visit_queue.push_back(nifi);
-                }
-            }
-            _node_id_feature_index_tracklinks.erase(key);
+            std::hash<NodeIdFeatureIndex> h;
+            return h(key.first) ^ (31 * h(key.second));
         }
+    };
 
-        // get rid of duplicates, which (among other things) would unbalance 3D point location
-        std::sort(track.measurements.begin(), track.measurements.end());
-        track.measurements.erase(std::unique(track.measurements.begin(), track.measurements.end()),
-                                 track.measurements.end());
+    std::unordered_set<key_t, key_t_hash> used_pairs;
+    for (const auto &nifi_links : _node_id_feature_index_tracklinks)
+    {
+        for (const auto &nifi2 : nifi_links.second)
+        {
+            key_t key{nifi_links.first, nifi2};
+            if (nifi2 < nifi_links.first)
+            {
+                std::swap(key.first, key.second);
+            }
 
-        if (track.measurements.size() > 1)
-            _tracks.push_back(std::move(track));
+            if (used_pairs.find(key) != used_pairs.end())
+            {
+                continue;
+            }
+            used_pairs.insert(key);
+
+            FeatureTrack track;
+            track.measurements.reserve(2);
+            track.measurements.push_back(nifi_links.first);
+            track.measurements.push_back(nifi2);
+            _tracks.emplace_back(std::move(track));
+        }
     }
-}
 
-void RelaxProblem::addTrackCosts(const MeasurementGraph &graph)
-{
     for (auto &track : _tracks)
     {
         std::vector<ray_d> rays;
@@ -390,6 +387,11 @@ void RelaxProblem::addTrackCosts(const MeasurementGraph &graph)
         track.error = point_error.second;
     }
 
+    // TODO: merge tracks that have shared features *and* close together triangulated 3d points
+}
+
+void RelaxProblem::filterTracks(const MeasurementGraph &graph)
+{
     // normalize track error between 0 and 1 so that we can use it to tie track length scores
     double max_track_error = 1e-9, min_track_error = 1e9;
     for (const auto &track : _tracks)
@@ -418,31 +420,33 @@ void RelaxProblem::addTrackCosts(const MeasurementGraph &graph)
         }
     }
 
-    std::vector<size_t> tracks_included(_tracks.size(), 0);
+    std::vector<size_t> track_scores(_tracks.size(), 0);
     for (const auto &filter : node_id_track_index_grid_filter)
     {
         for (size_t track_id : filter.second.getBestMeasurementsPerCell())
         {
-            tracks_included[track_id]++;
+            track_scores[track_id]++;
         }
     }
 
+    const size_t KEEP_THRESHOLD = 1;
+
+    track_vec tracks_to_optimize;
+    tracks_to_optimize.reserve(_tracks.size());
+
+    for (size_t i = 0; i < _tracks.size(); i++)
     {
-        track_vec tracks_to_optimize;
-        tracks_to_optimize.reserve(_tracks.size());
-
-        const size_t track_filter_threshold = 1;
-        for (size_t i = 0; i < _tracks.size(); i++)
+        auto &track = _tracks[i];
+        if (track_scores[i] >= KEEP_THRESHOLD && std::isfinite(track.error))
         {
-            auto &track = _tracks[i];
-            if (tracks_included[i] >= track_filter_threshold && std::isfinite(track.error))
-            {
-                tracks_to_optimize.emplace_back(std::move(track));
-            }
+            tracks_to_optimize.emplace_back(std::move(track));
         }
-        std::swap(tracks_to_optimize, _tracks);
     }
+    std::swap(tracks_to_optimize, _tracks);
+}
 
+void RelaxProblem::addTrackCosts(const MeasurementGraph &graph)
+{
     for (auto &track : _tracks)
     {
         for (const auto &nifi : track.measurements)
@@ -478,7 +482,7 @@ void RelaxProblem::addTrackCosts(const MeasurementGraph &graph)
     }
 }
 
-void RelaxProblem::relaxTracksOnly()
+void RelaxProblem::relaxObservedModelOnly()
 {
     // optimize just the 3d points to start, since we don't do proper triangulation
 
@@ -503,6 +507,10 @@ void RelaxProblem::relaxTracksOnly()
         for (auto &t : et.second)
             if (params_set.find(t.point.data()) != params_set.end())
                 _problem->SetParameterBlockVariable(t.point.data());
+
+    for (auto &p : _global_plane.corner)
+        if (params_set.find(&p.z()) != params_set.end())
+            _problem->SetParameterBlockVariable(&p.z());
 
     spdlog::debug("optimizing 3d points only");
     solve();

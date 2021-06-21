@@ -423,7 +423,7 @@ TEST_F(relax_, measurement_3_images_points_internals_point_triangulation_noise)
     for (size_t i = 0; i < points.size(); i++)
         points_tree.addPoint(vec2arr(points[i]), i);
     add_point_measurements(points);
-    add_ori_noise({-0.1, 0.1, 0.1});
+    add_ori_noise({-0.05, 0.05, 0.05});
 
     // WHEN: we set up the problem and
     std::unordered_set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
@@ -449,7 +449,7 @@ TEST_F(relax_, measurement_3_images_points_internals_point_triangulation_noise)
 
     // AND: it took many iterations, and started with lots of error, but it minimizes to almost zero error
     EXPECT_GT(rp.test_get_solver_summary().iterations.size(), 10);
-    EXPECT_GT(rp.test_get_solver_summary().initial_cost, 1e4);
+    EXPECT_GT(rp.test_get_solver_summary().initial_cost, 5e2);
     EXPECT_LT(rp.test_get_solver_summary().final_cost, 1e-10);
 }
 
@@ -516,7 +516,6 @@ TEST_F(relax_, measurement_3_images_tracks_internals_point_triangulation_noise)
     }
 
     // WHEN: we solve the problem
-    rp.relaxTracksOnly();
     rp.solve();
 
     // THEN: the 3D points should be in the correct locations
@@ -528,6 +527,6 @@ TEST_F(relax_, measurement_3_images_tracks_internals_point_triangulation_noise)
 
     // AND: it took many iterations, and started with lots of error, but it minimizes to almost zero error
     EXPECT_GT(rp.test_get_solver_summary().iterations.size(), 10);
-    EXPECT_GT(rp.test_get_solver_summary().initial_cost, 5e3);
+    EXPECT_GT(rp.test_get_solver_summary().initial_cost, 5e2);
     EXPECT_LT(rp.test_get_solver_summary().final_cost, 1e-10);
 }

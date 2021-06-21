@@ -39,6 +39,7 @@ void relaxGroundPlaneMeasurements(const MeasurementGraph &graph, std::vector<Nod
 {
     RelaxProblem rp;
     rp.setupGroundPlaneProblem(graph, nodes, edges_to_optimize);
+    rp.relaxObservedModelOnly();
     rp.solve();
 }
 

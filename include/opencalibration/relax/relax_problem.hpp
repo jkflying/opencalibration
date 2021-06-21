@@ -46,7 +46,7 @@ class RelaxProblem
     void setup3dTracksProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                               const std::unordered_set<size_t> &edges_to_optimize);
 
-    void relaxTracksOnly();
+    void relaxObservedModelOnly(); // only 3d points and ground plane
     void solve();
 
   protected:
@@ -60,7 +60,8 @@ class RelaxProblem
     void gridFilterMatchesPerImage(const MeasurementGraph &graph, const std::unordered_set<size_t> &edges_to_optimize);
 
     void insertEdgeTracks(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge);
-    void compileEdgeTracks();
+    void filterTracks(const MeasurementGraph &graph);
+    void compileEdgeTracks(const MeasurementGraph &graph);
     void addTrackCosts(const MeasurementGraph &graph);
     void addPointMeasurementsCost(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge);
 
