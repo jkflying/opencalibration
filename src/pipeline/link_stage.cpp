@@ -3,6 +3,7 @@
 #include <opencalibration/distort/distort_keypoints.hpp>
 #include <opencalibration/match/match_features.hpp>
 #include <opencalibration/model_inliers/ransac.hpp>
+#include <opencalibration/performance/performance.hpp>
 
 #include <spdlog/spdlog.h>
 
@@ -21,6 +22,7 @@ namespace opencalibration
 void LinkStage::init(const MeasurementGraph &graph, const jk::tree::KDTree<size_t, 3> &imageGPSLocations,
                      const std::vector<size_t> &node_ids)
 {
+    PerformanceMeasure p("Link init");
     spdlog::info("Queueing {} image nodes for link building", node_ids.size());
     _links.clear();
     _links.reserve(node_ids.size());
@@ -47,12 +49,14 @@ void LinkStage::init(const MeasurementGraph &graph, const jk::tree::KDTree<size_
 
 std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph &graph)
 {
+    PerformanceMeasure p("Link get_runners");
     std::vector<std::function<void()>> funcs;
     funcs.reserve(_links.size());
     _all_inlier_measurements.reserve(10 * _links.size());
     for (size_t i = 0; i < _links.size(); i++)
     {
         auto run_func = [&, i]() {
+            PerformanceMeasure p2("Link runner");
             const auto &node_nearest = _links[i];
             size_t node_id = node_nearest.node_id;
             const auto &img = graph.getNode(node_id)->payload;
@@ -123,6 +127,7 @@ std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph
 
 std::vector<size_t> LinkStage::finalize(MeasurementGraph &graph)
 {
+    PerformanceMeasure p("Link finalize");
     // put them back in the order they would have been if they were calculated serially
     std::sort(_all_inlier_measurements.begin(), _all_inlier_measurements.end(),
               [](const auto &a, const auto &b) { return a.loop_index < b.loop_index; });

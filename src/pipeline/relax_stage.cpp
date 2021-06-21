@@ -1,5 +1,6 @@
 #include <opencalibration/pipeline/relax_stage.hpp>
 
+#include <opencalibration/performance/performance.hpp>
 #include <opencalibration/relax/relax.hpp>
 
 #include <spdlog/spdlog.h>
@@ -20,6 +21,7 @@ namespace opencalibration
 void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &node_ids,
                       const jk::tree::KDTree<size_t, 3> &imageGPSLocations, bool force_optimize_all)
 {
+    PerformanceMeasure p("Relax init");
     _directly_connected.clear();
     _edges_to_optimize.clear();
     _ids_added.clear();
@@ -131,13 +133,14 @@ void RelaxStage::build_optimization_edges(const MeasurementGraph &graph,
 
 std::vector<std::function<void()>> RelaxStage::get_runners(const MeasurementGraph &graph)
 {
+    PerformanceMeasure p("Relax get_runners");
     if (_local_poses.size() > 0)
     {
         return {[&]() {
+            PerformanceMeasure p2("Relax runner");
             if (_optimize_all)
             {
                 // relaxGroundPlaneMeasurements(graph, _local_poses, _edges_to_optimize);
-                relax3dPointMeasurements(graph, _local_poses, _edges_to_optimize);
                 relax3dPointMeasurements(graph, _local_poses, _edges_to_optimize);
                 relax3dPointMeasurements(graph, _local_poses, _edges_to_optimize);
             }
@@ -152,6 +155,7 @@ std::vector<std::function<void()>> RelaxStage::get_runners(const MeasurementGrap
 
 std::vector<size_t> RelaxStage::finalize(MeasurementGraph &graph)
 {
+    PerformanceMeasure p("Relax finalize");
     std::vector<size_t> optimized_ids;
     optimized_ids.reserve(_local_poses.size());
     for (const auto &pose : _local_poses)

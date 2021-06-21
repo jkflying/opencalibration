@@ -8,5 +8,6 @@ target_link_libraries(oc_pipeline PUBLIC oc_extract
                                           oc_model_inliers
                                           oc_geo_coord
                                           oc_relax
+                                          oc_performance
                                           OpenMP::OpenMP_CXX
                                           spdlog::spdlog)

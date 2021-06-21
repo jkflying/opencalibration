@@ -2,6 +2,7 @@
 
 #include <opencalibration/extract/extract_features.hpp>
 #include <opencalibration/extract/extract_metadata.hpp>
+#include <opencalibration/performance/performance.hpp>
 
 #include <spdlog/spdlog.h>
 
@@ -18,6 +19,7 @@ namespace opencalibration
 
 void LoadStage::init(const std::vector<std::string> &paths_to_load)
 {
+    PerformanceMeasure p("Load init");
     spdlog::info("Queueing {} image paths for loading", paths_to_load.size());
     _paths_to_load = paths_to_load;
     _images.clear();
@@ -26,11 +28,13 @@ void LoadStage::init(const std::vector<std::string> &paths_to_load)
 
 std::vector<std::function<void()>> LoadStage::get_runners()
 {
+    PerformanceMeasure p("Load get_runners");
     std::vector<std::function<void()>> funcs;
     funcs.reserve(_paths_to_load.size());
     for (size_t i = 0; i < _paths_to_load.size(); i++)
     {
         auto run_func = [&, i]() {
+            PerformanceMeasure p2("Load runner");
             const std::string &path = _paths_to_load[i];
             image img;
             img.path = path;
@@ -61,6 +65,7 @@ std::vector<std::function<void()>> LoadStage::get_runners()
 std::vector<size_t> LoadStage::finalize(GeoCoord &coordinate_system, MeasurementGraph &graph,
                                         jk::tree::KDTree<size_t, 3> &imageGPSLocations)
 {
+    PerformanceMeasure p("Load finalize");
     // put the images back in order after the parallel processing
     std::sort(_images.begin(), _images.end(),
               [](const std::pair<size_t, image> &img1, const std::pair<size_t, image> &img2) -> int {

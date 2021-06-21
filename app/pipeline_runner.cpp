@@ -1,3 +1,4 @@
+#include <opencalibration/performance/performance.hpp>
 #include <opencalibration/pipeline/pipeline.hpp>
 
 #include <opencalibration/io/serialize.hpp>
@@ -127,4 +128,5 @@ int main(int argc, char *argv[])
         output.close();
     }
     std::cout << "Complete!" << std::endl;
+    std::cout << TotalPerformanceSummary() << std::endl;
 }
