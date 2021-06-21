@@ -134,14 +134,17 @@ std::vector<std::function<void()>> RelaxStage::get_runners(const MeasurementGrap
     if (_local_poses.size() > 0)
     {
         return {[&]() {
-            //             if (_optimize_all)
-            //             {
-            //                 relaxGroundPlaneMeasurements(graph, _local_poses, _edges_to_optimize);
-            //             }
-            //             else
-            //             {
-            relaxDecompositions(graph, _local_poses, _edges_to_optimize);
-            //             }
+            if (_optimize_all)
+            {
+                // relaxGroundPlaneMeasurements(graph, _local_poses, _edges_to_optimize);
+                relax3dPointMeasurements(graph, _local_poses, _edges_to_optimize);
+                relax3dPointMeasurements(graph, _local_poses, _edges_to_optimize);
+                relax3dPointMeasurements(graph, _local_poses, _edges_to_optimize);
+            }
+            else
+            {
+                relaxDecompositions(graph, _local_poses, _edges_to_optimize);
+            }
         }};
     }
     return {};
