@@ -9,9 +9,13 @@
 #include <opencalibration/types/plane.hpp>
 #include <opencalibration/types/point_cloud.hpp>
 
-#include <ceres/ceres.h>
+#include <ceres/local_parameterization.h>
+#include <ceres/loss_function.h>
+#include <ceres/problem.h>
+#include <ceres/solver.h>
 #include <spdlog/spdlog.h>
 
+#include <unordered_map>
 #include <unordered_set>
 
 namespace opencalibration
@@ -72,8 +76,10 @@ class RelaxProblem
 
     void addDownwardsPrior();
 
-    ceres::Solver::Options solverOptions;
-    std::unique_ptr<ceres::HuberLoss> huber_loss;
+    void *_log_forwarder_dependency;
+
+    ceres::Solver::Options _solver_options;
+    std::unique_ptr<ceres::HuberLoss> _huber_loss;
 
     ceres::Problem::Options _problemOptions;
     ceres::EigenQuaternionParameterization _quat_parameterization;

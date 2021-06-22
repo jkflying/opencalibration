@@ -1,3 +1,5 @@
+#include "ceres_log_forwarding.hpp"
+
 // clang-format off
 #include <glog/logging.h>
 #include <glog/log_severity.h>
@@ -50,5 +52,14 @@ struct RegisterCeresLogger
     }
 };
 
-static RegisterCeresLogger *__init_at_load = new RegisterCeresLogger("opencalibration");
+static RegisterCeresLogger __init_at_load("opencalibration");
 } // namespace
+
+namespace opencalibration
+{
+void *GetCeresLogForwarder()
+{
+    return &__init_at_load;
+}
+
+} // namespace opencalibration

@@ -1,32 +1,34 @@
 #include <opencalibration/relax/relax_problem.hpp>
 
+#include "ceres_log_forwarding.hpp"
 #include <opencalibration/relax/autodiff_cost_function.hpp>
 
 namespace opencalibration
 {
 
-RelaxProblem::RelaxProblem() : huber_loss(new ceres::HuberLoss(10 * M_PI / 180))
+RelaxProblem::RelaxProblem()
+    : _log_forwarder_dependency(GetCeresLogForwarder()), _huber_loss(new ceres::HuberLoss(10 * M_PI / 180))
 {
     _problemOptions.cost_function_ownership = ceres::TAKE_OWNERSHIP;
     _problemOptions.loss_function_ownership = ceres::DO_NOT_TAKE_OWNERSHIP;
     _problemOptions.local_parameterization_ownership = ceres::DO_NOT_TAKE_OWNERSHIP;
     _problem.reset(new ceres::Problem(_problemOptions));
 
-    solverOptions.num_threads = 1;
-    solverOptions.linear_solver_type = ceres::SPARSE_NORMAL_CHOLESKY;
-    solverOptions.max_num_iterations = 500;
-    solverOptions.use_nonmonotonic_steps = true;
-    solverOptions.sparse_linear_algebra_library_type = ceres::EIGEN_SPARSE;
-    solverOptions.dense_linear_algebra_library_type = ceres::EIGEN;
-    solverOptions.initial_trust_region_radius = 1;
-    solverOptions.logging_type = ceres::SILENT;
+    _solver_options.num_threads = 1;
+    _solver_options.linear_solver_type = ceres::SPARSE_NORMAL_CHOLESKY;
+    _solver_options.max_num_iterations = 500;
+    _solver_options.use_nonmonotonic_steps = true;
+    _solver_options.sparse_linear_algebra_library_type = ceres::EIGEN_SPARSE;
+    _solver_options.dense_linear_algebra_library_type = ceres::EIGEN;
+    _solver_options.initial_trust_region_radius = 1;
+    _solver_options.logging_type = ceres::SILENT;
 }
 
 void RelaxProblem::setupDecompositionProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                                              const std::unordered_set<size_t> &edges_to_optimize)
 {
     initialize(nodes);
-    solverOptions.initial_trust_region_radius = 0.1;
+    _solver_options.initial_trust_region_radius = 0.1;
 
     for (size_t edge_id : edges_to_optimize)
     {
@@ -45,7 +47,7 @@ void RelaxProblem::setupGroundPlaneProblem(const MeasurementGraph &graph, std::v
 {
     initialize(nodes);
     initializeGroundPlane();
-    huber_loss.reset(new ceres::HuberLoss(1 * M_PI / 180));
+    _huber_loss.reset(new ceres::HuberLoss(1 * M_PI / 180));
     gridFilterMatchesPerImage(graph, edges_to_optimize);
 
     for (size_t edge_id : edges_to_optimize)
@@ -62,7 +64,7 @@ void RelaxProblem::setup3dPointProblem(const MeasurementGraph &graph, std::vecto
                                        const std::unordered_set<size_t> &edges_to_optimize)
 {
     initialize(nodes);
-    huber_loss.reset(new ceres::HuberLoss(10));
+    _huber_loss.reset(new ceres::HuberLoss(10));
 
     gridFilterMatchesPerImage(graph, edges_to_optimize);
 
@@ -75,15 +77,15 @@ void RelaxProblem::setup3dPointProblem(const MeasurementGraph &graph, std::vecto
         }
     }
 
-    solverOptions.max_num_iterations = 300;
-    solverOptions.linear_solver_type = ceres::SPARSE_SCHUR;
+    _solver_options.max_num_iterations = 300;
+    _solver_options.linear_solver_type = ceres::SPARSE_SCHUR;
 }
 
 void RelaxProblem::setup3dTracksProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                                         const std::unordered_set<size_t> &edges_to_optimize)
 {
     initialize(nodes);
-    huber_loss.reset(new ceres::HuberLoss(10));
+    _huber_loss.reset(new ceres::HuberLoss(10));
 
     for (size_t edge_id : edges_to_optimize)
     {
@@ -97,8 +99,8 @@ void RelaxProblem::setup3dTracksProblem(const MeasurementGraph &graph, std::vect
     filterTracks(graph);
     addTrackCosts(graph);
 
-    solverOptions.max_num_iterations = 300;
-    solverOptions.linear_solver_type = ceres::SPARSE_SCHUR;
+    _solver_options.max_num_iterations = 300;
+    _solver_options.linear_solver_type = ceres::SPARSE_SCHUR;
 }
 
 void RelaxProblem::initialize(std::vector<NodePose> &nodes)
@@ -226,7 +228,7 @@ void RelaxProblem::addRelationCost(const MeasurementGraph &graph, size_t edge_id
 
     double *datas[2] = {pkg.source.rot_ptr->coeffs().data(), pkg.dest.rot_ptr->coeffs().data()};
 
-    _problem->AddResidualBlock(func.release(), huber_loss.get(), datas[0], datas[1]);
+    _problem->AddResidualBlock(func.release(), _huber_loss.get(), datas[0], datas[1]);
     _problem->SetParameterization(datas[0], &_quat_parameterization);
     _problem->SetParameterization(datas[1], &_quat_parameterization);
 
@@ -281,7 +283,7 @@ void RelaxProblem::addGlobalPlaneMeasurementsCost(const MeasurementGraph &graph,
         std::unique_ptr<ceres::CostFunction> func(newAutoDiffPlaneIntersectionAngleCost(
             *pkg.source.loc_ptr, *pkg.dest.loc_ptr, source_ray, dest_ray, corner2d[0], corner2d[1], corner2d[2]));
 
-        _problem->AddResidualBlock(func.release(), huber_loss.get(), datas[0], datas[1], datas[2], datas[3], datas[4]);
+        _problem->AddResidualBlock(func.release(), _huber_loss.get(), datas[0], datas[1], datas[2], datas[3], datas[4]);
         points_added = true;
     }
     if (points_added)
@@ -471,7 +473,7 @@ void RelaxProblem::addTrackCosts(const MeasurementGraph &graph)
                 continue;
             }
 
-            _problem->AddResidualBlock(func.release(), huber_loss.get(), data, track.point.data());
+            _problem->AddResidualBlock(func.release(), _huber_loss.get(), data, track.point.data());
             _problem->SetParameterization(data, &_quat_parameterization);
 
             if (!po.optimize)
@@ -656,7 +658,7 @@ void RelaxProblem::solve()
 {
     spdlog::debug("Start rotation relax: {} active nodes, {} edges", _nodes_to_optimize.size(), _edges_used.size());
 
-    _solver.Solve(solverOptions, _problem.get(), &_summary);
+    _solver.Solve(_solver_options, _problem.get(), &_summary);
     spdlog::info(_summary.BriefReport());
     spdlog::debug(_summary.FullReport());
 
