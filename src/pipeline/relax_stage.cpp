@@ -133,19 +133,19 @@ void RelaxStage::build_optimization_edges(const MeasurementGraph &graph,
 
 std::vector<std::function<void()>> RelaxStage::get_runners(const MeasurementGraph &graph)
 {
-    PerformanceMeasure p("Relax get_runners");
     if (_local_poses.size() > 0)
     {
         return {[&]() {
-            PerformanceMeasure p2("Relax runner");
             if (_optimize_all)
             {
+                PerformanceMeasure p("Relax runner global");
                 // relaxGroundPlaneMeasurements(graph, _local_poses, _edges_to_optimize);
                 relax3dPointMeasurements(graph, _local_poses, _edges_to_optimize);
                 relax3dPointMeasurements(graph, _local_poses, _edges_to_optimize);
             }
             else
             {
+                PerformanceMeasure p("Relax runner local");
                 relaxDecompositions(graph, _local_poses, _edges_to_optimize);
             }
         }};

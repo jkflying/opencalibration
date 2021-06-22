@@ -28,13 +28,12 @@ void LoadStage::init(const std::vector<std::string> &paths_to_load)
 
 std::vector<std::function<void()>> LoadStage::get_runners()
 {
-    PerformanceMeasure p("Load get_runners");
     std::vector<std::function<void()>> funcs;
     funcs.reserve(_paths_to_load.size());
     for (size_t i = 0; i < _paths_to_load.size(); i++)
     {
         auto run_func = [&, i]() {
-            PerformanceMeasure p2("Load runner");
+            PerformanceMeasure p("Load runner features");
             const std::string &path = _paths_to_load[i];
             image img;
             img.path = path;
@@ -43,7 +42,7 @@ std::vector<std::function<void()>> LoadStage::get_runners()
             {
                 return;
             }
-
+            p.reset("Load runner metadata");
             img.metadata = extract_metadata(img.path);
             img.model.focal_length_pixels = img.metadata.focal_length_px;
             img.model.pixels_cols = img.metadata.width_px;

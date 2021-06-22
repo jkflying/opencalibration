@@ -21,12 +21,17 @@ class PerformanceMeasure
   public:
     PerformanceMeasure(const Literal &key);
     ~PerformanceMeasure();
+    void reset(const Literal &key);
 
   private:
+    void initialize(const Literal &key);
+    void finalize();
+    bool _running;
     std::string_view _key;
-    std::chrono::time_point<std::chrono::system_clock> _start;
+    std::chrono::time_point<std::chrono::high_resolution_clock> _start;
 };
 
+void EnablePerformanceCounters(bool enable);
 void ResetPerformanceCounters();
 std::string TotalPerformanceSummary();
 

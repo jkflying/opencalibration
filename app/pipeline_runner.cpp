@@ -21,6 +21,7 @@ using namespace std::chrono_literals;
 int main(int argc, char *argv[])
 {
 
+    EnablePerformanceCounters(true);
     std::string input_dir = "";
     uint32_t debug_level = 2;
     std::string output_file = "";

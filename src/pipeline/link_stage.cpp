@@ -49,14 +49,13 @@ void LinkStage::init(const MeasurementGraph &graph, const jk::tree::KDTree<size_
 
 std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph &graph)
 {
-    PerformanceMeasure p("Link get_runners");
     std::vector<std::function<void()>> funcs;
     funcs.reserve(_links.size());
     _all_inlier_measurements.reserve(10 * _links.size());
     for (size_t i = 0; i < _links.size(); i++)
     {
         auto run_func = [&, i]() {
-            PerformanceMeasure p2("Link runner");
+            PerformanceMeasure p("Link runner setup");
             const auto &node_nearest = _links[i];
             size_t node_id = node_nearest.node_id;
             const auto &img = graph.getNode(node_id)->payload;
@@ -76,19 +75,24 @@ std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph
 
             for (const auto &near_image : nearest_images)
             {
+
                 // match
+                p.reset("Link runner match");
                 auto matches = match_features(img.features, std::get<1>(near_image).get().features);
 
                 // distort
+                p.reset("Link runner undistort");
                 std::vector<correspondence> correspondences =
                     distort_keypoints(img.features, std::get<1>(near_image).get().features, matches, img.model,
                                       std::get<1>(near_image).get().model);
 
                 // ransac
+                p.reset("Link runner ransac");
                 homography_model h;
                 std::vector<bool> inliers;
                 ransac(correspondences, h, inliers);
 
+                p.reset("Link runner decompose");
                 camera_relations relations;
                 relations.ransac_relation = h.homography;
                 relations.relationType = camera_relations::RelationType::HOMOGRAPHY;
