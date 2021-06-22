@@ -577,9 +577,27 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
         func[0].reset(newAutoDiffPixelErrorCost(*pkg.source.loc_ptr, source_model, inlier.pixel_1));
         func[1].reset(newAutoDiffPixelErrorCost(*pkg.dest.loc_ptr, dest_model, inlier.pixel_2));
 
+        bool all_finite = true;
         for (int i = 0; i < 2; i++)
         {
-            _problem->AddResidualBlock(func[i].release(), huber_loss.get(), datas[i], points.back().point.data());
+            Eigen::Vector2d res{NAN, NAN};
+            const double *args[2] = {datas[i], points.back().point.data()};
+            func[0]->Evaluate(args, res.data(), nullptr);
+
+            if (!res.array().allFinite())
+            {
+                all_finite = false;
+            }
+        }
+        if (!all_finite)
+        {
+            spdlog::debug("Skipping adding NaN track measurement residual");
+            continue;
+        }
+
+        for (int i = 0; i < 2; i++)
+        {
+            _problem->AddResidualBlock(func[i].release(), _huber_loss.get(), datas[i], points.back().point.data());
         }
         points_added = true;
     }

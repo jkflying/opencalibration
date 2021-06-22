@@ -27,11 +27,11 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
     _ids_added.clear();
     _local_poses.clear();
 
-    int connection_order_to_include = 1;
+    int connection_order_to_include = 2;
 
     _local_poses.reserve(node_ids.size());
 
-    _optimize_all = force_optimize_all || graph.size_nodes() > 1.5 * _last_graph_size_full_relax;
+    _optimize_all = force_optimize_all;
     if (_optimize_all)
     {
         _last_graph_size_full_relax = graph.size_nodes();
@@ -139,7 +139,8 @@ std::vector<std::function<void()>> RelaxStage::get_runners(const MeasurementGrap
             if (_optimize_all)
             {
                 PerformanceMeasure p("Relax runner global");
-                // relaxGroundPlaneMeasurements(graph, _local_poses, _edges_to_optimize);
+                relaxDecompositions(graph, _local_poses, _edges_to_optimize);
+                relaxGroundPlaneMeasurements(graph, _local_poses, _edges_to_optimize);
                 relax3dPointMeasurements(graph, _local_poses, _edges_to_optimize);
                 relax3dPointMeasurements(graph, _local_poses, _edges_to_optimize);
             }
