@@ -50,34 +50,42 @@ void LinkStage::init(const MeasurementGraph &graph, const jk::tree::KDTree<size_
 std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph &graph)
 {
     std::vector<std::function<void()>> funcs;
-    funcs.reserve(_links.size());
+
+    size_t funcs_required = 0;
+    for (const auto &l : _links)
+    {
+        funcs_required += l.link_ids.size();
+    }
+
+    funcs.reserve(funcs_required);
     _all_inlier_measurements.reserve(10 * _links.size());
     for (size_t i = 0; i < _links.size(); i++)
     {
-        auto run_func = [&, i]() {
-            PerformanceMeasure p("Link runner setup");
-            const auto &node_nearest = _links[i];
-            size_t node_id = node_nearest.node_id;
-            const auto &img = graph.getNode(node_id)->payload;
-            const auto &nearest = node_nearest.link_ids;
+        const auto &node_nearest = _links[i];
+        size_t node_id = node_nearest.node_id;
+        const auto &img = graph.getNode(node_id)->payload;
+        const auto &nearest = node_nearest.link_ids;
 
-            // match & distort
-            std::vector<std::tuple<size_t, std::reference_wrapper<const image>>> nearest_images;
-            nearest_images.reserve(nearest.size());
-            for (size_t match_node_id : nearest)
+        // match & distort
+        std::vector<std::tuple<size_t, std::reference_wrapper<const image>>> nearest_images;
+        nearest_images.reserve(nearest.size());
+        for (size_t match_node_id : nearest)
+        {
+            const auto *node = graph.getNode(match_node_id);
+            if (node != nullptr)
             {
-                const auto *node = graph.getNode(match_node_id);
-                if (node != nullptr)
-                {
-                    nearest_images.emplace_back(match_node_id, node->payload);
-                }
+                nearest_images.emplace_back(match_node_id, node->payload);
             }
+        }
 
-            for (const auto &near_image : nearest_images)
-            {
+        auto &mtx = _measurement_mutex;
+        auto &meas = _all_inlier_measurements;
 
+        for (const auto near_image : nearest_images)
+        {
+            auto run_func = [i, node_id, near_image, &img, &mtx, &meas]() {
+                PerformanceMeasure p("Link runner match");
                 // match
-                p.reset("Link runner match");
                 auto matches = match_features(img.features, std::get<1>(near_image).get().features);
 
                 // distort
@@ -118,13 +126,13 @@ std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph
                             relations.inlier_matches.push_back(fmd);
                         }
                     }
-                    std::lock_guard<std::mutex> lock(_measurement_mutex);
-                    _all_inlier_measurements.emplace_back(
-                        inlier_measurement{i, node_id, std::get<0>(near_image), std::move(relations)});
+
+                    std::lock_guard<std::mutex> lock(mtx);
+                    meas.emplace_back(inlier_measurement{i, node_id, std::get<0>(near_image), std::move(relations)});
                 }
-            }
-        };
-        funcs.push_back(run_func);
+            };
+            funcs.push_back(run_func);
+        }
     }
     return funcs;
 }
@@ -133,8 +141,10 @@ std::vector<size_t> LinkStage::finalize(MeasurementGraph &graph)
 {
     PerformanceMeasure p("Link finalize");
     // put them back in the order they would have been if they were calculated serially
-    std::sort(_all_inlier_measurements.begin(), _all_inlier_measurements.end(),
-              [](const auto &a, const auto &b) { return a.loop_index < b.loop_index; });
+    std::sort(_all_inlier_measurements.begin(), _all_inlier_measurements.end(), [](const auto &a, const auto &b) {
+        return std::make_tuple(a.loop_index, a.node_id, a.match_node_id) <
+               std::make_tuple(b.loop_index, b.node_id, b.match_node_id);
+    });
 
     for (auto &measurements : _all_inlier_measurements)
     {

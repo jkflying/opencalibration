@@ -139,8 +139,7 @@ std::vector<std::function<void()>> RelaxStage::get_runners(const MeasurementGrap
             if (_optimize_all)
             {
                 PerformanceMeasure p("Relax runner global");
-                relaxDecompositions(graph, _local_poses, _edges_to_optimize);
-                relaxGroundPlaneMeasurements(graph, _local_poses, _edges_to_optimize);
+                relax3dPointMeasurements(graph, _local_poses, _edges_to_optimize);
                 relax3dPointMeasurements(graph, _local_poses, _edges_to_optimize);
                 relax3dPointMeasurements(graph, _local_poses, _edges_to_optimize);
             }
