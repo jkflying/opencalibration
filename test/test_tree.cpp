@@ -1,6 +1,7 @@
-#include <jk/KDTree.h>
-
 #include <gtest/gtest.h>
+
+#include <jk/KDTree.h>
+#include <jk/KMeans.h>
 
 TEST(kdtree, initializes)
 {
@@ -34,4 +35,25 @@ TEST(kdtree, finds_nearest)
     ASSERT_EQ(potentialVictims.size(), 1);
     EXPECT_EQ(potentialVictims[0].payload, "Melvin");
     EXPECT_DOUBLE_EQ(potentialVictims[0].distance, 2); // distance is squared
+}
+
+TEST(kmeans, clusters)
+{
+    jk::tree::KMeans<size_t, 2> kmeans(20);
+    for (size_t i = 0; i < 50; i++)
+        for (size_t j = 0; j < 20; j++)
+            kmeans.add({(double)i, (double)j}, 5 * i + j);
+    // print clusters
+    auto print_clusters = [&]() {
+        std::cout << "clusters: " << kmeans.getClusters().front().points.size() << " - "
+                  << kmeans.getClusters().back().points.size() << " entries" << std::endl;
+    };
+
+    print_clusters();
+
+    for (int i = 0; i < 12; i++)
+    {
+        kmeans.iterate();
+    }
+    print_clusters();
 }
