@@ -164,7 +164,7 @@ template <typename Model>
 double ransac(const std::vector<correspondence> &matches, Model &model, std::vector<bool> &inliers)
 {
 
-    const size_t MIN_ITERATIONS = 10;
+    const size_t MIN_ITERATIONS = 20;
     const size_t MAX_ITERATIONS = 500;
     const size_t MAX_INNER_ITERATIONS = 5;
     const double PROBABILITY = 0.999;
