@@ -7,7 +7,7 @@ namespace opencalibration
 {
 
 RelaxProblem::RelaxProblem()
-    : _log_forwarder_dependency(GetCeresLogForwarder()), _huber_loss(new ceres::HuberLoss(10 * M_PI / 180))
+    : _log_forwarder_dependency(GetCeresLogForwarder()), _loss(new ceres::TrivialLoss(), ceres::TAKE_OWNERSHIP)
 {
     _problemOptions.cost_function_ownership = ceres::TAKE_OWNERSHIP;
     _problemOptions.loss_function_ownership = ceres::DO_NOT_TAKE_OWNERSHIP;
@@ -27,6 +27,8 @@ RelaxProblem::RelaxProblem()
 void RelaxProblem::setupDecompositionProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                                              const std::unordered_set<size_t> &edges_to_optimize)
 {
+
+    _loss.Reset(new ceres::HuberLoss(10 * M_PI / 180), ceres::TAKE_OWNERSHIP);
     initialize(nodes);
     _solver_options.initial_trust_region_radius = 0.1;
 
@@ -47,7 +49,7 @@ void RelaxProblem::setupGroundPlaneProblem(const MeasurementGraph &graph, std::v
 {
     initialize(nodes);
     initializeGroundPlane();
-    _huber_loss.reset(new ceres::HuberLoss(1 * M_PI / 180));
+    _loss.Reset(new ceres::HuberLoss(1 * M_PI / 180), ceres::TAKE_OWNERSHIP);
     gridFilterMatchesPerImage(graph, edges_to_optimize);
 
     for (size_t edge_id : edges_to_optimize)
@@ -64,7 +66,7 @@ void RelaxProblem::setup3dPointProblem(const MeasurementGraph &graph, std::vecto
                                        const std::unordered_set<size_t> &edges_to_optimize)
 {
     initialize(nodes);
-    _huber_loss.reset(new ceres::HuberLoss(10));
+    _loss.Reset(new ceres::HuberLoss(10), ceres::TAKE_OWNERSHIP);
 
     gridFilterMatchesPerImage(graph, edges_to_optimize);
 
@@ -85,7 +87,7 @@ void RelaxProblem::setup3dTracksProblem(const MeasurementGraph &graph, std::vect
                                         const std::unordered_set<size_t> &edges_to_optimize)
 {
     initialize(nodes);
-    _huber_loss.reset(new ceres::HuberLoss(10));
+    _loss.Reset(new ceres::HuberLoss(10), ceres::TAKE_OWNERSHIP);
 
     for (size_t edge_id : edges_to_optimize)
     {
@@ -228,7 +230,7 @@ void RelaxProblem::addRelationCost(const MeasurementGraph &graph, size_t edge_id
 
     double *datas[2] = {pkg.source.rot_ptr->coeffs().data(), pkg.dest.rot_ptr->coeffs().data()};
 
-    _problem->AddResidualBlock(func.release(), _huber_loss.get(), datas[0], datas[1]);
+    _problem->AddResidualBlock(func.release(), &_loss, datas[0], datas[1]);
     _problem->SetParameterization(datas[0], &_quat_parameterization);
     _problem->SetParameterization(datas[1], &_quat_parameterization);
 
@@ -283,7 +285,7 @@ void RelaxProblem::addGlobalPlaneMeasurementsCost(const MeasurementGraph &graph,
         std::unique_ptr<ceres::CostFunction> func(newAutoDiffPlaneIntersectionAngleCost(
             *pkg.source.loc_ptr, *pkg.dest.loc_ptr, source_ray, dest_ray, corner2d[0], corner2d[1], corner2d[2]));
 
-        _problem->AddResidualBlock(func.release(), _huber_loss.get(), datas[0], datas[1], datas[2], datas[3], datas[4]);
+        _problem->AddResidualBlock(func.release(), &_loss, datas[0], datas[1], datas[2], datas[3], datas[4]);
         points_added = true;
     }
     if (points_added)
@@ -469,11 +471,11 @@ void RelaxProblem::addTrackCosts(const MeasurementGraph &graph)
 
             if (!res.array().allFinite())
             {
-                spdlog::debug("Skipping adding NaN track measurement residual");
+                spdlog::trace("Skipping adding NaN track measurement residual");
                 continue;
             }
 
-            _problem->AddResidualBlock(func.release(), _huber_loss.get(), data, track.point.data());
+            _problem->AddResidualBlock(func.release(), &_loss, data, track.point.data());
             _problem->SetParameterization(data, &_quat_parameterization);
 
             if (!po.optimize)
@@ -591,13 +593,13 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
         }
         if (!all_finite)
         {
-            spdlog::debug("Skipping adding NaN track measurement residual");
+            spdlog::trace("Skipping adding NaN track measurement residual");
             continue;
         }
 
         for (int i = 0; i < 2; i++)
         {
-            _problem->AddResidualBlock(func[i].release(), _huber_loss.get(), datas[i], points.back().point.data());
+            _problem->AddResidualBlock(func[i].release(), &_loss, datas[i], points.back().point.data());
         }
         points_added = true;
     }

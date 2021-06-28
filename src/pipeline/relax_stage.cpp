@@ -1,11 +1,9 @@
 #include <opencalibration/pipeline/relax_stage.hpp>
 
+#include <jk/KMeans.h>
 #include <opencalibration/performance/performance.hpp>
-#include <opencalibration/relax/relax.hpp>
 
 #include <spdlog/spdlog.h>
-
-#include <unordered_set>
 
 namespace
 {
@@ -19,153 +17,79 @@ namespace opencalibration
 {
 
 void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &node_ids,
-                      const jk::tree::KDTree<size_t, 3> &imageGPSLocations, bool force_optimize_all)
+                      const jk::tree::KDTree<size_t, 3> &imageGPSLocations, bool final_global_relax)
 {
     PerformanceMeasure p("Relax init");
-    _directly_connected.clear();
-    _edges_to_optimize.clear();
-    _ids_added.clear();
-    _local_poses.clear();
+    _groups.clear();
 
-    int connection_order_to_include = 2;
+    std::vector<size_t> actual_node_ids = node_ids;
 
-    _local_poses.reserve(node_ids.size());
-
-    _optimize_all = force_optimize_all;
-    if (_optimize_all)
+    if (final_global_relax)
     {
-        _last_graph_size_full_relax = graph.size_nodes();
-    }
-
-    for (size_t node_id : node_ids)
-    {
-        const auto *node = graph.getNode(node_id);
-        NodePose pose;
-        pose.node_id = node_id;
-        pose.orientation = node->payload.orientation;
-        pose.position = node->payload.position;
-        _local_poses.push_back(pose);
-        build_optimization_edges(graph, imageGPSLocations, pose.node_id);
-    }
-
-    for (int i = 0; i < connection_order_to_include; i++)
-    {
-        // remove already added node ids from nodes to still connect
-        auto newly_connected = _directly_connected;
-        for (size_t id : _ids_added)
-        {
-            newly_connected.erase(id);
-        }
-
-        _local_poses.reserve(_local_poses.size() + newly_connected.size());
-
-        // add nodes that are directly connected
-        for (size_t node_id : newly_connected)
-        {
-            const auto *node = graph.getNode(node_id);
-            NodePose pose;
-            pose.node_id = node_id;
-            pose.orientation = node->payload.orientation;
-            pose.position = node->payload.position;
-            _local_poses.push_back(pose);
-            build_optimization_edges(graph, imageGPSLocations, pose.node_id);
-        }
-    }
-
-    if (_optimize_all)
-    {
+        actual_node_ids.clear();
+        actual_node_ids.reserve(graph.size_nodes());
         for (auto iter = graph.nodebegin(); iter != graph.nodeend(); ++iter)
         {
-            if (_ids_added.find(iter->first) != _ids_added.end())
-            {
-                continue;
-            }
-            if (iter->second.payload.orientation.coeffs().hasNaN() || iter->second.payload.position.hasNaN())
-            {
-                continue;
-            }
-
-            NodePose pose;
-            pose.node_id = iter->first;
-            pose.orientation = iter->second.payload.orientation;
-            pose.position = iter->second.payload.position;
-            _local_poses.push_back(pose);
-            build_optimization_edges(graph, imageGPSLocations, pose.node_id);
+            actual_node_ids.push_back(iter->first);
         }
     }
 
-    initializeOrientation(graph, _local_poses);
+    const size_t num_groups = std::max<size_t>(1, static_cast<size_t>(std::ceil(actual_node_ids.size() / 200)));
 
-    spdlog::info("Queueing {} image nodes, {} edges for graph relaxation", _local_poses.size(),
-                 _edges_to_optimize.size());
-}
+    spdlog::info("Splitting relax into {} groups", num_groups);
 
-void RelaxStage::build_optimization_edges(const MeasurementGraph &graph,
-                                          const jk::tree::KDTree<size_t, 3> &imageGPSLocations, size_t node_id)
-{
+    jk::tree::KMeans<size_t, 3> k_groups(num_groups);
 
-    const auto *node = graph.getNode(node_id);
-    auto knn = imageGPSLocations.searchKnn(to_array(node->payload.position), 10);
-    std::unordered_set<size_t> ideally_connected_nodes(knn.size());
-    for (const auto &edge : knn)
+    for (size_t node_id : actual_node_ids)
     {
-        ideally_connected_nodes.insert(edge.payload);
+        auto location = to_array(graph.getNode(node_id)->payload.position);
+        k_groups.add(location, node_id);
     }
-    ideally_connected_nodes.erase(node_id);
-    for (size_t edge_id : node->getEdges())
+
+    if (num_groups > 1)
+        for (int i = 0; i < 10; i++) // 10 iterations should be enough for anybody
+        {
+            k_groups.iterate();
+        }
+
+    size_t graph_connection_depth = num_groups > 1 ? 0 : 2;
+
+    for (const auto &group : k_groups.getClusters())
     {
-        const auto *edge = graph.getEdge(edge_id);
-        if (edge->getSource() == node_id &&
-            ideally_connected_nodes.find(edge->getDest()) != ideally_connected_nodes.end())
+        std::vector<size_t> group_ids;
+        group_ids.reserve(group.points.size());
+        for (const auto &p : group.points)
         {
-            _edges_to_optimize.insert(edge_id);
-            _directly_connected.insert(edge->getDest());
+            group_ids.push_back(p.second);
         }
-        else if (edge->getDest() == node_id &&
-                 ideally_connected_nodes.find(edge->getSource()) != ideally_connected_nodes.end())
-        {
-            _edges_to_optimize.insert(edge_id);
-            _directly_connected.insert(edge->getSource());
-        }
+        spdlog::info("Group added with {} nodes", group_ids.size());
+        _groups.emplace_back();
+        _groups.back().init(graph, group_ids, imageGPSLocations, graph_connection_depth,
+                            final_global_relax ? RelaxGroup::RelaxType::MEASUREMENT_RELAX_POINTS
+                                               : RelaxGroup::RelaxType::RELATIVE_RELAX);
     }
-    _ids_added.insert(node_id);
 }
 
 std::vector<std::function<void()>> RelaxStage::get_runners(const MeasurementGraph &graph)
 {
-    if (_local_poses.size() > 0)
+    std::vector<std::function<void()>> funcs;
+    for (auto &g : _groups)
     {
-        return {[&]() {
-            if (_optimize_all)
-            {
-                PerformanceMeasure p("Relax runner global");
-                relax3dPointMeasurements(graph, _local_poses, _edges_to_optimize);
-                relax3dPointMeasurements(graph, _local_poses, _edges_to_optimize);
-                relax3dPointMeasurements(graph, _local_poses, _edges_to_optimize);
-            }
-            else
-            {
-                PerformanceMeasure p("Relax runner local");
-                relaxDecompositions(graph, _local_poses, _edges_to_optimize);
-            }
-        }};
+        funcs.push_back([&]() { g.run(graph); });
     }
-    return {};
+    return funcs;
 }
 
 std::vector<size_t> RelaxStage::finalize(MeasurementGraph &graph)
 {
     PerformanceMeasure p("Relax finalize");
     std::vector<size_t> optimized_ids;
-    optimized_ids.reserve(_local_poses.size());
-    for (const auto &pose : _local_poses)
+    for (auto &g : _groups)
     {
-        auto *node = graph.getNode(pose.node_id);
-        node->payload.orientation = pose.orientation;
-        node->payload.position = pose.position;
-        optimized_ids.push_back(pose.node_id);
+        auto group_ids = g.finalize(graph);
+        optimized_ids.insert(optimized_ids.end(), group_ids.begin(), group_ids.end());
     }
-    _local_poses.clear();
+    _groups.clear();
     return optimized_ids;
 }
 

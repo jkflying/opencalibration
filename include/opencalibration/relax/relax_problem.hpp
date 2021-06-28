@@ -79,7 +79,7 @@ class RelaxProblem
     void *_log_forwarder_dependency;
 
     ceres::Solver::Options _solver_options;
-    std::unique_ptr<ceres::HuberLoss> _huber_loss;
+    ceres::LossFunctionWrapper _loss;
 
     ceres::Problem::Options _problemOptions;
     ceres::EigenQuaternionParameterization _quat_parameterization;
