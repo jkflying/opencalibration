@@ -65,14 +65,21 @@ Pipeline::Pipeline(size_t parallelism)
         std::vector<std::string> paths;
         std::vector<size_t> previous_loaded_ids, previous_linked_ids, next_loaded_ids, next_linked_ids,
             next_relaxed_ids;
+        size_t empty_iterations = 0;
         while (_keep_running)
         {
             paths.clear();
-            if (get_paths(paths) || previous_loaded_ids.size() > 0 || previous_linked_ids.size() > 0)
+            if (get_paths(paths) || empty_iterations++ < 5)
             {
                 _runner.status = ThreadStatus::BUSY;
                 next_loaded_ids.clear();
                 next_linked_ids.clear();
+
+                if (previous_loaded_ids.size() > 0 || previous_linked_ids.size() > 0)
+                {
+                    empty_iterations = 0;
+                }
+
                 process_images(paths, previous_loaded_ids, previous_linked_ids, next_loaded_ids, next_linked_ids,
                                next_relaxed_ids);
 

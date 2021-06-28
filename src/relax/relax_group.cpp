@@ -25,11 +25,13 @@ void RelaxGroup::init(const MeasurementGraph &graph, const std::vector<size_t> &
     PerformanceMeasure p("Relax init");
     _directly_connected.clear();
     _edges_to_optimize.clear();
-    _ids_added.clear();
+    _nodes_to_optimize.clear();
     _local_poses.clear();
 
     _relax_type = relax_type;
     _local_poses.reserve(node_ids.size());
+
+    _nodes_to_optimize.insert(node_ids.begin(), node_ids.end());
 
     for (size_t node_id : node_ids)
     {
@@ -45,15 +47,18 @@ void RelaxGroup::init(const MeasurementGraph &graph, const std::vector<size_t> &
     for (size_t i = 0; i < graph_connection_depth; i++)
     {
         // remove already added node ids from nodes to still connect
-        auto newly_connected = _directly_connected;
-        for (size_t id : _ids_added)
+        std::unordered_set<size_t> newly_connected;
+        for (size_t id : _directly_connected)
         {
-            newly_connected.erase(id);
+            if (_nodes_to_optimize.find(id) == _nodes_to_optimize.end())
+            {
+                newly_connected.insert(id);
+            }
         }
 
         _local_poses.reserve(_local_poses.size() + newly_connected.size());
 
-        // add nodes that are directly connected
+        // add new nodes that are directly connected
         for (size_t node_id : newly_connected)
         {
             const auto *node = graph.getNode(node_id);
@@ -90,17 +95,22 @@ void RelaxGroup::build_optimization_edges(const MeasurementGraph &graph,
         if (edge->getSource() == node_id &&
             ideally_connected_nodes.find(edge->getDest()) != ideally_connected_nodes.end())
         {
-            _edges_to_optimize.insert(edge_id);
             _directly_connected.insert(edge->getDest());
+            if (_nodes_to_optimize.find(edge->getDest()) != _nodes_to_optimize.end())
+            {
+                _edges_to_optimize.insert(edge_id);
+            }
         }
         else if (edge->getDest() == node_id &&
                  ideally_connected_nodes.find(edge->getSource()) != ideally_connected_nodes.end())
         {
-            _edges_to_optimize.insert(edge_id);
             _directly_connected.insert(edge->getSource());
+            if (_nodes_to_optimize.find(edge->getSource()) != _nodes_to_optimize.end())
+            {
+                _edges_to_optimize.insert(edge_id);
+            }
         }
     }
-    _ids_added.insert(node_id);
 }
 
 void RelaxGroup::run(const MeasurementGraph &graph)
@@ -111,8 +121,6 @@ void RelaxGroup::run(const MeasurementGraph &graph)
         {
         case RelaxType::MEASUREMENT_RELAX_POINTS: {
             PerformanceMeasure p("Relax runner points");
-            relax3dPointMeasurements(graph, _local_poses, _edges_to_optimize);
-            relax3dPointMeasurements(graph, _local_poses, _edges_to_optimize);
             relax3dPointMeasurements(graph, _local_poses, _edges_to_optimize);
             break;
         }

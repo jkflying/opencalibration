@@ -34,9 +34,10 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
         }
     }
 
-    const size_t num_groups = std::max<size_t>(1, static_cast<size_t>(std::ceil(actual_node_ids.size() / 200)));
+    const size_t num_groups =
+        final_global_relax ? std::max<size_t>(1, static_cast<size_t>(std::ceil(actual_node_ids.size() / 200))) : 1;
 
-    spdlog::info("Splitting relax into {} groups", num_groups);
+    spdlog::info("Splitting relax into {} group(s)", num_groups);
 
     jk::tree::KMeans<size_t, 3> k_groups(num_groups);
 
@@ -68,6 +69,9 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
                             final_global_relax ? RelaxGroup::RelaxType::MEASUREMENT_RELAX_POINTS
                                                : RelaxGroup::RelaxType::RELATIVE_RELAX);
     }
+    // k-means were smallest to biggest, but we want to process the big ones first to improve load balancing on really
+    // large problem
+    std::reverse(_groups.begin(), _groups.end());
 }
 
 std::vector<std::function<void()>> RelaxStage::get_runners(const MeasurementGraph &graph)

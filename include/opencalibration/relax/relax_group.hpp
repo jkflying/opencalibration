@@ -30,7 +30,7 @@ class RelaxGroup
   private:
     std::vector<NodePose> _local_poses;
     std::unordered_set<size_t> _edges_to_optimize;
-    std::unordered_set<size_t> _ids_added;
+    std::unordered_set<size_t> _nodes_to_optimize;
     std::unordered_set<size_t> _directly_connected;
 
     void build_optimization_edges(const MeasurementGraph &graph, const jk::tree::KDTree<size_t, 3> &imageGPSLocations,
