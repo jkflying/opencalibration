@@ -39,6 +39,9 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
 
     spdlog::info("Splitting relax into {} group(s)", num_groups);
 
+    // TODO: spectral cluster based on mincut of edges rather than clustering on GPS locations
+    // TODO: weight edges that were cut in previous iterations higher so that the clusters change each iteration
+
     jk::tree::KMeans<size_t, 3> k_groups(num_groups);
 
     for (size_t node_id : actual_node_ids)
