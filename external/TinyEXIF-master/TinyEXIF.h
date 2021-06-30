@@ -1,4 +1,3 @@
-// clang-format off
 /*
   TinyEXIF.h -- A simple ISO C++ library to parse basic EXIF and XMP
                 information from a JPEG file.
@@ -10,25 +9,25 @@
   Based on the easyexif library (2013 version)
     https://github.com/mayanklahiri/easyexif
   of Mayank Lahiri (mlahiri@gmail.com).
-
-  Redistribution and use in source and binary forms, with or without
+  
+  Redistribution and use in source and binary forms, with or without 
   modification, are permitted provided that the following conditions are met:
 
-   - Redistributions of source code must retain the above copyright notice,
+   - Redistributions of source code must retain the above copyright notice, 
      this list of conditions and the following disclaimer.
-   - Redistributions in binary form must reproduce the above copyright notice,
-     this list of conditions and the following disclaimer in the documentation
+   - Redistributions in binary form must reproduce the above copyright notice, 
+     this list of conditions and the following disclaimer in the documentation 
    and/or other materials provided with the distribution.
 
-  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY EXPRESS
-  OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
-  OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
-  NO EVENT SHALL THE FREEBSD PROJECT OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
-  INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
-  BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-  DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
-  OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
-  NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
+  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY EXPRESS 
+  OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES 
+  OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN 
+  NO EVENT SHALL THE FREEBSD PROJECT OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, 
+  INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, 
+  BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, 
+  DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY 
+  OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING 
+  NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, 
   EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
@@ -101,6 +100,7 @@ class TINYEXIF_LIB EXIFInfo {
 public:
 	EXIFInfo();
 	EXIFInfo(EXIFStream& stream);
+	EXIFInfo(std::istream& stream); // NB: the stream must have been opened in binary mode
 	EXIFInfo(const uint8_t* data, unsigned length);
 
 	// Parsing function for an entire JPEG image stream.
@@ -111,18 +111,21 @@ public:
 	// RETURN:  PARSE_SUCCESS (0) on success with 'result' filled out
 	//          error code otherwise, as defined by the PARSE_* macros
 	int parseFrom(EXIFStream& stream);
+	int parseFrom(std::istream& stream); // NB: the stream must have been opened in binary mode
 	int parseFrom(const uint8_t* data, unsigned length);
 
 	// Parsing function for an EXIF segment. This is used internally by parseFrom()
-	// but can be called for special cases where only the EXIF section is
+	// but can be called for special cases where only the EXIF section is 
 	// available (i.e., a blob starting with the bytes "Exif\0\0").
 	int parseFromEXIFSegment(const uint8_t* buf, unsigned len);
 
+#ifndef TINYEXIF_NO_XMP_SUPPORT
 	// Parsing function for an XMP segment. This is used internally by parseFrom()
-	// but can be called for special cases where only the XMP section is
+	// but can be called for special cases where only the XMP section is 
 	// available (i.e., a blob starting with the bytes "http://ns.adobe.com/xap/1.0/\0").
 	int parseFromXMPSegment(const uint8_t* buf, unsigned len);
 	int parseFromXMPSegmentXML(const char* szXML, unsigned len);
+#endif // TINYEXIF_NO_XMP_SUPPORT
 
 	// Set all data members to default values.
 	// Should be called before parsing a new stream.
@@ -282,7 +285,7 @@ public:
 		double GPSDOP;                  // GPS DOP (data degree of precision)
 		uint16_t GPSDifferential;       // Differential correction applied to the GPS receiver (may not exist)
 										// 0: measurement without differential correction
-										// 1: differential correction applied
+										// 1: differential correction applied 
 		std::string GPSMapDatum;        // Geodetic survey data (may not exist)
 		std::string GPSTimeStamp;       // Time as UTC (Coordinated Universal Time) (may not exist)
 		std::string GPSDateStamp;       // A character string recording date and time information relative to UTC (Coordinated Universal Time) YYYY:MM:DD (may not exist)
@@ -299,6 +302,17 @@ public:
 		bool hasOrientation() const;    // Return true if (roll,yaw,pitch) is available
 		bool hasSpeed() const;          // Return true if (speedX,speedY,speedZ) is available
 	} GeoLocation;
+	struct TINYEXIF_LIB GPano_t {           // Spherical metadata. https://developers.google.com/streetview/spherical-metadata
+		double PosePitchDegrees;        // Pitch, measured in degrees above the horizon, for the center in the image. Value must be >= -90 and <= 90.
+		double PoseRollDegrees;         // Roll, measured in degrees, of the image where level with the horizon is 0. As roll increases, the horizon rotates counterclockwise in the image. Value must be > -180 and <= 180.
+		bool hasPosePitchDegrees() const; // Return true if PosePitchDegrees is available
+		bool hasPoseRollDegrees() const; // Return true if PoseRollDegrees is available
+	} GPano;
+	struct TINYEXIF_LIB MicroVideo_t {      // Google camera video file in metadata
+		uint32_t HasMicroVideo;         // not zero if exists
+		uint32_t MicroVideoVersion;     // just regularinfo
+		uint32_t MicroVideoOffset;      // offset from end of file
+	} MicroVideo;
 };
 
 } // namespace TinyEXIF

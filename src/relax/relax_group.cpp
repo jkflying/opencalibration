@@ -22,7 +22,6 @@ void RelaxGroup::init(const MeasurementGraph &graph, const std::vector<size_t> &
                       const jk::tree::KDTree<size_t, 3> &imageGPSLocations, size_t graph_connection_depth,
                       RelaxType relax_type)
 {
-    PerformanceMeasure p("Relax init");
     _directly_connected.clear();
     _edges_to_optimize.clear();
     _nodes_to_optimize.clear();
@@ -140,7 +139,6 @@ void RelaxGroup::run(const MeasurementGraph &graph)
 
 std::vector<size_t> RelaxGroup::finalize(MeasurementGraph &graph)
 {
-    PerformanceMeasure p("Relax finalize");
     std::vector<size_t> optimized_ids;
     optimized_ids.reserve(_local_poses.size());
     for (const auto &pose : _local_poses)

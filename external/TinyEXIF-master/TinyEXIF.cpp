@@ -1,4 +1,3 @@
-// clang-format off
 /*
   TinyEXIF.cpp -- A simple ISO C++ library to parse basic EXIF and XMP
                   information from a JPEG file.
@@ -10,43 +9,50 @@
   Based on the easyexif library (2013 version)
     https://github.com/mayanklahiri/easyexif
   of Mayank Lahiri (mlahiri@gmail.com).
-
-  Redistribution and use in source and binary forms, with or without
+  
+  Redistribution and use in source and binary forms, with or without 
   modification, are permitted provided that the following conditions are met:
 
-   - Redistributions of source code must retain the above copyright notice,
+   - Redistributions of source code must retain the above copyright notice, 
      this list of conditions and the following disclaimer.
-   - Redistributions in binary form must reproduce the above copyright notice,
-     this list of conditions and the following disclaimer in the documentation
+   - Redistributions in binary form must reproduce the above copyright notice, 
+     this list of conditions and the following disclaimer in the documentation 
    and/or other materials provided with the distribution.
 
-  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY EXPRESS
-  OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
-  OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
-  NO EVENT SHALL THE FREEBSD PROJECT OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
-  INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
-  BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-  DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
-  OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
-  NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
+  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY EXPRESS 
+  OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES 
+  OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN 
+  NO EVENT SHALL THE FREEBSD PROJECT OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, 
+  INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, 
+  BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, 
+  DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY 
+  OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING 
+  NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, 
   EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 #include "TinyEXIF.h"
-#include "tinyxml2.h"
+
+#ifndef TINYEXIF_NO_XMP_SUPPORT
+#include <tinyxml2.h>
+#endif // TINYEXIF_NO_XMP_SUPPORT
+
 #include <cstdint>
 #include <cstdio>
 #include <cmath>
 #include <cfloat>
 #include <vector>
 #include <algorithm>
+#include <iostream>
 
 #ifdef _MSC_VER
-#include <tchar.h>
+namespace {
+    int strcasecmp(const char* a, const char* b) {
+        return _stricmp(a, b);
+    }
+}
 #else
-#include <strings.h>
-#define _tcsncmp         	strncmp
-#define _tcsicmp         	strcasecmp
+#include <string.h>
 #endif
 
 
@@ -61,7 +67,7 @@ namespace Tools {
 			return NULL;
 		for (size_t i=len-needle_len; i-- > 0; ) {
 			if (haystack[0] == needle[0] &&
-				0 == _tcsncmp(haystack, needle, needle_len))
+				0 == strncmp(haystack, needle, needle_len))
 				return haystack;
 			haystack++;
 		}
@@ -333,6 +339,9 @@ EXIFInfo::EXIFInfo() : Fields(FIELD_NA) {
 EXIFInfo::EXIFInfo(EXIFStream& stream) {
 	parseFrom(stream);
 }
+EXIFInfo::EXIFInfo(std::istream& stream) {
+	parseFrom(stream);
+}
 EXIFInfo::EXIFInfo(const uint8_t* data, unsigned length) {
 	parseFrom(data, length);
 }
@@ -367,12 +376,12 @@ void EXIFInfo::parseIFDImage(EntryParser& parser, unsigned& exif_sub_ifd_offset,
 		break;
 
 	case 0x011a:
-		// XResolution
+		// XResolution 
 		parser.Fetch(XResolution);
 		break;
 
 	case 0x011b:
-		// YResolution
+		// YResolution 
 		parser.Fetch(YResolution);
 		break;
 
@@ -435,11 +444,13 @@ void EXIFInfo::parseIFDImage(EntryParser& parser, unsigned& exif_sub_ifd_offset,
 void EXIFInfo::parseIFDExif(EntryParser& parser) {
 	switch (parser.GetTag()) {
 	case 0x02bc:
+#ifndef TINYEXIF_NO_XMP_SUPPORT
 		// XMP Metadata (Adobe technote 9-14-02)
 		if (parser.IsUndefined()) {
 			const std::string strXML(parser.FetchString());
 			parseFromXMPSegmentXML(strXML.c_str(), (unsigned)strXML.length());
 		}
+#endif // TINYEXIF_NO_XMP_SUPPORT
 		break;
 
 	case 0x829a:
@@ -490,7 +501,7 @@ void EXIFInfo::parseIFDExif(EntryParser& parser) {
 		break;
 
 	case 0x9204:
-		// Exposure bias value
+		// Exposure bias value 
 		parser.Fetch(ExposureBiasValue);
 		break;
 
@@ -623,7 +634,7 @@ void EXIFInfo::parseIFDExif(EntryParser& parser) {
 void EXIFInfo::parseIFDMakerNote(EntryParser& parser) {
 	const unsigned startOff = parser.GetOffset();
 	const uint32_t off = parser.GetSubIFD();
-	if (0 != _tcsicmp(Make.c_str(), "DJI"))
+	if (0 != strcasecmp(Make.c_str(), "DJI"))
 		return;
 	int num_entries = EntryParser::parse16(parser.GetBuffer()+off, parser.IsIntelAligned());
 	if (uint32_t(2 + 12 * num_entries) > parser.GetLength())
@@ -633,7 +644,7 @@ void EXIFInfo::parseIFDMakerNote(EntryParser& parser) {
 	--num_entries;
 	std::string maker;
 	if (parser.GetTag() == 1 && parser.Fetch(maker)) {
-		if (0 == _tcsicmp(maker.c_str(), "DJI")) {
+		if (0 == strcasecmp(maker.c_str(), "DJI")) {
 			while (--num_entries >= 0) {
 				parser.ParseTag();
 				switch (parser.GetTag()) {
@@ -809,6 +820,7 @@ int EXIFInfo::parseFrom(EXIFStream& stream) {
 				return app1s(PARSE_INVALID_JPEG);
 			switch (int ret=parseFromEXIFSegment(buf, sectionLength)) {
 			case PARSE_ABSENT_DATA:
+#ifndef TINYEXIF_NO_XMP_SUPPORT
 				switch (ret=parseFromXMPSegment(buf, sectionLength)) {
 				case PARSE_ABSENT_DATA:
 					break;
@@ -819,6 +831,7 @@ int EXIFInfo::parseFrom(EXIFStream& stream) {
 				default:
 					return app1s(ret); // some error
 				}
+#endif // TINYEXIF_NO_XMP_SUPPORT
 				break;
 			case PARSE_SUCCESS:
 				if ((app1s|=FIELD_EXIF) == FIELD_ALL)
@@ -838,6 +851,36 @@ int EXIFInfo::parseFrom(EXIFStream& stream) {
 	}
 	return app1s();
 }
+
+
+int EXIFInfo::parseFrom(std::istream& stream) {
+	class EXIFStdStream : public EXIFStream {
+	public:
+		EXIFStdStream(std::istream& stream)
+			: stream(stream) {
+			// Would be nice to assert here that the stream was opened in binary mode, but
+			// apparently that's not possible: https://stackoverflow.com/a/224259/19254
+		}
+		bool IsValid() const override {
+			return !!stream;
+		}
+		const uint8_t* GetBuffer(unsigned desiredLength) override {
+			buffer.resize(desiredLength);
+			if (!stream.read(reinterpret_cast<char*>(buffer.data()), desiredLength))
+				return NULL;
+			return buffer.data();
+		}
+		bool SkipBuffer(unsigned desiredLength) override {
+			return (bool)stream.seekg(desiredLength, std::ios::cur);
+		}
+	private:
+		std::istream& stream;
+		std::vector<uint8_t> buffer;
+	};
+	EXIFStdStream streamWrapper(stream);
+	return parseFrom(streamWrapper);
+}
+
 
 int EXIFInfo::parseFrom(const uint8_t* buf, unsigned len) {
 	class EXIFStreamBuffer : public EXIFStream {
@@ -890,7 +933,7 @@ int EXIFInfo::parseFromEXIFSegment(const uint8_t* buf, unsigned len) {
 	// Now parsing the TIFF header. The first two bytes are either "II" or
 	// "MM" for Intel or Motorola byte alignment. Sanity check by parsing
 	// the uint16_t that follows, making sure it equals 0x2a. The
-	// last 4 bytes are an offset into the first IFD, which are added to
+	// last 4 bytes are an offset into the first IFD, which are added to 
 	// the global offset counter. For this block, we expect the following
 	// minimum size:
 	//  2 bytes: 'II' or 'MM'
@@ -971,6 +1014,8 @@ int EXIFInfo::parseFromEXIFSegment(const uint8_t* buf, unsigned len) {
 	return PARSE_SUCCESS;
 }
 
+#ifndef TINYEXIF_NO_XMP_SUPPORT
+
 //
 // Main parsing function for a XMP segment.
 // Do a sanity check by looking for bytes "http://ns.adobe.com/xap/1.0/\0".
@@ -1030,11 +1075,11 @@ int EXIFInfo::parseFromXMPSegmentXML(const char* szXML, unsigned len) {
 	if (element != NULL) {
 		const char* const szProjectionType(element->GetText());
 		if (szProjectionType != NULL) {
-			if (0 == _tcsicmp(szProjectionType, "perspective"))
+			if (0 == strcasecmp(szProjectionType, "perspective"))
 				ProjectionType = 1;
 			else
-			if (0 == _tcsicmp(szProjectionType, "equirectangular") ||
-				0 == _tcsicmp(szProjectionType, "spherical"))
+			if (0 == strcasecmp(szProjectionType, "equirectangular") ||
+				0 == strcasecmp(szProjectionType, "spherical"))
 				ProjectionType = 2;
 		}
 	}
@@ -1059,9 +1104,20 @@ int EXIFInfo::parseFromXMPSegmentXML(const char* szXML, unsigned len) {
 			}
 			return false;
 		}
+		// same as previous function but with unsigned int results
+		static bool Value(const tinyxml2::XMLElement* document, const char* name, uint32_t& value) {
+			const char* szAttribute = document->Attribute(name);
+			if (szAttribute == NULL) {
+				const tinyxml2::XMLElement* const element(document->FirstChildElement(name));
+				if (element == NULL || (szAttribute = element->GetText()) == NULL)
+					return false;
+			}
+			value = strtoul(szAttribute, NULL, 0); return true;
+			return false;
+		}
 	};
 	const char* szAbout(document->Attribute("rdf:about"));
-	if (0 == _tcsicmp(Make.c_str(), "DJI") || (szAbout != NULL && 0 == _tcsicmp(szAbout, "DJI Meta Data"))) {
+	if (0 == strcasecmp(Make.c_str(), "DJI") || (szAbout != NULL && 0 == strcasecmp(szAbout, "DJI Meta Data"))) {
 		ParseXMP::Value(document, "drone-dji:AbsoluteAltitude", GeoLocation.Altitude);
 		ParseXMP::Value(document, "drone-dji:RelativeAltitude", GeoLocation.RelativeAltitude);
 		ParseXMP::Value(document, "drone-dji:GimbalRollDegree", GeoLocation.RollDegree);
@@ -1071,7 +1127,7 @@ int EXIFInfo::parseFromXMPSegmentXML(const char* szXML, unsigned len) {
 		ParseXMP::Value(document, "drone-dji:CalibratedOpticalCenterX", Calibration.OpticalCenterX);
 		ParseXMP::Value(document, "drone-dji:CalibratedOpticalCenterY", Calibration.OpticalCenterY);
 	} else
-	if (0 == _tcsicmp(Make.c_str(), "senseFly") || 0 == _tcsicmp(Make.c_str(), "Sentera")) {
+	if (0 == strcasecmp(Make.c_str(), "senseFly") || 0 == strcasecmp(Make.c_str(), "Sentera")) {
 		ParseXMP::Value(document, "Camera:Roll", GeoLocation.RollDegree);
 		if (ParseXMP::Value(document, "Camera:Pitch", GeoLocation.PitchDegree)) {
 			// convert to DJI format: senseFly uses pitch 0 as NADIR, whereas DJI -90
@@ -1081,7 +1137,7 @@ int EXIFInfo::parseFromXMPSegmentXML(const char* szXML, unsigned len) {
 		ParseXMP::Value(document, "Camera:GPSXYAccuracy", GeoLocation.AccuracyXY);
 		ParseXMP::Value(document, "Camera:GPSZAccuracy", GeoLocation.AccuracyZ);
 	} else
-	if (0 == _tcsicmp(Make.c_str(), "PARROT")) {
+	if (0 == strcasecmp(Make.c_str(), "PARROT")) {
 		ParseXMP::Value(document, "Camera:Roll", GeoLocation.RollDegree) ||
 		ParseXMP::Value(document, "drone-parrot:CameraRollDegree", GeoLocation.RollDegree);
 		if (ParseXMP::Value(document, "Camera:Pitch", GeoLocation.PitchDegree) ||
@@ -1093,10 +1149,19 @@ int EXIFInfo::parseFromXMPSegmentXML(const char* szXML, unsigned len) {
 		ParseXMP::Value(document, "drone-parrot:CameraYawDegree", GeoLocation.YawDegree);
 		ParseXMP::Value(document, "Camera:AboveGroundAltitude", GeoLocation.RelativeAltitude);
 	}
+	ParseXMP::Value(document, "GPano:PosePitchDegrees", GPano.PosePitchDegrees);
+	ParseXMP::Value(document, "GPano:PoseRollDegrees", GPano.PoseRollDegrees);
 
+	// parse GCamera:MicroVideo
+	if (document->Attribute("GCamera:MicroVideo")) {
+		ParseXMP::Value(document, "GCamera:MicroVideo", MicroVideo.HasMicroVideo);
+		ParseXMP::Value(document, "GCamera:MicroVideoVersion", MicroVideo.MicroVideoVersion);
+		ParseXMP::Value(document, "GCamera:MicroVideoOffset", MicroVideo.MicroVideoOffset);
+	}
 	return PARSE_SUCCESS;
 }
 
+#endif // TINYEXIF_NO_XMP_SUPPORT
 
 void EXIFInfo::Geolocation_t::parseCoords() {
 	// Convert GPS latitude
@@ -1144,6 +1209,13 @@ bool EXIFInfo::Geolocation_t::hasSpeed() const {
 	return SpeedX != DBL_MAX && SpeedY != DBL_MAX && SpeedZ != DBL_MAX;
 }
 
+bool EXIFInfo::GPano_t::hasPosePitchDegrees() const {
+	return PosePitchDegrees != DBL_MAX;
+}
+
+bool EXIFInfo::GPano_t::hasPoseRollDegrees() const {
+	return PoseRollDegrees != DBL_MAX;
+}
 
 void EXIFInfo::clear() {
 	Fields = FIELD_NA;
@@ -1231,6 +1303,15 @@ void EXIFInfo::clear() {
 	GeoLocation.LonComponents.minutes   = 0;
 	GeoLocation.LonComponents.seconds   = 0;
 	GeoLocation.LonComponents.direction = 0;
+
+	// GPano
+	GPano.PosePitchDegrees = DBL_MAX;
+	GPano.PoseRollDegrees = DBL_MAX;
+
+	// Video metadata
+	MicroVideo.HasMicroVideo = 0;
+	MicroVideo.MicroVideoVersion = 0;
+	MicroVideo.MicroVideoOffset = 0;
 }
 
 } // namespace TinyEXIF

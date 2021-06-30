@@ -51,11 +51,12 @@ template <typename T, size_t D> class KMeans
     {
         if (!_initialized)
         {
-            if (initialize())
+            if(initialize())
                 return true; // first iteration just initializes on random seeds
             else
                 return false;
         }
+
 
         reassign_centroids();
 
@@ -186,6 +187,7 @@ template <typename T, size_t D> class KMeans
     {
         // take out all points, leaving centroids where they are
         point_vec points = collect_all_points();
+
 
         // re-assign points to closest centroid
         for (const auto &p : points)
