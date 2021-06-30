@@ -47,7 +47,9 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
     {
         spdlog::info("Splitting relax into {} group(s)", num_groups);
 
-        // spectral cluster based on mincut of edges rather than clustering on GPS locations
+        // Spectral cluster based on mincut of edges rather than clustering on GPS locations
+        // Use the Ng, Jordan and Weiss (2002) formulation in order to use the symmetric eigen solver which converges
+        // faster
         // TODO: weight edges that were cut in previous iterations higher so that the clusters change each iteration
         std::vector<Eigen::Triplet<double>> triplets;
         if (graph.size_nodes() > 0)
@@ -55,8 +57,9 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
             triplets.reserve(graph.size_edges() * actual_node_ids.size() * 20 / graph.size_nodes());
         }
 
+        using Sparse = Eigen::SparseMatrix<double>;
         std::unordered_map<size_t, size_t> reverse_node_id_lookup;
-        Eigen::SparseMatrix<double> degree(actual_node_ids.size(), actual_node_ids.size());
+        Sparse degree(actual_node_ids.size(), actual_node_ids.size());
         degree.reserve(actual_node_ids.size());
         for (size_t i = 0; i < actual_node_ids.size(); i++)
         {
@@ -84,15 +87,25 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
                 }
             }
         }
-        Eigen::SparseMatrix<double> adjacency(actual_node_ids.size(), actual_node_ids.size());
+        Sparse adjacency(actual_node_ids.size(), actual_node_ids.size());
         adjacency.setFromTriplets(triplets.begin(), triplets.end());
 
-        Eigen::SparseMatrix<double> laplacian = degree - adjacency;
+        const Sparse laplacian = degree - adjacency;
+
+        Sparse inverse_sqrt_degree = degree;
+        for (Eigen::Index i = 0; i < inverse_sqrt_degree.rows(); i++)
+        {
+            inverse_sqrt_degree.coeffRef(i, i) = 1 / std::sqrt(inverse_sqrt_degree.coeff(i, i));
+        }
+        const Sparse normalizedAdjacency = inverse_sqrt_degree * adjacency * inverse_sqrt_degree;
+        Sparse identity = degree;
+        identity.setIdentity();
+        const Sparse normalizedLaplacian = identity - normalizedAdjacency;
 
         using Op = Spectra::SparseSymMatProd<double>;
         const size_t dimensions = 3;
-        Op op(laplacian);
-        Spectra::SymEigsSolver<double, Spectra::LARGEST_MAGN, Op> eigen_solver(&op, dimensions, dimensions + 1);
+        Op op(normalizedLaplacian);
+        Spectra::SymEigsSolver<double, Spectra::SMALLEST_MAGN, Op> eigen_solver(&op, dimensions, dimensions + 1);
 
         eigen_solver.init();
         int nconv = eigen_solver.compute();
@@ -112,7 +125,7 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
 
             for (size_t i = 0; i < actual_node_ids.size(); i++)
             {
-                auto location = to_array(evectors.row(i));
+                auto location = to_array(evectors.row(i).normalized());
                 size_t node_id = actual_node_ids[i];
                 k_groups.add(location, node_id);
             }
