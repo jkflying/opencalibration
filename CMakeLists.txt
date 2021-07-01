@@ -34,9 +34,6 @@ include_directories(${RAPIDJSON_INCLUDE_DIRS})
 
 find_package(OpenMP REQUIRED)
 find_package(spdlog REQUIRED)
-
-include_directories(external/jk-tree/include)
-include_directories(external/spectra-0.9.0/include)
 # =======================================
 
 if(MSVC)
