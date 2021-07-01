@@ -5,9 +5,7 @@
 #include <random>
 #include <vector>
 
-namespace jk
-{
-namespace tree
+namespace opencalibration
 {
 
 template <typename T, size_t D> class KMeans
@@ -51,12 +49,11 @@ template <typename T, size_t D> class KMeans
     {
         if (!_initialized)
         {
-            if(initialize())
+            if (initialize())
                 return true; // first iteration just initializes on random seeds
             else
                 return false;
         }
-
 
         reassign_centroids();
 
@@ -178,7 +175,8 @@ template <typename T, size_t D> class KMeans
         {
             for (size_t j = 0; j < D; j++)
             {
-                _clusters[i].centroid[j] = _clusters[_clusters.size() - 1 - i].centroid[j] * (1 + 1e-9);
+                const double sign = (i + j) % 2 == 0 ? 1 : -1;
+                _clusters[i].centroid[j] = _clusters[_clusters.size() - 1 - i].centroid[j] * (1 + sign * 1e-9);
             }
         }
     }
@@ -187,7 +185,6 @@ template <typename T, size_t D> class KMeans
     {
         // take out all points, leaving centroids where they are
         point_vec points = collect_all_points();
-
 
         // re-assign points to closest centroid
         for (const auto &p : points)
@@ -222,5 +219,4 @@ template <typename T, size_t D> class KMeans
     bool _initialized{false};
 };
 
-} // namespace tree
-} // namespace jk
+} // namespace opencalibration

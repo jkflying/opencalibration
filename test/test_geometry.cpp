@@ -1,6 +1,9 @@
-#include <opencalibration/geometry/intersection.hpp>
 
 #include <gtest/gtest.h>
+
+#include <opencalibration/geometry/KMeans.hpp>
+#include <opencalibration/geometry/intersection.hpp>
+#include <opencalibration/geometry/spectral_cluster.hpp>
 
 using namespace opencalibration;
 
@@ -114,4 +117,87 @@ TEST(geometry, ray_plane_intersection)
 
     // THEN: it should be where we expect
     EXPECT_NEAR(0, (Eigen::Vector3d(3, 3, 2) - i).norm(), 1e-9);
+}
+
+TEST(kmeans, clusters)
+{
+    opencalibration::KMeans<size_t, 2> kmeans(4);
+    for (size_t i = 0; i < 50; i++)
+        for (size_t j = 0; j < 20; j++)
+            kmeans.add({(double)i, (double)j}, 20 * i + j);
+    // print clusters
+    auto print_clusters = [&]() {
+        std::cout << "clusters: " << kmeans.getClusters().front().points.size() << " - "
+                  << kmeans.getClusters().back().points.size() << " entries" << std::endl;
+    };
+
+    print_clusters();
+
+    for (int i = 0; i < 12; i++)
+    {
+        kmeans.iterate();
+        print_clusters();
+    }
+    print_clusters();
+}
+
+TEST(spectral, no_edges_no_spectralize)
+{
+    opencalibration::SpectralClustering<size_t, 2> spectral(4);
+    for (size_t i = 0; i < 5; i++)
+        for (size_t j = 0; j < 10; j++)
+            spectral.add({(double)i, (double)j}, 10 * i + j);
+    // print clusters
+    auto print_clusters = [&]() {
+        std::cout << spectral.getClusters().size() << " clusters: "
+                  << "  sizes:" << spectral.getClusters().front().points.size() << " - "
+                  << spectral.getClusters().back().points.size() << " entries" << std::endl;
+    };
+
+    print_clusters();
+
+    EXPECT_FALSE(spectral.spectralize());
+
+    spectral.fallback();
+
+    for (int i = 0; i < 12; i++)
+    {
+        spectral.iterate();
+        print_clusters();
+    }
+    print_clusters();
+}
+
+TEST(spectral, edges_spectralize)
+{
+    opencalibration::SpectralClustering<int, 2> spectral(4);
+    for (int i = 0; i < 5; i++)
+    {
+        for (int j = 0; j < 10; j++)
+        {
+            int id = 10 * i + j;
+            spectral.add({(double)i, (double)j}, id);
+            spectral.addLink(id, id + 1, 2);
+            spectral.addLink(id, id + 9, 1);
+            spectral.addLink(id, id + 10, 2);
+            spectral.addLink(id, id + 11, 1);
+        }
+    }
+    // print clusters
+    auto print_clusters = [&]() {
+        std::cout << spectral.getClusters().size() << " clusters: "
+                  << "  sizes:" << spectral.getClusters().front().points.size() << " - "
+                  << spectral.getClusters().back().points.size() << " entries" << std::endl;
+    };
+
+    print_clusters();
+
+    EXPECT_TRUE(spectral.spectralize());
+
+    for (int i = 0; i < 12; i++)
+    {
+        spectral.iterate();
+        print_clusters();
+    }
+    print_clusters();
 }

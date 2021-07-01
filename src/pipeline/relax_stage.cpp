@@ -1,11 +1,7 @@
 #include <opencalibration/pipeline/relax_stage.hpp>
 
-#include <jk/KMeans.h>
+#include <opencalibration/geometry/spectral_cluster.hpp>
 #include <opencalibration/performance/performance.hpp>
-
-#include <Spectra/MatOp/SparseSymMatProd.h>
-#include <Spectra/SymEigsSolver.h>
-#include <eigen3/Eigen/SparseCore>
 
 #include <spdlog/spdlog.h>
 
@@ -41,32 +37,16 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
     const size_t num_groups =
         final_global_relax ? std::max<size_t>(1, static_cast<size_t>(std::ceil(actual_node_ids.size() / 50))) : 1;
 
-    jk::tree::KMeans<size_t, 3> k_groups(num_groups);
+    SpectralClustering<size_t, 3> k_groups(num_groups);
+    for (size_t node_id : actual_node_ids)
+    {
+        auto location = to_array(graph.getNode(node_id)->payload.position);
+        k_groups.add(location, node_id);
+    }
 
     if (num_groups > 1)
     {
         spdlog::info("Splitting relax into {} group(s)", num_groups);
-
-        // Spectral cluster based on mincut of edges rather than clustering on GPS locations
-        // Use the Ng, Jordan and Weiss (2002) formulation in order to use the symmetric eigen solver which converges
-        // faster
-        // TODO: weight edges that were cut in previous iterations higher so that the clusters change each iteration
-        std::vector<Eigen::Triplet<double>> triplets;
-        if (graph.size_nodes() > 0)
-        {
-            triplets.reserve(graph.size_edges() * actual_node_ids.size() * 20 / graph.size_nodes());
-        }
-
-        using Sparse = Eigen::SparseMatrix<double>;
-        std::unordered_map<size_t, size_t> reverse_node_id_lookup;
-        Sparse degree(actual_node_ids.size(), actual_node_ids.size());
-        degree.reserve(actual_node_ids.size());
-        for (size_t i = 0; i < actual_node_ids.size(); i++)
-        {
-            reverse_node_id_lookup.emplace(actual_node_ids[i], i);
-            degree.insert(i, i) = 0;
-        }
-        degree.makeCompressed();
 
         for (size_t i = 0; i < actual_node_ids.size(); i++)
         {
@@ -74,88 +54,23 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
             for (size_t edge_id : graph.getNode(node_id)->getEdges())
             {
                 const auto *edge = graph.getEdge(edge_id);
-                auto source_index_it = reverse_node_id_lookup.find(edge->getSource());
-                auto dest_index_it = reverse_node_id_lookup.find(edge->getDest());
-                if (source_index_it != reverse_node_id_lookup.end() && dest_index_it != reverse_node_id_lookup.end())
-                {
-                    size_t si = source_index_it->second;
-                    size_t di = dest_index_it->second;
-                    triplets.emplace_back(si, di, 1);
-                    triplets.emplace_back(di, si, 1);
-                    degree.coeffRef(si, si) += 1;
-                    degree.coeffRef(di, di) += 1;
-                }
+                // TODO: add weight for edges which were cut during the last graph partitioning, so they are less likely
+                // to get cut next time
+                k_groups.addLink(edge->getSource(), edge->getDest(), 1);
             }
         }
-        Sparse adjacency(actual_node_ids.size(), actual_node_ids.size());
-        adjacency.setFromTriplets(triplets.begin(), triplets.end());
-
-        const Sparse laplacian = degree - adjacency;
-
-        Sparse inverse_sqrt_degree = degree;
-        for (Eigen::Index i = 0; i < inverse_sqrt_degree.rows(); i++)
+        if (!k_groups.spectralize())
         {
-            inverse_sqrt_degree.coeffRef(i, i) = 1 / std::sqrt(inverse_sqrt_degree.coeff(i, i));
+            k_groups.fallback();
         }
-        const Sparse normalizedAdjacency = inverse_sqrt_degree * adjacency * inverse_sqrt_degree;
-        Sparse identity = degree;
-        identity.setIdentity();
-        const Sparse normalizedLaplacian = identity - normalizedAdjacency;
-
-        using Op = Spectra::SparseSymMatProd<double>;
-        const size_t dimensions = 3;
-        Op op(normalizedLaplacian);
-        Spectra::SymEigsSolver<double, Spectra::SMALLEST_MAGN, Op> eigen_solver(&op, dimensions, dimensions + 1);
-
-        eigen_solver.init();
-        int nconv = eigen_solver.compute();
-
-        // Retrieve results
-        Eigen::VectorXd evalues;
-        Eigen::MatrixXd evectors;
-        if (eigen_solver.info() == Spectra::SUCCESSFUL)
+        for (int i = 0; i < 10; i++) // 10 iterations should be enough for anybody
         {
-            evalues = eigen_solver.eigenvalues();
-            evectors = eigen_solver.eigenvectors();
-            spdlog::info("{} eigenvalues found, for eigenvectors of length {}", nconv, evectors.rows());
-
-            // std::cout << "Laplacian:\n" << laplacian.toDense() << std::endl;
-            // std::cout << nconv << " eigenvalues found:\n" << evalues.transpose() << std::endl;
-            // std::cout << "Eigenvectors:\n" << evectors << std::endl;
-
-            for (size_t i = 0; i < actual_node_ids.size(); i++)
-            {
-                auto location = to_array(evectors.row(i).normalized());
-                size_t node_id = actual_node_ids[i];
-                k_groups.add(location, node_id);
-            }
-        }
-
-        else
-        {
-            for (size_t node_id : actual_node_ids)
-            {
-                auto location = to_array(graph.getNode(node_id)->payload.position);
-                k_groups.add(location, node_id);
-            }
-        }
-
-        if (num_groups > 1)
-        {
-            for (int i = 0; i < 10; i++) // 10 iterations should be enough for anybody
-            {
-                k_groups.iterate();
-            }
+            k_groups.iterate();
         }
     }
     else
     {
-
-        for (size_t node_id : actual_node_ids)
-        {
-            auto location = to_array(graph.getNode(node_id)->payload.position);
-            k_groups.add(location, node_id);
-        }
+        k_groups.fallback();
     }
 
     size_t graph_connection_depth = num_groups > 1 ? 0 : 2;
