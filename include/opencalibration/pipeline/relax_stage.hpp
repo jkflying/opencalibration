@@ -1,6 +1,7 @@
 #pragma once
 
 #include <jk/KDTree.h>
+
 #include <opencalibration/types/measurement_graph.hpp>
 #include <opencalibration/types/node_pose.hpp>
 
@@ -10,6 +11,8 @@
 namespace opencalibration
 {
 class RelaxGroup;
+
+template <typename, size_t> class SpectralClustering;
 
 class RelaxStage
 {
@@ -25,6 +28,7 @@ class RelaxStage
 
   private:
     std::vector<RelaxGroup> _groups;
+    std::unique_ptr<SpectralClustering<size_t, 3>> _k_groups;
 };
 
 } // namespace opencalibration

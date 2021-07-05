@@ -29,6 +29,13 @@ template <typename T, size_t D> class KMeans
         _clusters.resize(num_clusters);
     }
 
+    void reset(size_t num_clusters)
+    {
+        _clusters.clear();
+        _clusters.resize(num_clusters);
+        _initialized = false;
+    }
+
     void add(const std::array<double, D> &location, const T &value)
     {
 

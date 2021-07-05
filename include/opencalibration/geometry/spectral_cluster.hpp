@@ -27,6 +27,13 @@ template <typename T, size_t D> class SpectralClustering
     {
     }
 
+    void reset(size_t num_clusters)
+    {
+        _kmeans.reset(num_clusters);
+        _items.clear();
+        _links.clear();
+    }
+
     void add(const std::array<double, D> &location, const T &value)
     {
         _items.emplace_back(location, value);

@@ -17,7 +17,7 @@ std::array<double, 3> to_array(const Eigen::Vector3d &v)
 namespace opencalibration
 {
 
-RelaxStage::RelaxStage()
+RelaxStage::RelaxStage() : _k_groups(new SpectralClustering<size_t, 3>(0))
 {
 }
 RelaxStage::~RelaxStage()
@@ -45,11 +45,12 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
     const size_t num_groups =
         final_global_relax ? std::max<size_t>(1, static_cast<size_t>(std::ceil(actual_node_ids.size() / 50))) : 1;
 
-    SpectralClustering<size_t, 3> k_groups(num_groups);
+    _k_groups->reset(num_groups);
+
     for (size_t node_id : actual_node_ids)
     {
         auto location = to_array(graph.getNode(node_id)->payload.position);
-        k_groups.add(location, node_id);
+        _k_groups->add(location, node_id);
     }
 
     if (num_groups > 1)
@@ -64,26 +65,26 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
                 const auto *edge = graph.getEdge(edge_id);
                 // TODO: add weight for edges which were cut during the last graph partitioning, so they are less likely
                 // to get cut next time
-                k_groups.addLink(edge->getSource(), edge->getDest(), 1);
+                _k_groups->addLink(edge->getSource(), edge->getDest(), 1);
             }
         }
-        if (!k_groups.spectralize())
+        if (!_k_groups->spectralize())
         {
-            k_groups.fallback();
+            _k_groups->fallback();
         }
         for (int i = 0; i < 10; i++) // 10 iterations should be enough for anybody
         {
-            k_groups.iterate();
+            _k_groups->iterate();
         }
     }
     else
     {
-        k_groups.fallback();
+        _k_groups->fallback();
     }
 
     size_t graph_connection_depth = num_groups > 1 ? 0 : 2;
 
-    for (const auto &group : k_groups.getClusters())
+    for (const auto &group : _k_groups->getClusters())
     {
         std::vector<size_t> group_ids;
         group_ids.reserve(group.points.size());

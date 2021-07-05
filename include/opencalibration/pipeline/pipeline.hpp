@@ -83,7 +83,6 @@ class Pipeline
 
     Runner _runner;
 
-    std::mutex _graph_structure_mutex;
     MeasurementGraph _graph;
     jk::tree::KDTree<size_t, 3> _imageGPSLocations;
     GeoCoord _coordinate_system;

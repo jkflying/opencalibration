@@ -88,17 +88,18 @@ void Pipeline::process_images(const std::vector<std::string> &paths_to_load,
 
     using fvec = std::vector<std::function<void()>>;
 
+    bool last_iteration = paths_to_load.size() + previous_loaded_ids.size() == 0;
     _load_stage->init(paths_to_load);
-    fvec load_funcs = _load_stage->get_runners();
-
     _link_stage->init(_graph, _imageGPSLocations, previous_loaded_ids);
-    fvec link_funcs = _link_stage->get_runners(_graph);
-
-    bool last_iteration = load_funcs.size() + link_funcs.size() == 0;
     _relax_stage->init(_graph, previous_linked_ids, _imageGPSLocations, last_iteration);
-    fvec relax_funcs = _relax_stage->get_runners(_graph);
 
-    fvec funcs = interleave<fvec>({load_funcs, link_funcs, relax_funcs});
+    fvec funcs;
+    {
+        fvec load_funcs = _load_stage->get_runners();
+        fvec link_funcs = _link_stage->get_runners(_graph);
+        fvec relax_funcs = _relax_stage->get_runners(_graph);
+        funcs = interleave<fvec>({load_funcs, link_funcs, relax_funcs});
+    }
 
 #pragma omp parallel for schedule(dynamic, 1)
     for (int i = 0; i < (int)funcs.size(); i++)
@@ -106,7 +107,6 @@ void Pipeline::process_images(const std::vector<std::string> &paths_to_load,
         funcs[i]();
     }
 
-    std::lock_guard<std::mutex> graph_lock(_graph_structure_mutex);
     next_loaded_ids = _load_stage->finalize(_coordinate_system, _graph, _imageGPSLocations);
     next_linked_ids = _link_stage->finalize(_graph);
     next_relaxed_ids = _relax_stage->finalize(_graph);
