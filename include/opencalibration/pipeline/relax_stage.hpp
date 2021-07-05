@@ -1,7 +1,6 @@
 #pragma once
 
 #include <jk/KDTree.h>
-#include <opencalibration/relax/relax_group.hpp>
 #include <opencalibration/types/measurement_graph.hpp>
 #include <opencalibration/types/node_pose.hpp>
 
@@ -10,10 +9,13 @@
 
 namespace opencalibration
 {
+class RelaxGroup;
 
 class RelaxStage
 {
   public:
+    RelaxStage();
+    ~RelaxStage();
     void init(const MeasurementGraph &graph, const std::vector<size_t> &node_ids,
               const jk::tree::KDTree<size_t, 3> &imageGPSLocations, bool final_global_relax);
 

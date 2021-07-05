@@ -1,5 +1,6 @@
 #include <opencalibration/pipeline/pipeline.hpp>
 
+#include <opencalibration/combinatorics/interleave.hpp>
 #include <opencalibration/pipeline/link_stage.hpp>
 #include <opencalibration/pipeline/load_stage.hpp>
 #include <opencalibration/pipeline/relax_stage.hpp>
@@ -10,37 +11,6 @@
 #include <iostream>
 
 using namespace std::chrono_literals;
-
-namespace
-{
-template <typename vec> vec interleave(std::initializer_list<typename std::reference_wrapper<vec>> refs)
-{
-    vec interleaved;
-    int count = 0;
-    for (const auto &r : refs)
-    {
-        count += r.get().size();
-    }
-    interleaved.reserve(count);
-
-    bool some_added;
-    do
-    {
-        some_added = false;
-        for (auto &r : refs)
-        {
-            if (r.get().size() > 0)
-            {
-                interleaved.emplace_back(std::move(r.get().back()));
-                r.get().pop_back();
-                some_added = true;
-            }
-        }
-    } while (some_added);
-    return interleaved;
-}
-
-} // namespace
 
 namespace opencalibration
 {

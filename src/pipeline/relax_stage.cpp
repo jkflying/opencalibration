@@ -2,6 +2,7 @@
 
 #include <opencalibration/geometry/spectral_cluster.hpp>
 #include <opencalibration/performance/performance.hpp>
+#include <opencalibration/relax/relax_group.hpp>
 
 #include <spdlog/spdlog.h>
 
@@ -15,6 +16,13 @@ std::array<double, 3> to_array(const Eigen::Vector3d &v)
 
 namespace opencalibration
 {
+
+RelaxStage::RelaxStage()
+{
+}
+RelaxStage::~RelaxStage()
+{
+}
 
 void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &node_ids,
                       const jk::tree::KDTree<size_t, 3> &imageGPSLocations, bool final_global_relax)
