@@ -1,6 +1,12 @@
 #pragma once
 
-#include <opencalibration/pipeline/pipeline.hpp>
+#include <jk/KDTree.h>
+#include <opencalibration/geo_coord/geo_coord.hpp>
+#include <opencalibration/types/image.hpp>
+#include <opencalibration/types/measurement_graph.hpp>
+
+#include <mutex>
+#include <vector>
 
 namespace opencalibration
 {

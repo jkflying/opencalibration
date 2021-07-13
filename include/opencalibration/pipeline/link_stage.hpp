@@ -1,8 +1,11 @@
 #pragma once
 
-#include <opencalibration/pipeline/pipeline.hpp>
-
+#include <jk/KDTree.h>
+#include <opencalibration/types/measurement_graph.hpp>
 #include <opencalibration/types/node_links.hpp>
+
+#include <mutex>
+#include <vector>
 
 namespace opencalibration
 {

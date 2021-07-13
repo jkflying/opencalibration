@@ -27,9 +27,8 @@ TEST(pipeline, processes_4_images)
     p.add({path1, path2, path3, path4});
 
     // THEN: after some time they should all be processed
-
-    while (p.getStatus() != Pipeline::Status::COMPLETE)
+    while (p.getState() != PipelineState::COMPLETE)
     {
-        std::this_thread::sleep_for(1ms);
+        p.iterateOnce();
     }
 }

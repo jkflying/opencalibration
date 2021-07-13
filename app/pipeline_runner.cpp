@@ -95,10 +95,24 @@ int main(int argc, char *argv[])
     Pipeline p(batch_size);
 
     p.set_callback([](const Pipeline::StepCompletionInfo &info) {
-        std::cout << "Progress: " << info.images_loaded << " / " << (info.images_loaded + info.queue_size_remaining)
-                  << " "
-                  << " loaded: " << info.loaded_ids.get().size() << " linked: " << info.linked_ids.get().size()
-                  << " relaxed: " << info.relaxed_ids.get().size() << std::endl;
+        std::cout << Pipeline::toString(info.state);
+        switch (info.state)
+        {
+        case PipelineState::INITIAL_PROCESSING: {
+            std::cout << ": " << info.images_loaded << " / " << (info.images_loaded + info.queue_size_remaining) << " "
+                      << " loaded: " << info.loaded_ids.get().size() << " linked: " << info.linked_ids.get().size()
+                      << " relaxed: " << info.relaxed_ids.get().size() << std::endl;
+            break;
+        }
+        case PipelineState::GLOBAL_RELAX: {
+            std::cout << ": iteration: " << info.state_iteration << " relaxed: " << info.relaxed_ids.get().size()
+                      << std::endl;
+            break;
+        }
+        case PipelineState::COMPLETE: {
+            std::cout << std::endl;
+        }
+        }
     });
 
     std::vector<std::string> files;
@@ -113,9 +127,9 @@ int main(int argc, char *argv[])
     std::sort(files.begin(), files.end());
     p.add(files);
 
-    while (p.getStatus() != Pipeline::Status::COMPLETE)
+    while (p.getState() != PipelineState::COMPLETE)
     {
-        std::this_thread::sleep_for(1ms);
+        p.iterateOnce();
     }
 
     if (output_file.size() > 0)

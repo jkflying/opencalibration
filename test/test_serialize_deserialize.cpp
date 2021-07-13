@@ -23,9 +23,9 @@ TEST(serialize_graph, one_image)
     Pipeline p(1);
     p.add({TEST_DATA_DIR "P2530253.JPG"});
 
-    while (p.getStatus() != Pipeline::Status::COMPLETE)
+    while (p.getState() != PipelineState::COMPLETE)
     {
-        std::this_thread::sleep_for(1ms);
+        p.iterateOnce();
     }
 
     std::string serialized = serialize(p.getGraph());
@@ -41,9 +41,9 @@ TEST(serialize_graph, three_images)
     Pipeline p(1);
     p.add({TEST_DATA_DIR "P2530253.JPG", TEST_DATA_DIR "P2540254.JPG", TEST_DATA_DIR "P2550255.JPG"});
 
-    while (p.getStatus() != Pipeline::Status::COMPLETE)
+    while (p.getState() != PipelineState::COMPLETE)
     {
-        std::this_thread::sleep_for(1ms);
+        p.iterateOnce();
     }
 
     std::string serialized = serialize(p.getGraph());

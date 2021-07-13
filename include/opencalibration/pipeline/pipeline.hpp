@@ -4,6 +4,7 @@
 #include <opencalibration/types/measurement_graph.hpp>
 
 #include <jk/KDTree.h>
+#include <usm.hpp>
 
 #include <atomic>
 #include <condition_variable>
@@ -19,26 +20,27 @@ class LoadStage;
 class LinkStage;
 class RelaxStage;
 
-class Pipeline
+enum class PipelineState
+{
+    INITIAL_PROCESSING,
+    GLOBAL_RELAX,
+    COMPLETE
+};
+
+class Pipeline : public usm::StateMachine<PipelineState>
 {
   public:
-    enum class Status
-    {
-        PROCESSING,
-        COMPLETE
-    };
-
     struct StepCompletionInfo
     {
         std::reference_wrapper<std::vector<size_t>> loaded_ids, linked_ids, relaxed_ids;
         size_t images_loaded, queue_size_remaining;
+        PipelineState state;
+        uint64_t state_iteration;
     };
     using StepCompletionCallback = std::function<void(const StepCompletionInfo &)>;
 
     Pipeline(size_t parallelism = 1);
     ~Pipeline();
-
-    Status getStatus();
 
     void add(const std::vector<std::string> &filename);
 
@@ -55,38 +57,34 @@ class Pipeline
         _step_callback = step_complete;
     }
 
+    static std::string toString(PipelineState state);
+
+  protected:
+    PipelineState chooseNextState(opencalibration::PipelineState currentState, usm::Transition transition) override;
+    usm::Transition runCurrentState(opencalibration::PipelineState currentState) override;
+
   private:
+    usm::Transition initial_processing();
+    usm::Transition global_relax();
+    usm::Transition complete();
+
+    std::vector<size_t> _previous_loaded_ids, _previous_linked_ids, _next_loaded_ids, _next_linked_ids,
+        _next_relaxed_ids;
+
     std::unique_ptr<LoadStage> _load_stage;
     std::unique_ptr<LinkStage> _link_stage;
     std::unique_ptr<RelaxStage> _relax_stage;
 
-    void process_images(const std::vector<std::string> &paths_to_load, const std::vector<size_t> &previous_loaded_ids,
-                        const std::vector<size_t> &previous_linked_ids, std::vector<size_t> &next_loaded_ids,
-                        std::vector<size_t> &next_linked_ids, std::vector<size_t> &next_relaxed_ids);
-
     std::condition_variable _queue_condition_variable;
     std::mutex _queue_mutex;
     std::deque<std::string> _add_queue;
-    std::atomic<bool> _keep_running;
-
-    enum class ThreadStatus
-    {
-        BUSY,
-        IDLE
-    };
-
-    struct Runner
-    {
-        std::unique_ptr<std::thread> thread;
-        ThreadStatus status{ThreadStatus::IDLE};
-    };
-
-    Runner _runner;
 
     MeasurementGraph _graph;
     jk::tree::KDTree<size_t, 3> _imageGPSLocations;
     GeoCoord _coordinate_system;
 
     StepCompletionCallback _step_callback;
+
+    size_t _parallelism;
 };
 } // namespace opencalibration
