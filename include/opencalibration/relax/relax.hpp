@@ -14,13 +14,4 @@ void initializeOrientation(const MeasurementGraph &graph, std::vector<NodePose> 
 void relax(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
            const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options);
 
-[[deprecated]] void relaxDecompositions(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                                        const std::unordered_set<size_t> &edges_to_optimize);
-
-[[deprecated]] void relax3dPointMeasurements(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                                             const std::unordered_set<size_t> &edges_to_optimize);
-
-[[deprecated]] void relaxGroundPlaneMeasurements(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                                                 const std::unordered_set<size_t> &edges_to_optimize);
-
 } // namespace opencalibration

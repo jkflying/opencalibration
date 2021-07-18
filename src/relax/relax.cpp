@@ -93,23 +93,4 @@ void relax(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
         backends[best_index].runner(graph, nodes, edges_to_optimize, options);
     }
 }
-
-void relaxDecompositions(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                         const std::unordered_set<size_t> &edges_to_optimize)
-{
-    relax(graph, nodes, edges_to_optimize, {Option::ORIENTATION});
-}
-
-void relax3dPointMeasurements(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                              const std::unordered_set<size_t> &edges_to_optimize)
-{
-    relax(graph, nodes, edges_to_optimize, {Option::ORIENTATION, Option::POINTS_3D});
-}
-
-void relaxGroundPlaneMeasurements(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                                  const std::unordered_set<size_t> &edges_to_optimize)
-{
-    relax(graph, nodes, edges_to_optimize, {Option::ORIENTATION, Option::GROUND_PLANE});
-}
-
 } // namespace opencalibration
