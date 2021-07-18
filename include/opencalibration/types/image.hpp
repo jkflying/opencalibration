@@ -6,8 +6,6 @@
 
 #include <eigen3/Eigen/Geometry>
 
-#include <iostream>
-
 #include <memory>
 #include <vector>
 
@@ -28,7 +26,7 @@ struct image
     std::vector<feature_2d> features;
 
     // Things to discover and optimize
-    CameraModel model;
+    std::shared_ptr<CameraModel> model;
     Eigen::Vector3d position{NAN, NAN, NAN};
     Eigen::Quaterniond orientation{NAN, NAN, NAN, NAN};
 
@@ -37,7 +35,7 @@ struct image
         bool pat = path == other.path;
         bool met = metadata == other.metadata;
         bool feat = features == other.features;
-        bool mod = model == other.model;
+        bool mod = (model == other.model) || (model != nullptr && other.model != nullptr && *model == *other.model);
         bool pos =
             (position.array().isNaN().all() && other.position.array().isNaN().all()) || position == other.position;
         bool ori = (orientation.coeffs().array().isNaN().all() && other.orientation.coeffs().array().isNaN().all()) ||

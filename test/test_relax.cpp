@@ -19,7 +19,7 @@ struct relax_ : public ::testing::Test
     size_t id[3];
     MeasurementGraph graph;
     std::vector<NodePose> np;
-    CameraModel model;
+    std::shared_ptr<CameraModel> model;
     Eigen::Quaterniond ground_ori[3];
     Eigen::Vector3d ground_pos[3];
     size_t edge_id[3];
@@ -34,11 +34,12 @@ struct relax_ : public ::testing::Test
         ground_pos[1] = Eigen::Vector3d(11, 9, 9);
         ground_pos[2] = Eigen::Vector3d(11, 11, 9);
 
-        model.focal_length_pixels = 600;
-        model.principle_point << 400, 300;
-        model.pixels_cols = 800;
-        model.pixels_rows = 600;
-        model.projection_type = opencalibration::ProjectionType::PLANAR;
+        model = std::make_shared<CameraModel>();
+        model->focal_length_pixels = 600;
+        model->principle_point << 400, 300;
+        model->pixels_cols = 800;
+        model->pixels_rows = 600;
+        model->projection_type = opencalibration::ProjectionType::PLANAR;
 
         for (int i = 0; i < 3; i++)
         {
@@ -86,7 +87,7 @@ struct relax_ : public ::testing::Test
             for (const Eigen::Vector3d &p : points)
             {
                 Eigen::Vector3d ray = np[i].orientation.inverse() * (np[i].position - p).normalized();
-                Eigen::Vector2d pixel = image_from_3d(ray, model);
+                Eigen::Vector2d pixel = image_from_3d(ray, *model);
                 feature_2d feat;
                 feat.location = pixel;
                 graph.getNode(np[i].node_id)->payload.features.emplace_back(feat);

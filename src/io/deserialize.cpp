@@ -64,14 +64,18 @@ template <> class Deserializer<MeasurementGraph>
                     }
 
                     const auto &model = niter->value.GetObject()["model"].GetObject();
-                    img.model.pixels_cols = model["dimensions"].GetArray()[0].GetInt64();
-                    img.model.pixels_rows = model["dimensions"].GetArray()[1].GetInt64();
-                    img.model.focal_length_pixels = model["focal_length"].GetDouble();
-                    img.model.principle_point[0] = model["principal"].GetArray()[0].GetDouble();
-                    img.model.principle_point[1] = model["principal"].GetArray()[1].GetDouble();
-                    img.model.projection_type = "planar" == std::string(model["projection"].GetString())
-                                                    ? ProjectionType::PLANAR
-                                                    : ProjectionType::UNKNOWN;
+
+                    // TODO: dedup this by looking at the other image models for model ID
+                    img.model = std::make_shared<CameraModel>();
+
+                    img.model->pixels_cols = model["dimensions"].GetArray()[0].GetInt64();
+                    img.model->pixels_rows = model["dimensions"].GetArray()[1].GetInt64();
+                    img.model->focal_length_pixels = model["focal_length"].GetDouble();
+                    img.model->principle_point[0] = model["principal"].GetArray()[0].GetDouble();
+                    img.model->principle_point[1] = model["principal"].GetArray()[1].GetDouble();
+                    img.model->projection_type = "planar" == std::string(model["projection"].GetString())
+                                                     ? ProjectionType::PLANAR
+                                                     : ProjectionType::UNKNOWN;
 
                     MeasurementGraph::Node node(std::move(img));
 

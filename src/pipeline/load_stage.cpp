@@ -44,13 +44,17 @@ std::vector<std::function<void()>> LoadStage::get_runners()
             }
             p.reset("Load runner metadata");
             img.metadata = extract_metadata(img.path);
-            img.model.focal_length_pixels = img.metadata.focal_length_px;
-            img.model.pixels_cols = img.metadata.width_px;
-            img.model.pixels_rows = img.metadata.height_px;
-            img.model.principle_point = Eigen::Vector2d(img.model.pixels_cols, img.model.pixels_rows) / 2;
 
-            spdlog::debug("camera model: dims: {}x{} focal: {}", img.model.pixels_cols, img.model.pixels_rows,
-                          img.model.focal_length_pixels);
+            // TODO: figure out if we've already loaded a camera with the same lens / sensor
+            img.model = std::make_shared<CameraModel>();
+
+            img.model->focal_length_pixels = img.metadata.focal_length_px;
+            img.model->pixels_cols = img.metadata.width_px;
+            img.model->pixels_rows = img.metadata.height_px;
+            img.model->principle_point = Eigen::Vector2d(img.model->pixels_cols, img.model->pixels_rows) / 2;
+
+            spdlog::debug("camera model: dims: {}x{} focal: {}", img.model->pixels_cols, img.model->pixels_rows,
+                          img.model->focal_length_pixels);
 
             std::lock_guard<std::mutex> lock(_images_mutex);
             _images.emplace_back(i, std::move(img));

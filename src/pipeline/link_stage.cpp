@@ -91,8 +91,8 @@ std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph
                 // distort
                 p.reset("Link runner undistort");
                 std::vector<correspondence> correspondences =
-                    distort_keypoints(img.features, std::get<1>(near_image).get().features, matches, img.model,
-                                      std::get<1>(near_image).get().model);
+                    distort_keypoints(img.features, std::get<1>(near_image).get().features, matches, *img.model,
+                                      *std::get<1>(near_image).get().model);
 
                 // ransac
                 p.reset("Link runner ransac");

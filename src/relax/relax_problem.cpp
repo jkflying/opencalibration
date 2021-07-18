@@ -160,8 +160,8 @@ void RelaxProblem::gridFilterMatchesPerImage(const MeasurementGraph &graph,
         if (pkg.source.loc_ptr == nullptr || pkg.dest.loc_ptr == nullptr)
             return;
 
-        const auto &source_model = graph.getNode(edge.getSource())->payload.model;
-        const auto &dest_model = graph.getNode(edge.getDest())->payload.model;
+        const auto &source_model = *graph.getNode(edge.getSource())->payload.model;
+        const auto &dest_model = *graph.getNode(edge.getDest())->payload.model;
 
         Eigen::Matrix3d source_rot = pkg.source.rot_ptr->toRotationMatrix();
         Eigen::Matrix3d dest_rot = pkg.dest.rot_ptr->toRotationMatrix();
@@ -240,8 +240,8 @@ void RelaxProblem::addGlobalPlaneMeasurementsCost(const MeasurementGraph &graph,
     if (pkg.source.loc_ptr == nullptr || pkg.dest.loc_ptr == nullptr)
         return;
 
-    const auto &source_model = graph.getNode(edge.getSource())->payload.model;
-    const auto &dest_model = graph.getNode(edge.getDest())->payload.model;
+    const auto &source_model = *graph.getNode(edge.getSource())->payload.model;
+    const auto &dest_model = *graph.getNode(edge.getDest())->payload.model;
 
     auto source_whitelist = _grid_filter[edge.getSource()].getBestMeasurementsPerCell();
     auto dest_whitelist = _grid_filter[edge.getDest()].getBestMeasurementsPerCell();
@@ -349,8 +349,8 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
     if (pkg.source.loc_ptr == nullptr || pkg.dest.loc_ptr == nullptr)
         return;
 
-    const auto &source_model = graph.getNode(edge.getSource())->payload.model;
-    const auto &dest_model = graph.getNode(edge.getDest())->payload.model;
+    const auto &source_model = *graph.getNode(edge.getSource())->payload.model;
+    const auto &dest_model = *graph.getNode(edge.getDest())->payload.model;
 
     auto source_whitelist = _grid_filter[edge.getSource()].getBestMeasurementsPerCell();
     auto dest_whitelist = _grid_filter[edge.getDest()].getBestMeasurementsPerCell();

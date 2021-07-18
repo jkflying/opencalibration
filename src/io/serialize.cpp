@@ -226,24 +226,24 @@ template <> class Serializer<MeasurementGraph>
                     writer.Key("dimensions");
                     writer.StartArray();
                     {
-                        writer.Uint64(node.payload.model.pixels_cols);
-                        writer.Uint64(node.payload.model.pixels_rows);
+                        writer.Uint64(node.payload.model->pixels_cols);
+                        writer.Uint64(node.payload.model->pixels_rows);
                     }
                     writer.EndArray();
 
                     writer.Key("focal_length");
-                    writer.Double(node.payload.model.focal_length_pixels);
+                    writer.Double(node.payload.model->focal_length_pixels);
 
                     writer.Key("principal");
                     writer.StartArray();
                     {
-                        writer.Double(node.payload.model.principle_point[0]);
-                        writer.Double(node.payload.model.principle_point[1]);
+                        writer.Double(node.payload.model->principle_point[0]);
+                        writer.Double(node.payload.model->principle_point[1]);
                     }
                     writer.EndArray();
 
                     writer.Key("projection");
-                    switch (node.payload.model.projection_type)
+                    switch (node.payload.model->projection_type)
                     {
                     case ProjectionType::PLANAR:
                         writer.String("planar");
