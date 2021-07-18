@@ -61,7 +61,9 @@ PipelineState Pipeline::chooseNextState(opencalibration::PipelineState currentSt
     // clang-format off
     USM_TABLE(currentState, PS::COMPLETE,
         USM_STATE(transition, PS::INITIAL_PROCESSING,   USM_MAP(NEXT1, PS::GLOBAL_RELAX););
-        USM_STATE(transition, PS::GLOBAL_RELAX,         USM_MAP(NEXT1, PS::COMPLETE););
+        USM_STATE(transition, PS::GLOBAL_RELAX,         USM_MAP(NEXT1, PS::CAMERA_PARAMETERS););
+        USM_STATE(transition, PS::CAMERA_PARAMETERS,    USM_MAP(NEXT1, PS::GLOBAL_RELAX_2););
+        USM_STATE(transition, PS::GLOBAL_RELAX_2,       USM_MAP(NEXT1, PS::COMPLETE););
     );
     // clang-format on
 }
@@ -79,6 +81,12 @@ usm::Transition Pipeline::runCurrentState(opencalibration::PipelineState current
         t = initial_processing();
         break;
     case PS::GLOBAL_RELAX:
+        t = global_relax();
+        break;
+    case PS::CAMERA_PARAMETERS:
+        t = usm::NEXT1;
+        break;
+    case PS::GLOBAL_RELAX_2:
         t = global_relax();
         break;
     case PS::COMPLETE:
@@ -171,6 +179,10 @@ std::string Pipeline::toString(PipelineState state)
         return "Initial Processing";
     case PS::GLOBAL_RELAX:
         return "Global Relax";
+    case PS::CAMERA_PARAMETERS:
+        return "Camera Parameters";
+    case PS::GLOBAL_RELAX_2:
+        return "Global Relax 2";
     case PS::COMPLETE:
         return "Complete";
     };

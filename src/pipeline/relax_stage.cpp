@@ -113,14 +113,13 @@ std::vector<std::function<void()>> RelaxStage::get_runners(const MeasurementGrap
     return funcs;
 }
 
-std::vector<size_t> RelaxStage::finalize(MeasurementGraph &graph)
+std::vector<std::vector<size_t>> RelaxStage::finalize(MeasurementGraph &graph)
 {
     PerformanceMeasure p("Relax finalize");
-    std::vector<size_t> optimized_ids;
+    std::vector<std::vector<size_t>> optimized_ids;
     for (auto &g : _groups)
     {
-        auto group_ids = g.finalize(graph);
-        optimized_ids.insert(optimized_ids.end(), group_ids.begin(), group_ids.end());
+        optimized_ids.emplace_back(g.finalize(graph));
     }
     _groups.clear();
     return optimized_ids;

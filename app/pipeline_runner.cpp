@@ -96,17 +96,25 @@ int main(int argc, char *argv[])
 
     p.set_callback([](const Pipeline::StepCompletionInfo &info) {
         std::cout << Pipeline::toString(info.state);
+        size_t total_relaxed = 0;
+        for (const auto &ids_group : info.relaxed_ids.get())
+            total_relaxed += ids_group.size();
+
         switch (info.state)
         {
         case PipelineState::INITIAL_PROCESSING: {
             std::cout << ": " << info.images_loaded << " / " << (info.images_loaded + info.queue_size_remaining) << " "
                       << " loaded: " << info.loaded_ids.get().size() << " linked: " << info.linked_ids.get().size()
-                      << " relaxed: " << info.relaxed_ids.get().size() << std::endl;
+                      << " relaxed: " << total_relaxed << std::endl;
             break;
         }
-        case PipelineState::GLOBAL_RELAX: {
-            std::cout << ": iteration: " << info.state_iteration << " relaxed: " << info.relaxed_ids.get().size()
-                      << std::endl;
+        case PipelineState::GLOBAL_RELAX:
+        case PipelineState::GLOBAL_RELAX_2: {
+            std::cout << ": iteration: " << info.state_iteration << " relaxed: " << total_relaxed << std::endl;
+            break;
+        }
+        case PipelineState::CAMERA_PARAMETERS: {
+            std::cout << ": relaxed: " << total_relaxed << std::endl;
             break;
         }
         case PipelineState::COMPLETE: {

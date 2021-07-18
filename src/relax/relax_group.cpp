@@ -120,17 +120,17 @@ void RelaxGroup::run(const MeasurementGraph &graph)
         {
         case RelaxType::MEASUREMENT_RELAX_POINTS: {
             PerformanceMeasure p("Relax runner points");
-            relax3dPointMeasurements(graph, _local_poses, _edges_to_optimize);
+            relax(graph, _local_poses, _edges_to_optimize, {Option::ORIENTATION, Option::POINTS_3D});
             break;
         }
         case RelaxType::MEASUREMENT_RELAX_PLANE: {
             PerformanceMeasure p("Relax runner plane");
-            relaxGroundPlaneMeasurements(graph, _local_poses, _edges_to_optimize);
+            relax(graph, _local_poses, _edges_to_optimize, {Option::ORIENTATION, Option::GROUND_PLANE});
             break;
         }
         case RelaxType::RELATIVE_RELAX: {
             PerformanceMeasure p("Relax runner relative");
-            relaxDecompositions(graph, _local_poses, _edges_to_optimize);
+            relax(graph, _local_poses, _edges_to_optimize, {Option::ORIENTATION});
             break;
         }
         }

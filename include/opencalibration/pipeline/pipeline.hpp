@@ -24,6 +24,8 @@ enum class PipelineState
 {
     INITIAL_PROCESSING,
     GLOBAL_RELAX,
+    CAMERA_PARAMETERS,
+    GLOBAL_RELAX_2,
     COMPLETE
 };
 
@@ -32,7 +34,8 @@ class Pipeline : public usm::StateMachine<PipelineState>
   public:
     struct StepCompletionInfo
     {
-        std::reference_wrapper<std::vector<size_t>> loaded_ids, linked_ids, relaxed_ids;
+        std::reference_wrapper<std::vector<size_t>> loaded_ids, linked_ids;
+        std::reference_wrapper<std::vector<std::vector<size_t>>> relaxed_ids;
         size_t images_loaded, queue_size_remaining;
         PipelineState state;
         uint64_t state_iteration;
@@ -68,8 +71,9 @@ class Pipeline : public usm::StateMachine<PipelineState>
     usm::Transition global_relax();
     usm::Transition complete();
 
-    std::vector<size_t> _previous_loaded_ids, _previous_linked_ids, _next_loaded_ids, _next_linked_ids,
-        _next_relaxed_ids;
+    std::vector<size_t> _previous_loaded_ids, _previous_linked_ids, _next_loaded_ids, _next_linked_ids;
+
+    std::vector<std::vector<size_t>> _next_relaxed_ids;
 
     std::unique_ptr<LoadStage> _load_stage;
     std::unique_ptr<LinkStage> _link_stage;

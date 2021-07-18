@@ -24,7 +24,7 @@ class RelaxStage
 
     std::vector<std::function<void()>> get_runners(const MeasurementGraph &graph);
 
-    std::vector<size_t> finalize(MeasurementGraph &graph);
+    std::vector<std::vector<size_t>> finalize(MeasurementGraph &graph);
 
   private:
     std::vector<RelaxGroup> _groups;
