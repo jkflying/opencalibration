@@ -94,9 +94,12 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
         }
         spdlog::info("Group added with {} nodes", group_ids.size());
         _groups.emplace_back();
-        _groups.back().init(graph, group_ids, imageGPSLocations, graph_connection_depth,
-                            final_global_relax ? RelaxGroup::RelaxType::MEASUREMENT_RELAX_POINTS
-                                               : RelaxGroup::RelaxType::RELATIVE_RELAX);
+        RelaxOptionSet options({Option::ORIENTATION});
+        if (final_global_relax)
+        {
+            options.set(Option::POINTS_3D, true);
+        }
+        _groups.back().init(graph, group_ids, imageGPSLocations, graph_connection_depth, options);
     }
     // k-means were smallest to biggest, but we want to process the big ones first to improve load balancing on really
     // large problem

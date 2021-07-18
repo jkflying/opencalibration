@@ -20,14 +20,14 @@ namespace opencalibration
 
 void RelaxGroup::init(const MeasurementGraph &graph, const std::vector<size_t> &node_ids,
                       const jk::tree::KDTree<size_t, 3> &imageGPSLocations, size_t graph_connection_depth,
-                      RelaxType relax_type)
+                      const RelaxOptionSet &relax_options)
 {
     _directly_connected.clear();
     _edges_to_optimize.clear();
     _nodes_to_optimize.clear();
     _local_poses.clear();
 
-    _relax_type = relax_type;
+    _relax_options = relax_options;
     _local_poses.reserve(node_ids.size());
 
     _nodes_to_optimize.insert(node_ids.begin(), node_ids.end());
@@ -114,27 +114,7 @@ void RelaxGroup::build_optimization_edges(const MeasurementGraph &graph,
 
 void RelaxGroup::run(const MeasurementGraph &graph)
 {
-    if (_local_poses.size() > 0)
-    {
-        switch (_relax_type)
-        {
-        case RelaxType::MEASUREMENT_RELAX_POINTS: {
-            PerformanceMeasure p("Relax runner points");
-            relax(graph, _local_poses, _edges_to_optimize, {Option::ORIENTATION, Option::POINTS_3D});
-            break;
-        }
-        case RelaxType::MEASUREMENT_RELAX_PLANE: {
-            PerformanceMeasure p("Relax runner plane");
-            relax(graph, _local_poses, _edges_to_optimize, {Option::ORIENTATION, Option::GROUND_PLANE});
-            break;
-        }
-        case RelaxType::RELATIVE_RELAX: {
-            PerformanceMeasure p("Relax runner relative");
-            relax(graph, _local_poses, _edges_to_optimize, {Option::ORIENTATION});
-            break;
-        }
-        }
-    }
+    relax(graph, _local_poses, _edges_to_optimize, _relax_options);
 }
 
 std::vector<size_t> RelaxGroup::finalize(MeasurementGraph &graph)

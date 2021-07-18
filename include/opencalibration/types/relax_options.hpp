@@ -22,6 +22,10 @@ enum class Option : int32_t
 class RelaxOptionSet
 {
   public:
+    RelaxOptionSet()
+    {
+    }
+
     RelaxOptionSet(std::initializer_list<Option> list)
     {
         for (Option o : list)

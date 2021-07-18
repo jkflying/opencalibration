@@ -8,6 +8,7 @@
 #include <opencalibration/types/node_pose.hpp>
 #include <opencalibration/types/plane.hpp>
 #include <opencalibration/types/point_cloud.hpp>
+#include <opencalibration/types/relax_options.hpp>
 
 #include <ceres/local_parameterization.h>
 #include <ceres/loss_function.h>
@@ -42,13 +43,10 @@ class RelaxProblem
                                    const std::unordered_set<size_t> &edges_to_optimize);
 
     void setupGroundPlaneProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                                 const std::unordered_set<size_t> &edges_to_optimize);
+                                 const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options);
 
     void setup3dPointProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                             const std::unordered_set<size_t> &edges_to_optimize);
-
-    void setup3dTracksProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                              const std::unordered_set<size_t> &edges_to_optimize);
+                             const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options);
 
     void relaxObservedModelOnly(); // only 3d points and ground plane
     void solve();
@@ -63,14 +61,11 @@ class RelaxProblem
 
     void gridFilterMatchesPerImage(const MeasurementGraph &graph, const std::unordered_set<size_t> &edges_to_optimize);
 
-    void insertEdgeTracks(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge);
-    void filterTracks(const MeasurementGraph &graph);
-    void compileEdgeTracks(const MeasurementGraph &graph);
-    void addTrackCosts(const MeasurementGraph &graph);
-    void addPointMeasurementsCost(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge);
+    void addPointMeasurementsCost(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge,
+                                  const RelaxOptionSet &options);
 
     void addGlobalPlaneMeasurementsCost(const MeasurementGraph &graph, size_t edge_id,
-                                        const MeasurementGraph::Edge &edge);
+                                        const MeasurementGraph::Edge &edge, const RelaxOptionSet &options);
 
     void initializeGroundPlane();
 
@@ -98,9 +93,6 @@ class RelaxProblem
     plane_3_corners<double> _global_plane;
     std::unordered_map<size_t, track_vec> _edge_tracks;
     track_vec _tracks;
-
-    // temporary for building tracks
-    std::unordered_map<NodeIdFeatureIndex, std::vector<NodeIdFeatureIndex>> _node_id_feature_index_tracklinks;
 };
 
 } // namespace opencalibration

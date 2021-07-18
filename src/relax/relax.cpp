@@ -1,5 +1,6 @@
 #include <opencalibration/relax/relax.hpp>
 
+#include <opencalibration/performance/performance.hpp>
 #include <opencalibration/relax/relax_problem.hpp>
 
 namespace
@@ -25,22 +26,25 @@ std::vector<Backend> getBackends()
     backends.emplace_back(RelaxOptionSet{Option::ORIENTATION},
                           [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                              const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &) {
+                              PerformanceMeasure p("Relax runner relative");
                               RelaxProblem rp;
                               rp.setupDecompositionProblem(graph, nodes, edges_to_optimize);
                               rp.solve();
                           });
     backends.emplace_back(RelaxOptionSet{Option::ORIENTATION, Option::POINTS_3D},
                           [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                             const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &) {
+                             const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options) {
+                              PerformanceMeasure p("Relax runner 3d points");
                               RelaxProblem rp;
-                              rp.setup3dPointProblem(graph, nodes, edges_to_optimize);
+                              rp.setup3dPointProblem(graph, nodes, edges_to_optimize, options);
                               rp.solve();
                           });
     backends.emplace_back(RelaxOptionSet{Option::ORIENTATION, Option::GROUND_PLANE},
                           [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                             const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &) {
+                             const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options) {
+                              PerformanceMeasure p("Relax runner ground plane");
                               RelaxProblem rp;
-                              rp.setupGroundPlaneProblem(graph, nodes, edges_to_optimize);
+                              rp.setupGroundPlaneProblem(graph, nodes, edges_to_optimize, options);
                               rp.relaxObservedModelOnly();
                               rp.solve();
                           });

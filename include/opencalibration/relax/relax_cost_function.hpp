@@ -153,14 +153,14 @@ struct MultiDecomposedRotationCost
     std::vector<DecomposedRotationCost> decompose;
 };
 
-struct PixelErrorCost
+struct PixelErrorCost_Orientation
 {
     static const int NUM_RESIDUALS = 2;
     static const int NUM_PARAMETERS_1 = 4;
     static const int NUM_PARAMETERS_2 = 3;
 
-    PixelErrorCost(const Eigen::Vector3d &camera_loc, const CameraModel &camera_model,
-                   const Eigen::Vector2d &camera_pixel)
+    PixelErrorCost_Orientation(const Eigen::Vector3d &camera_loc, const CameraModel &camera_model,
+                               const Eigen::Vector2d &camera_pixel)
         : loc(camera_loc), model(camera_model), pixel(camera_pixel)
     {
     }

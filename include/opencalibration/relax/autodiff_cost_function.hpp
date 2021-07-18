@@ -17,8 +17,9 @@ ceres::CostFunction *newAutoDiffPlaneIntersectionAngleCost(
     const Eigen::Vector3d &camera_ray2, const Eigen::Vector2d &plane_point1, const Eigen::Vector2d &plane_point2,
     const Eigen::Vector2d &plane_point3);
 
-ceres::CostFunction *newAutoDiffPixelErrorCost(const Eigen::Vector3d &camera_loc, const CameraModel &camera_model,
-                                               const Eigen::Vector2d &camera_pixel);
+ceres::CostFunction *newAutoDiffPixelErrorCost_Orientation(const Eigen::Vector3d &camera_loc,
+                                                           const CameraModel &camera_model,
+                                                           const Eigen::Vector2d &camera_pixel);
 
 ceres::CostFunction *newAutoDiffPointsDownwardsPrior();
 

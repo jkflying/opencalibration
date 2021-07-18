@@ -45,7 +45,8 @@ void RelaxProblem::setupDecompositionProblem(const MeasurementGraph &graph, std:
 }
 
 void RelaxProblem::setupGroundPlaneProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                                           const std::unordered_set<size_t> &edges_to_optimize)
+                                           const std::unordered_set<size_t> &edges_to_optimize,
+                                           const RelaxOptionSet &options)
 {
     initialize(nodes);
     initializeGroundPlane();
@@ -57,13 +58,14 @@ void RelaxProblem::setupGroundPlaneProblem(const MeasurementGraph &graph, std::v
         const MeasurementGraph::Edge *edge = graph.getEdge(edge_id);
         if (edge != nullptr && shouldAddEdgeToOptimization(edges_to_optimize, edge_id))
         {
-            addGlobalPlaneMeasurementsCost(graph, edge_id, *edge);
+            addGlobalPlaneMeasurementsCost(graph, edge_id, *edge, options);
         }
     }
 }
 
 void RelaxProblem::setup3dPointProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                                       const std::unordered_set<size_t> &edges_to_optimize)
+                                       const std::unordered_set<size_t> &edges_to_optimize,
+                                       const RelaxOptionSet &options)
 {
     initialize(nodes);
     _loss.Reset(new ceres::HuberLoss(10), ceres::TAKE_OWNERSHIP);
@@ -75,31 +77,9 @@ void RelaxProblem::setup3dPointProblem(const MeasurementGraph &graph, std::vecto
         const MeasurementGraph::Edge *edge = graph.getEdge(edge_id);
         if (edge != nullptr && shouldAddEdgeToOptimization(edges_to_optimize, edge_id))
         {
-            addPointMeasurementsCost(graph, edge_id, *edge);
+            addPointMeasurementsCost(graph, edge_id, *edge, options);
         }
     }
-
-    _solver_options.max_num_iterations = 300;
-    _solver_options.linear_solver_type = ceres::SPARSE_SCHUR;
-}
-
-void RelaxProblem::setup3dTracksProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                                        const std::unordered_set<size_t> &edges_to_optimize)
-{
-    initialize(nodes);
-    _loss.Reset(new ceres::HuberLoss(10), ceres::TAKE_OWNERSHIP);
-
-    for (size_t edge_id : edges_to_optimize)
-    {
-        const MeasurementGraph::Edge *edge = graph.getEdge(edge_id);
-        if (edge != nullptr && shouldAddEdgeToOptimization(edges_to_optimize, edge_id))
-        {
-            insertEdgeTracks(graph, edge_id, *edge);
-        }
-    }
-    compileEdgeTracks(graph);
-    filterTracks(graph);
-    addTrackCosts(graph);
 
     _solver_options.max_num_iterations = 300;
     _solver_options.linear_solver_type = ceres::SPARSE_SCHUR;
@@ -247,7 +227,7 @@ void RelaxProblem::addRelationCost(const MeasurementGraph &graph, size_t edge_id
 }
 
 void RelaxProblem::addGlobalPlaneMeasurementsCost(const MeasurementGraph &graph, size_t edge_id,
-                                                  const MeasurementGraph::Edge &edge)
+                                                  const MeasurementGraph::Edge &edge, const RelaxOptionSet &options)
 {
     auto &points = _edge_tracks[edge_id];
     points.reserve(edge.payload.inlier_matches.size());
@@ -282,6 +262,10 @@ void RelaxProblem::addGlobalPlaneMeasurementsCost(const MeasurementGraph &graph,
         Eigen::Vector3d dest_ray = image_to_3d(inlier.pixel_2, dest_model);
 
         // add cost functions for this 3D point from both the source and dest camera
+
+        // TODO: select correct cost function based on options
+        (void)options;
+
         std::unique_ptr<ceres::CostFunction> func(newAutoDiffPlaneIntersectionAngleCost(
             *pkg.source.loc_ptr, *pkg.dest.loc_ptr, source_ray, dest_ray, corner2d[0], corner2d[1], corner2d[2]));
 
@@ -304,186 +288,6 @@ void RelaxProblem::addGlobalPlaneMeasurementsCost(const MeasurementGraph &graph,
     }
 
     _edges_used.insert(edge_id);
-}
-
-void RelaxProblem::insertEdgeTracks(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge)
-{
-    auto &points = _edge_tracks[edge_id];
-    points.reserve(edge.payload.inlier_matches.size());
-
-    OptimizationPackage pkg;
-    pkg.relations = &edge.payload;
-    pkg.source = nodeid2poseopt(graph, edge.getSource());
-    pkg.dest = nodeid2poseopt(graph, edge.getDest());
-
-    if (pkg.source.loc_ptr == nullptr || pkg.dest.loc_ptr == nullptr)
-        return;
-
-    for (size_t i = 0; i < edge.payload.inlier_matches.size(); i++)
-    {
-        const auto &inlier = edge.payload.inlier_matches[i];
-
-        auto map_index_1 = NodeIdFeatureIndex{edge.getSource(), inlier.feature_index_1};
-        auto map_index_2 = NodeIdFeatureIndex{edge.getDest(), inlier.feature_index_2};
-
-        _node_id_feature_index_tracklinks[map_index_1].emplace_back(map_index_2);
-        _node_id_feature_index_tracklinks[map_index_2].emplace_back(map_index_1);
-    }
-    _edges_used.insert(edge_id);
-}
-
-void RelaxProblem::compileEdgeTracks(const MeasurementGraph &graph)
-{
-    // start quick and dirty, just make pairs of measurements
-    using key_t = std::pair<NodeIdFeatureIndex, NodeIdFeatureIndex>;
-
-    struct key_t_hash
-    {
-        size_t operator()(const key_t &key) const
-        {
-            std::hash<NodeIdFeatureIndex> h;
-            return h(key.first) ^ (31 * h(key.second));
-        }
-    };
-
-    std::unordered_set<key_t, key_t_hash> used_pairs;
-    for (const auto &nifi_links : _node_id_feature_index_tracklinks)
-    {
-        for (const auto &nifi2 : nifi_links.second)
-        {
-            key_t key{nifi_links.first, nifi2};
-            if (nifi2 < nifi_links.first)
-            {
-                std::swap(key.first, key.second);
-            }
-
-            if (used_pairs.find(key) != used_pairs.end())
-            {
-                continue;
-            }
-            used_pairs.insert(key);
-
-            FeatureTrack track;
-            track.measurements.reserve(2);
-            track.measurements.push_back(nifi_links.first);
-            track.measurements.push_back(nifi2);
-            _tracks.emplace_back(std::move(track));
-        }
-    }
-
-    for (auto &track : _tracks)
-    {
-        std::vector<ray_d> rays;
-        for (const auto &nifi : track.measurements)
-        {
-            OptimizationPackage::PoseOpt po = nodeid2poseopt(graph, nifi.node_id);
-            if (po.loc_ptr == nullptr)
-                continue;
-
-            const auto *node = graph.getNode(nifi.node_id);
-            const auto &image = node->payload;
-            Eigen::Vector2d pixel = image.features[nifi.feature_index].location;
-            Eigen::Vector3d ray_dir = (*po.rot_ptr) * image_to_3d(pixel, image.model);
-            rays.emplace_back(ray_d{ray_dir, *po.loc_ptr});
-        }
-        std::pair<Eigen::Vector3d, double> point_error = rayIntersection(rays);
-        track.point = point_error.first;
-        track.error = point_error.second;
-    }
-
-    // TODO: merge tracks that have shared features *and* close together triangulated 3d points
-}
-
-void RelaxProblem::filterTracks(const MeasurementGraph &graph)
-{
-    // normalize track error between 0 and 1 so that we can use it to tie track length scores
-    double max_track_error = 1e-9, min_track_error = 1e9;
-    for (const auto &track : _tracks)
-    {
-        if (std::abs(track.error) > max_track_error)
-            max_track_error = track.error;
-        if (std::abs(track.error) < min_track_error)
-            min_track_error = track.error;
-    }
-
-    // apply grid filter to mark tracks as included or not. One valid measurement required to include a track
-    std::unordered_map<size_t, GridFilter<size_t>> node_id_track_index_grid_filter;
-    for (size_t i = 0; i < _tracks.size(); i++)
-    {
-        auto &track = _tracks[i];
-        double score =
-            track.measurements.size() -
-            std::clamp((std::abs(track.error) - min_track_error) / (max_track_error - min_track_error), 0., 0.9999);
-        for (const auto &nifi : track.measurements)
-        {
-            const auto &image = graph.getNode(nifi.node_id)->payload;
-            const auto &loc = image.features[nifi.feature_index].location;
-
-            node_id_track_index_grid_filter[nifi.node_id].addMeasurement(loc.x() / image.model.pixels_cols,
-                                                                         loc.y() / image.model.pixels_rows, score, i);
-        }
-    }
-
-    std::vector<size_t> track_scores(_tracks.size(), 0);
-    for (const auto &filter : node_id_track_index_grid_filter)
-    {
-        for (size_t track_id : filter.second.getBestMeasurementsPerCell())
-        {
-            track_scores[track_id]++;
-        }
-    }
-
-    const size_t KEEP_THRESHOLD = 1;
-
-    track_vec tracks_to_optimize;
-    tracks_to_optimize.reserve(_tracks.size());
-
-    for (size_t i = 0; i < _tracks.size(); i++)
-    {
-        auto &track = _tracks[i];
-        if (track_scores[i] >= KEEP_THRESHOLD && std::isfinite(track.error))
-        {
-            tracks_to_optimize.emplace_back(std::move(track));
-        }
-    }
-    std::swap(tracks_to_optimize, _tracks);
-}
-
-void RelaxProblem::addTrackCosts(const MeasurementGraph &graph)
-{
-    for (auto &track : _tracks)
-    {
-        for (const auto &nifi : track.measurements)
-        {
-            OptimizationPackage::PoseOpt po = nodeid2poseopt(graph, nifi.node_id);
-            if (po.loc_ptr == nullptr)
-                continue;
-
-            const auto &image = graph.getNode(nifi.node_id)->payload;
-            double *data = po.rot_ptr->coeffs().data();
-
-            std::unique_ptr<ceres::CostFunction> func(
-                newAutoDiffPixelErrorCost(*po.loc_ptr, image.model, image.features[nifi.feature_index].location));
-
-            Eigen::Vector2d res{NAN, NAN};
-            const double *args[2] = {data, track.point.data()};
-            func->Evaluate(args, res.data(), nullptr);
-
-            if (!res.array().allFinite())
-            {
-                spdlog::trace("Skipping adding NaN track measurement residual");
-                continue;
-            }
-
-            _problem->AddResidualBlock(func.release(), &_loss, data, track.point.data());
-            _problem->SetParameterization(data, &_quat_parameterization);
-
-            if (!po.optimize)
-            {
-                _problem->SetParameterBlockConstant(data);
-            }
-        }
-    }
 }
 
 void RelaxProblem::relaxObservedModelOnly()
@@ -532,7 +336,7 @@ void RelaxProblem::relaxObservedModelOnly()
 }
 
 void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_t edge_id,
-                                            const MeasurementGraph::Edge &edge)
+                                            const MeasurementGraph::Edge &edge, const RelaxOptionSet &options)
 {
     auto &points = _edge_tracks[edge_id];
     points.reserve(edge.payload.inlier_matches.size());
@@ -576,8 +380,12 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
 
         // add cost functions for this 3D point from both the source and dest camera
         std::unique_ptr<ceres::CostFunction> func[2];
-        func[0].reset(newAutoDiffPixelErrorCost(*pkg.source.loc_ptr, source_model, inlier.pixel_1));
-        func[1].reset(newAutoDiffPixelErrorCost(*pkg.dest.loc_ptr, dest_model, inlier.pixel_2));
+
+        // TODO: select correct cost function based on options
+        (void)options;
+
+        func[0].reset(newAutoDiffPixelErrorCost_Orientation(*pkg.source.loc_ptr, source_model, inlier.pixel_1));
+        func[1].reset(newAutoDiffPixelErrorCost_Orientation(*pkg.dest.loc_ptr, dest_model, inlier.pixel_2));
 
         bool all_finite = true;
         for (int i = 0; i < 2; i++)

@@ -10,12 +10,10 @@ ceres::CostFunction *newAutoDiffMultiDecomposedRotationCost(const camera_relatio
                                                             const Eigen::Vector3d *translation2)
 
 {
-
-    using CostFunction =
-        ceres::AutoDiffCostFunction<MultiDecomposedRotationCost, MultiDecomposedRotationCost::NUM_RESIDUALS,
-                                    MultiDecomposedRotationCost::NUM_PARAMETERS_1,
-                                    MultiDecomposedRotationCost::NUM_PARAMETERS_2>;
-    return new CostFunction(new MultiDecomposedRotationCost(relations, translation1, translation2));
+    using Functor = MultiDecomposedRotationCost;
+    using CostFunction = ceres::AutoDiffCostFunction<Functor, Functor::NUM_RESIDUALS, Functor::NUM_PARAMETERS_1,
+                                                     Functor::NUM_PARAMETERS_2>;
+    return new CostFunction(new Functor(relations, translation1, translation2));
 }
 
 ceres::CostFunction *newAutoDiffPlaneIntersectionAngleCost(
@@ -23,29 +21,29 @@ ceres::CostFunction *newAutoDiffPlaneIntersectionAngleCost(
     const Eigen::Vector3d &camera_ray2, const Eigen::Vector2d &plane_point1, const Eigen::Vector2d &plane_point2,
     const Eigen::Vector2d &plane_point3)
 {
-    using CostFunction = ceres::AutoDiffCostFunction<
-        PlaneIntersectionAngleCost, PlaneIntersectionAngleCost::NUM_RESIDUALS,
-        PlaneIntersectionAngleCost::NUM_PARAMETERS_1, PlaneIntersectionAngleCost::NUM_PARAMETERS_2,
-        PlaneIntersectionAngleCost::NUM_PARAMETERS_3, PlaneIntersectionAngleCost::NUM_PARAMETERS_4,
-        PlaneIntersectionAngleCost::NUM_PARAMETERS_5>;
+    using Functor = PlaneIntersectionAngleCost;
+    using CostFunction = ceres::AutoDiffCostFunction<Functor, Functor::NUM_RESIDUALS, Functor::NUM_PARAMETERS_1,
+                                                     Functor::NUM_PARAMETERS_2, Functor::NUM_PARAMETERS_3,
+                                                     Functor::NUM_PARAMETERS_4, Functor::NUM_PARAMETERS_5>;
 
-    return new CostFunction(new PlaneIntersectionAngleCost(camera_loc1, camera_loc2, camera_ray1, camera_ray2,
-                                                           plane_point1, plane_point2, plane_point3));
+    return new CostFunction(
+        new Functor(camera_loc1, camera_loc2, camera_ray1, camera_ray2, plane_point1, plane_point2, plane_point3));
 }
 
-ceres::CostFunction *newAutoDiffPixelErrorCost(const Eigen::Vector3d &camera_loc, const CameraModel &camera_model,
-                                               const Eigen::Vector2d &camera_pixel)
+ceres::CostFunction *newAutoDiffPixelErrorCost_Orientation(const Eigen::Vector3d &camera_loc,
+                                                           const CameraModel &camera_model,
+                                                           const Eigen::Vector2d &camera_pixel)
 {
-    using CostFunction =
-        ceres::AutoDiffCostFunction<PixelErrorCost, PixelErrorCost::NUM_RESIDUALS, PixelErrorCost::NUM_PARAMETERS_1,
-                                    PixelErrorCost::NUM_PARAMETERS_2>;
-    return new CostFunction(new PixelErrorCost(camera_loc, camera_model, camera_pixel));
+    using Functor = PixelErrorCost_Orientation;
+    using CostFunction = ceres::AutoDiffCostFunction<Functor, Functor::NUM_RESIDUALS, Functor::NUM_PARAMETERS_1,
+                                                     Functor::NUM_PARAMETERS_2>;
+    return new CostFunction(new Functor(camera_loc, camera_model, camera_pixel));
 }
 
 ceres::CostFunction *newAutoDiffPointsDownwardsPrior()
 {
-    using CostFunction = ceres::AutoDiffCostFunction<PointsDownwardsPrior, PointsDownwardsPrior::NUM_RESIDUALS,
-                                                     PointsDownwardsPrior::NUM_PARAMETERS_1>;
-    return new CostFunction(new PointsDownwardsPrior());
+    using Functor = PointsDownwardsPrior;
+    using CostFunction = ceres::AutoDiffCostFunction<Functor, Functor::NUM_RESIDUALS, Functor::NUM_PARAMETERS_1>;
+    return new CostFunction(new Functor());
 }
 } // namespace opencalibration
