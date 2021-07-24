@@ -223,6 +223,9 @@ template <> class Serializer<MeasurementGraph>
                 writer.Key("model");
                 writer.StartObject();
                 {
+                    writer.Key("id");
+                    writer.Int64(node.payload.model->id);
+
                     writer.Key("dimensions");
                     writer.StartArray();
                     {
@@ -267,60 +270,70 @@ template <> class Serializer<MeasurementGraph>
                 writer.Key("metadata");
                 writer.StartObject();
                 {
-                    writer.Key("dimensions");
-                    writer.StartArray();
+                    writer.Key("camera_info");
+                    writer.StartObject();
                     {
-                        writer.Uint64(node.payload.metadata.width_px);
-                        writer.Uint64(node.payload.metadata.height_px);
+                        writer.Key("dimensions");
+                        writer.StartArray();
+                        {
+                            writer.Uint64(node.payload.metadata.camera_info.width_px);
+                            writer.Uint64(node.payload.metadata.camera_info.height_px);
+                        }
+                        writer.EndArray();
+
+                        writer.Key("focal_length_px");
+                        writer.Double(node.payload.metadata.camera_info.focal_length_px);
+
+                        writer.Key("principal");
+                        writer.StartArray();
+                        {
+                            writer.Double(node.payload.metadata.camera_info.principal_point_px[0]);
+                            writer.Double(node.payload.metadata.camera_info.principal_point_px[1]);
+                        }
+                        writer.EndArray();
                     }
-                    writer.EndArray();
+                    writer.EndObject();
 
-                    writer.Key("focal_length_px");
-                    writer.Double(node.payload.metadata.focal_length_px);
-
-                    writer.Key("principal");
-                    writer.StartArray();
+                    writer.Key("capture_info");
+                    writer.StartObject();
                     {
-                        writer.Double(node.payload.metadata.principal_point_px[0]);
-                        writer.Double(node.payload.metadata.principal_point_px[1]);
+                        writer.Key("latitude");
+                        writer.Double(node.payload.metadata.capture_info.latitude);
+
+                        writer.Key("longitude");
+                        writer.Double(node.payload.metadata.capture_info.longitude);
+
+                        writer.Key("altitude");
+                        writer.Double(node.payload.metadata.capture_info.altitude);
+
+                        writer.Key("relative_altitude");
+                        writer.Double(node.payload.metadata.capture_info.relativeAltitude);
+
+                        writer.Key("roll");
+                        writer.Double(node.payload.metadata.capture_info.rollDegree);
+
+                        writer.Key("pitch");
+                        writer.Double(node.payload.metadata.capture_info.pitchDegree);
+
+                        writer.Key("yaw");
+                        writer.Double(node.payload.metadata.capture_info.yawDegree);
+
+                        writer.Key("accuracy_xy");
+                        writer.Double(node.payload.metadata.capture_info.accuracyXY);
+
+                        writer.Key("accuracy_z");
+                        writer.Double(node.payload.metadata.capture_info.accuracyZ);
+
+                        writer.Key("datum");
+                        writer.String(node.payload.metadata.capture_info.datum.c_str());
+
+                        writer.Key("timestamp");
+                        writer.String(node.payload.metadata.capture_info.timestamp.c_str());
+
+                        writer.Key("datestamp");
+                        writer.String(node.payload.metadata.capture_info.datestamp.c_str());
                     }
-                    writer.EndArray();
-
-                    writer.Key("latitude");
-                    writer.Double(node.payload.metadata.latitude);
-
-                    writer.Key("longitude");
-                    writer.Double(node.payload.metadata.longitude);
-
-                    writer.Key("altitude");
-                    writer.Double(node.payload.metadata.altitude);
-
-                    writer.Key("relative_altitude");
-                    writer.Double(node.payload.metadata.relativeAltitude);
-
-                    writer.Key("roll");
-                    writer.Double(node.payload.metadata.rollDegree);
-
-                    writer.Key("pitch");
-                    writer.Double(node.payload.metadata.pitchDegree);
-
-                    writer.Key("yaw");
-                    writer.Double(node.payload.metadata.yawDegree);
-
-                    writer.Key("accuracy_xy");
-                    writer.Double(node.payload.metadata.accuracyXY);
-
-                    writer.Key("accuracy_z");
-                    writer.Double(node.payload.metadata.accuracyZ);
-
-                    writer.Key("datum");
-                    writer.String(node.payload.metadata.datum.c_str());
-
-                    writer.Key("timestamp");
-                    writer.String(node.payload.metadata.timestamp.c_str());
-
-                    writer.Key("datestamp");
-                    writer.String(node.payload.metadata.datestamp.c_str());
+                    writer.EndObject();
                 }
                 writer.EndObject();
 

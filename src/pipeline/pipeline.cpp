@@ -125,7 +125,7 @@ usm::Transition Pipeline::initial_processing()
         _previous_linked_ids = std::move(_next_linked_ids);
         _next_linked_ids.clear();
 
-        _load_stage->init(paths);
+        _load_stage->init(_graph, paths);
         _link_stage->init(_graph, _imageGPSLocations, _previous_loaded_ids);
         _relax_stage->init(_graph, _previous_linked_ids, _imageGPSLocations, false);
 

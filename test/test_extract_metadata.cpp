@@ -15,8 +15,8 @@ TEST(extract_metadata, gives_exif)
     image_metadata d = opencalibration::extract_metadata(path);
 
     // THEN: it should be these values for the file specified:
-    EXPECT_EQ(d.width_px, 5344);
-    EXPECT_EQ(d.height_px, 4016);
-    EXPECT_NEAR(d.focal_length_px, 3553.28, 0.1);
-    EXPECT_DOUBLE_EQ(d.latitude, -34.020866540722224);
+    EXPECT_EQ(d.camera_info.width_px, 5344);
+    EXPECT_EQ(d.camera_info.height_px, 4016);
+    EXPECT_NEAR(d.camera_info.focal_length_px, 3553.28, 0.1);
+    EXPECT_DOUBLE_EQ(d.capture_info.latitude, -34.020866540722224);
 }

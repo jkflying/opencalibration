@@ -47,5 +47,14 @@ template <typename T> struct DifferentiableCameraModel
     }
 };
 
-using CameraModel = DifferentiableCameraModel<double>;
+class CameraModel final : public DifferentiableCameraModel<double>
+{
+  public:
+    size_t id = 0;
+
+    bool operator==(const CameraModel &other)
+    {
+        return id == other.id && DifferentiableCameraModel<double>::operator==(other);
+    }
+};
 } // namespace opencalibration

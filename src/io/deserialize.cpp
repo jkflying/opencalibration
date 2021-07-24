@@ -34,6 +34,9 @@ template <> class Deserializer<MeasurementGraph>
         char parseBuffer[1024];
         rapidjson::MemoryPoolAllocator<> valueAllocator(valueBuffer, sizeof(valueBuffer));
         rapidjson::MemoryPoolAllocator<> parseAllocator(parseBuffer, sizeof(parseBuffer));
+
+        std::unordered_map<size_t, std::shared_ptr<CameraModel>> camera_models;
+
         DocumentType d(&valueAllocator, sizeof(parseBuffer), &parseAllocator);
         d.Parse(json.c_str());
 
@@ -66,16 +69,27 @@ template <> class Deserializer<MeasurementGraph>
                     const auto &model = niter->value.GetObject()["model"].GetObject();
 
                     // TODO: dedup this by looking at the other image models for model ID
-                    img.model = std::make_shared<CameraModel>();
 
-                    img.model->pixels_cols = model["dimensions"].GetArray()[0].GetInt64();
-                    img.model->pixels_rows = model["dimensions"].GetArray()[1].GetInt64();
-                    img.model->focal_length_pixels = model["focal_length"].GetDouble();
-                    img.model->principle_point[0] = model["principal"].GetArray()[0].GetDouble();
-                    img.model->principle_point[1] = model["principal"].GetArray()[1].GetDouble();
-                    img.model->projection_type = "planar" == std::string(model["projection"].GetString())
-                                                     ? ProjectionType::PLANAR
-                                                     : ProjectionType::UNKNOWN;
+                    size_t id = model["id"].GetInt64();
+                    auto iter = camera_models.find(id);
+                    if (iter == camera_models.end())
+                    {
+                        img.model = std::make_shared<CameraModel>();
+                        img.model->id = id;
+                        img.model->pixels_cols = model["dimensions"].GetArray()[0].GetInt64();
+                        img.model->pixels_rows = model["dimensions"].GetArray()[1].GetInt64();
+                        img.model->focal_length_pixels = model["focal_length"].GetDouble();
+                        img.model->principle_point[0] = model["principal"].GetArray()[0].GetDouble();
+                        img.model->principle_point[1] = model["principal"].GetArray()[1].GetDouble();
+                        img.model->projection_type = "planar" == std::string(model["projection"].GetString())
+                                                         ? ProjectionType::PLANAR
+                                                         : ProjectionType::UNKNOWN;
+                        camera_models.emplace(id, img.model);
+                    }
+                    else
+                    {
+                        img.model = iter->second;
+                    }
 
                     MeasurementGraph::Node node(std::move(img));
 
@@ -87,29 +101,37 @@ template <> class Deserializer<MeasurementGraph>
 
                     {
                         const auto &metadata = niter->value.GetObject()["metadata"].GetObject();
-                        node.payload.metadata.width_px = metadata["dimensions"].GetArray()[0].GetInt64();
-                        node.payload.metadata.height_px = metadata["dimensions"].GetArray()[1].GetInt64();
+                        {
+                            const auto &camera_info_j = metadata["camera_info"].GetObject();
+                            auto &camera_info = node.payload.metadata.camera_info;
+                            camera_info.width_px = camera_info_j["dimensions"].GetArray()[0].GetInt64();
+                            camera_info.height_px = camera_info_j["dimensions"].GetArray()[1].GetInt64();
 
-                        node.payload.metadata.focal_length_px = metadata["focal_length_px"].GetDouble();
+                            camera_info.focal_length_px = camera_info_j["focal_length_px"].GetDouble();
 
-                        node.payload.metadata.principal_point_px[0] = metadata["principal"].GetArray()[0].GetDouble();
-                        node.payload.metadata.principal_point_px[1] = metadata["principal"].GetArray()[1].GetDouble();
+                            camera_info.principal_point_px[0] = camera_info_j["principal"].GetArray()[0].GetDouble();
+                            camera_info.principal_point_px[1] = camera_info_j["principal"].GetArray()[1].GetDouble();
+                        }
 
-                        node.payload.metadata.latitude = metadata["latitude"].GetDouble();
-                        node.payload.metadata.longitude = metadata["longitude"].GetDouble();
-                        node.payload.metadata.altitude = metadata["altitude"].GetDouble();
-                        node.payload.metadata.relativeAltitude = metadata["relative_altitude"].GetDouble();
+                        {
+                            const auto &capture_info_j = metadata["capture_info"].GetObject();
+                            auto &capture_info = node.payload.metadata.capture_info;
+                            capture_info.latitude = capture_info_j["latitude"].GetDouble();
+                            capture_info.longitude = capture_info_j["longitude"].GetDouble();
+                            capture_info.altitude = capture_info_j["altitude"].GetDouble();
+                            capture_info.relativeAltitude = capture_info_j["relative_altitude"].GetDouble();
 
-                        node.payload.metadata.rollDegree = metadata["roll"].GetDouble();
-                        node.payload.metadata.pitchDegree = metadata["pitch"].GetDouble();
-                        node.payload.metadata.yawDegree = metadata["yaw"].GetDouble();
+                            capture_info.rollDegree = capture_info_j["roll"].GetDouble();
+                            capture_info.pitchDegree = capture_info_j["pitch"].GetDouble();
+                            capture_info.yawDegree = capture_info_j["yaw"].GetDouble();
 
-                        node.payload.metadata.accuracyXY = metadata["accuracy_xy"].GetDouble();
-                        node.payload.metadata.accuracyZ = metadata["accuracy_z"].GetDouble();
+                            capture_info.accuracyXY = capture_info_j["accuracy_xy"].GetDouble();
+                            capture_info.accuracyZ = capture_info_j["accuracy_z"].GetDouble();
 
-                        node.payload.metadata.datum = metadata["datum"].GetString();
-                        node.payload.metadata.timestamp = metadata["timestamp"].GetString();
-                        node.payload.metadata.datestamp = metadata["datestamp"].GetString();
+                            capture_info.datum = capture_info_j["datum"].GetString();
+                            capture_info.timestamp = capture_info_j["timestamp"].GetString();
+                            capture_info.datestamp = capture_info_j["datestamp"].GetString();
+                        }
                     }
 
                     const auto &features = niter->value.GetObject()["features"].GetArray();

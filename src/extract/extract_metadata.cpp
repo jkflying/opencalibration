@@ -57,53 +57,54 @@ image_metadata extract_metadata(const std::string &path)
         return res;
     }
 
-    res.timestamp = imageEXIF.DateTimeOriginal.size() > 0 ? imageEXIF.DateTimeOriginal + imageEXIF.SubSecTimeOriginal
-                                                          : imageEXIF.DateTime;
+    res.capture_info.timestamp = imageEXIF.DateTimeOriginal.size() > 0
+                                     ? imageEXIF.DateTimeOriginal + imageEXIF.SubSecTimeOriginal
+                                     : imageEXIF.DateTime;
 
     if (imageEXIF.GeoLocation.hasLatLon())
     {
-        res.latitude = imageEXIF.GeoLocation.Latitude;
-        res.longitude = imageEXIF.GeoLocation.Longitude;
+        res.capture_info.latitude = imageEXIF.GeoLocation.Latitude;
+        res.capture_info.longitude = imageEXIF.GeoLocation.Longitude;
         if (imageEXIF.GeoLocation.AccuracyXY > 0)
         {
-            res.accuracyXY = imageEXIF.GeoLocation.AccuracyXY;
+            res.capture_info.accuracyXY = imageEXIF.GeoLocation.AccuracyXY;
         }
 
-        res.datum = imageEXIF.GeoLocation.GPSMapDatum;
+        res.capture_info.datum = imageEXIF.GeoLocation.GPSMapDatum;
         if (imageEXIF.GeoLocation.GPSDateStamp.size() > 0)
         {
-            res.timestamp = imageEXIF.GeoLocation.GPSDateStamp + " " + imageEXIF.GeoLocation.GPSTimeStamp;
+            res.capture_info.timestamp = imageEXIF.GeoLocation.GPSDateStamp + " " + imageEXIF.GeoLocation.GPSTimeStamp;
         }
     }
 
     if (imageEXIF.GeoLocation.hasAltitude())
     {
-        res.altitude = imageEXIF.GeoLocation.Altitude;
+        res.capture_info.altitude = imageEXIF.GeoLocation.Altitude;
         if (imageEXIF.GeoLocation.AccuracyZ > 0)
         {
-            res.accuracyZ = imageEXIF.GeoLocation.AccuracyZ;
+            res.capture_info.accuracyZ = imageEXIF.GeoLocation.AccuracyZ;
         }
     }
 
     if (imageEXIF.GeoLocation.hasRelativeAltitude())
     {
-        res.altitude = imageEXIF.GeoLocation.RelativeAltitude;
-        res.accuracyZ = imageEXIF.GeoLocation.AccuracyZ;
+        res.capture_info.altitude = imageEXIF.GeoLocation.RelativeAltitude;
+        res.capture_info.accuracyZ = imageEXIF.GeoLocation.AccuracyZ;
     }
 
     if (imageEXIF.GeoLocation.hasOrientation())
     {
-        res.rollDegree = imageEXIF.GeoLocation.RollDegree;
-        res.pitchDegree = imageEXIF.GeoLocation.PitchDegree;
-        res.yawDegree = imageEXIF.GeoLocation.YawDegree;
+        res.capture_info.rollDegree = imageEXIF.GeoLocation.RollDegree;
+        res.capture_info.pitchDegree = imageEXIF.GeoLocation.PitchDegree;
+        res.capture_info.yawDegree = imageEXIF.GeoLocation.YawDegree;
     }
 
-    res.width_px = imageEXIF.ImageWidth;
-    res.height_px = imageEXIF.ImageHeight;
+    res.camera_info.width_px = imageEXIF.ImageWidth;
+    res.camera_info.height_px = imageEXIF.ImageHeight;
 
     if (imageEXIF.Calibration.FocalLength > 1)
     {
-        res.focal_length_px = imageEXIF.Calibration.FocalLength;
+        res.camera_info.focal_length_px = imageEXIF.Calibration.FocalLength;
     }
     else if (imageEXIF.LensInfo.FocalLengthIn35mm > 0)
     {
@@ -116,7 +117,8 @@ image_metadata extract_metadata(const std::string &path)
          * focal_lens = eq35 / 43.27 * diag_pixels
          */
 
-        res.focal_length_px = imageEXIF.LensInfo.FocalLengthIn35mm / 43.27 * std::hypot(res.width_px, res.height_px);
+        res.camera_info.focal_length_px = imageEXIF.LensInfo.FocalLengthIn35mm / 43.27 *
+                                          std::hypot(res.camera_info.width_px, res.camera_info.height_px);
     }
     else if (imageEXIF.FocalLength > 0 && imageEXIF.LensInfo.FocalPlaneXResolution > 0)
     {
@@ -129,11 +131,11 @@ image_metadata extract_metadata(const std::string &path)
             scale = 10;
         }
         double pixel_size_mm = scale / imageEXIF.LensInfo.FocalPlaneXResolution;
-        res.focal_length_px = imageEXIF.FocalLength / pixel_size_mm;
+        res.camera_info.focal_length_px = imageEXIF.FocalLength / pixel_size_mm;
     }
     if (imageEXIF.Calibration.OpticalCenterX > 0 && imageEXIF.Calibration.OpticalCenterY > 0)
     {
-        res.principal_point_px =
+        res.camera_info.principal_point_px =
             Eigen::Vector2d(imageEXIF.Calibration.OpticalCenterY, imageEXIF.Calibration.OpticalCenterX);
     }
 
