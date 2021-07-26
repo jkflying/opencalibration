@@ -20,10 +20,10 @@ jobs:
     - name: ccache
       uses: hendrikmuhs/ccache-action@v1.0.4
     - name: cmake
-      run: mkdir build && cd build && PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH" cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Coverage
+      run: mkdir build && cd build && PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH" cmake .. -G Ninja -DCMAKE_BUILD_TYPE=asan
     - name: build
-      run: cd build && ninja
+      run: cd build && ninja test
     - name: test_coverage_html
-      run: cd build && ninja test_coverage_html
+      run: cd build && cmake -DCMAKE_BUILD_TYPE=Coverage .. && ninja test_coverage_html
     - name: upload to codecov
       run:  bash <(curl -s https://codecov.io/bash) -f build/test/clean_coverage.info
