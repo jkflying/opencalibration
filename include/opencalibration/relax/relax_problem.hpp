@@ -30,6 +30,7 @@ struct OptimizationPackage
     {
         Eigen::Vector3d *loc_ptr = nullptr;
         Eigen::Quaterniond *rot_ptr = nullptr;
+        CameraModel *model_ptr = nullptr;
         bool optimize = true;
         size_t node_id = 0;
     } source, dest;
@@ -43,19 +44,22 @@ class RelaxProblem
                                    const std::unordered_set<size_t> &edges_to_optimize);
 
     void setupGroundPlaneProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                                 std::unordered_map<size_t, CameraModel> &cam_models,
                                  const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options);
 
     void setup3dPointProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                             std::unordered_map<size_t, CameraModel> &cam_models,
                              const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options);
 
     void relaxObservedModelOnly(); // only 3d points and ground plane
     void solve();
 
   protected:
-    void initialize(std::vector<NodePose> &nodes);
+    void initialize(std::vector<NodePose> &nodes, std::unordered_map<size_t, CameraModel> &cam_models);
     bool shouldAddEdgeToOptimization(const std::unordered_set<size_t> &edges_to_optimize, size_t edge_id);
 
-    OptimizationPackage::PoseOpt nodeid2poseopt(const MeasurementGraph &graph, size_t node_id);
+    OptimizationPackage::PoseOpt nodeid2poseopt(const MeasurementGraph &graph, size_t node_id,
+                                                bool load_cam_model = true);
 
     void addRelationCost(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge);
 
@@ -86,13 +90,13 @@ class RelaxProblem
     ceres::Solver _solver;
 
     std::unordered_map<size_t, NodePose *> _nodes_to_optimize;
+    std::unordered_map<size_t, CameraModel *> _cam_models_to_optimize;
     std::unordered_set<size_t> _edges_used;
 
     // Surface models
     using track_vec = std::vector<FeatureTrack, Eigen::aligned_allocator<FeatureTrack>>;
     plane_3_corners<double> _global_plane;
     std::unordered_map<size_t, track_vec> _edge_tracks;
-    track_vec _tracks;
 };
 
 } // namespace opencalibration

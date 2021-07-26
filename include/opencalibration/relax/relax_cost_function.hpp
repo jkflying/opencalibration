@@ -195,6 +195,50 @@ struct PixelErrorCost_Orientation
     const Eigen::Vector2d pixel; // unique to this measurement, keep a local copy to avoid cache thrashing
 };
 
+struct PixelErrorCost_OrientationFocal
+{
+    static const int NUM_RESIDUALS = 2;
+    static const int NUM_PARAMETERS_1 = 4;
+    static const int NUM_PARAMETERS_2 = 3;
+    static const int NUM_PARAMETERS_3 = 1;
+
+    PixelErrorCost_OrientationFocal(const Eigen::Vector3d &camera_loc, const CameraModel &camera_model,
+                                    const Eigen::Vector2d &camera_pixel)
+        : loc(camera_loc), model(camera_model), pixel(camera_pixel)
+    {
+    }
+
+    template <typename T> bool operator()(const T *rotation, const T *point, const T *focal, T *residuals) const
+    {
+        using QuaterionT = Eigen::Quaternion<T>;
+        using Vector3T = Eigen::Matrix<T, 3, 1>;
+        using Vector2T = Eigen::Matrix<T, 2, 1>;
+        using QuaterionTCM = Eigen::Map<const QuaterionT>;
+        using Vector3TCM = Eigen::Map<const Vector3T>;
+        using Vector2TM = Eigen::Map<Vector2T>;
+
+        const QuaterionTCM rotation_em(rotation);
+        const Vector3TCM point_em(point);
+
+        Vector3T ray = rotation_em.inverse() * (loc.cast<T>() - point_em);
+
+        DifferentiableCameraModel<T> model_t = model.cast<T>();
+        model_t.focal_length_pixels = *focal;
+
+        Vector2T projected_pixel = image_from_3d<T>(ray, model_t);
+
+        Vector2TM residuals_m(residuals);
+        residuals_m = projected_pixel - pixel.cast<T>();
+
+        return true;
+    }
+
+  private:
+    const Eigen::Vector3d &loc;
+    const CameraModel &model;
+    const Eigen::Vector2d pixel; // unique to this measurement, keep a local copy to avoid cache thrashing
+};
+
 struct PlaneIntersectionAngleCost
 {
     static const int NUM_RESIDUALS = 3;

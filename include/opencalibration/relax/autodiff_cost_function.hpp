@@ -21,6 +21,10 @@ ceres::CostFunction *newAutoDiffPixelErrorCost_Orientation(const Eigen::Vector3d
                                                            const CameraModel &camera_model,
                                                            const Eigen::Vector2d &camera_pixel);
 
+ceres::CostFunction *newAutoDiffPixelErrorCost_OrientationFocal(const Eigen::Vector3d &camera_loc,
+                                                                const CameraModel &camera_model,
+                                                                const Eigen::Vector2d &camera_pixel);
+
 ceres::CostFunction *newAutoDiffPointsDownwardsPrior();
 
 } // namespace opencalibration

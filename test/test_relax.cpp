@@ -19,6 +19,7 @@ struct relax_ : public ::testing::Test
     size_t id[3];
     MeasurementGraph graph;
     std::vector<NodePose> np;
+    std::unordered_map<size_t, CameraModel> cam_models;
     std::shared_ptr<CameraModel> model;
     Eigen::Quaterniond ground_ori[3];
     Eigen::Vector3d ground_pos[3];
@@ -40,6 +41,9 @@ struct relax_ : public ::testing::Test
         model->pixels_cols = 800;
         model->pixels_rows = 600;
         model->projection_type = opencalibration::ProjectionType::PLANAR;
+        model->id = 42;
+
+        cam_models[model->id] = *model;
 
         for (int i = 0; i < 3; i++)
         {
@@ -232,9 +236,10 @@ TEST(relax, no_images)
     // GIVEN: a graph, with no images
     MeasurementGraph graph;
     std::vector<NodePose> np;
+    std::unordered_map<size_t, CameraModel> cam_models;
 
     // WHEN: we relax the relative orientations
-    relax(graph, np, {}, {Option::ORIENTATION});
+    relax(graph, np, cam_models, {}, {Option::ORIENTATION});
 
     // THEN: it shouldn't crash
 }
@@ -244,6 +249,7 @@ TEST(relax, prior_1_image)
     // GIVEN: a graph, with 1 image
     MeasurementGraph graph;
     std::vector<NodePose> np;
+    std::unordered_map<size_t, CameraModel> cam_models;
 
     Eigen::Quaterniond ori(Eigen::AngleAxisd(M_PI_4, Eigen::Vector3d::UnitX()));
     Eigen::Vector3d pos(9, 9, 9);
@@ -255,7 +261,7 @@ TEST(relax, prior_1_image)
     np.emplace_back(NodePose{id, ori, pos});
 
     // WHEN: we relax the relative orientations
-    relax(graph, np, {}, {Option::ORIENTATION});
+    relax(graph, np, cam_models, {}, {Option::ORIENTATION});
 
     // THEN: it should be pointing downwards, with other axes close to the original
     EXPECT_LT((np[0].orientation.coeffs() - Eigen::Vector4d(1, 0, 0, 0)).norm(), 1e-3)
@@ -267,6 +273,7 @@ TEST(relax, prior_2_images)
     // GIVEN: a graph, with 2 images with relative orientation as identity
     MeasurementGraph graph;
     std::vector<NodePose> np;
+    std::unordered_map<size_t, CameraModel> cam_models;
 
     // NB! relative translation of the two images is on the X axis, so the rotation around the X axis is unconstrained
     // Only put disturbances on the Y axis!
@@ -296,7 +303,7 @@ TEST(relax, prior_2_images)
     size_t edge_id = graph.addEdge(std::move(relation), id, id2);
 
     // WHEN: we relax the relative orientations
-    relax(graph, np, {edge_id}, {Option::ORIENTATION});
+    relax(graph, np, cam_models, {edge_id}, {Option::ORIENTATION});
 
     // THEN: it should be pointing downwards, with other axes close to the original
     EXPECT_LT(Eigen::AngleAxisd(np[0].orientation).angle(), 1e-5) << np[0].orientation.coeffs().transpose();
@@ -313,7 +320,7 @@ TEST_F(relax_, relative_orientation_3_images)
 
     // WHEN: we relax them with relative orientation
     std::unordered_set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
-    relax(graph, np, edges, {Option::ORIENTATION});
+    relax(graph, np, cam_models, edges, {Option::ORIENTATION});
 
     // THEN: it should put them back into the original orientation
     for (int i = 0; i < 3; i++)
@@ -330,7 +337,7 @@ TEST_F(relax_, measurement_3_images_points)
 
     // WHEN: we relax them with relative orientation
     std::unordered_set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
-    relax(graph, np, edges, {Option::ORIENTATION, Option::POINTS_3D});
+    relax(graph, np, cam_models, edges, {Option::ORIENTATION, Option::POINTS_3D});
 
     // THEN: it should put them back into the original orientation
     for (int i = 0; i < 3; i++)
@@ -348,7 +355,7 @@ TEST_F(relax_, measurement_3_images_plane)
 
     // WHEN: we relax them with relative orientation
     std::unordered_set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
-    relax(graph, np, edges, {Option::ORIENTATION, Option::GROUND_PLANE});
+    relax(graph, np, cam_models, edges, {Option::ORIENTATION, Option::GROUND_PLANE});
 
     // THEN: it should put them back into the original orientation
     for (int i = 0; i < 3; i++)
@@ -363,7 +370,6 @@ class TestRelaxProblem : public RelaxProblem
     track_vec test_get_tracks() const
     {
         track_vec tracks;
-        tracks = _tracks;
         for (const auto &edge_tracks : _edge_tracks)
         {
             tracks.insert(tracks.end(), edge_tracks.second.begin(), edge_tracks.second.end());
@@ -390,7 +396,7 @@ TEST_F(relax_, measurement_3_images_points_internals_point_triangulation_exact)
     // WHEN: we set up the problem
     std::unordered_set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
     TestRelaxProblem rp;
-    rp.setup3dPointProblem(graph, np, edges, {Option::ORIENTATION, Option::POINTS_3D});
+    rp.setup3dPointProblem(graph, np, cam_models, edges, {Option::ORIENTATION, Option::POINTS_3D});
 
     auto vec2arr = [](const Eigen::Vector3d &vec) { return std::array<double, 3>{vec.x(), vec.y(), vec.z()}; };
 
@@ -429,7 +435,7 @@ TEST_F(relax_, measurement_3_images_points_internals_point_triangulation_noise)
     // WHEN: we set up the problem and
     std::unordered_set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
     TestRelaxProblem rp;
-    rp.setup3dPointProblem(graph, np, edges, {Option::ORIENTATION, Option::POINTS_3D});
+    rp.setup3dPointProblem(graph, np, cam_models, edges, {Option::ORIENTATION, Option::POINTS_3D});
 
     // THEN: the 3D points shouldn't be well triangulated
     for (const auto &track : rp.test_get_tracks())

@@ -4,6 +4,7 @@
 
 #include <opencalibration/types/measurement_graph.hpp>
 #include <opencalibration/types/node_pose.hpp>
+#include <opencalibration/types/relax_options.hpp>
 
 #include <functional>
 #include <vector>
@@ -20,7 +21,9 @@ class RelaxStage
     RelaxStage();
     ~RelaxStage();
     void init(const MeasurementGraph &graph, const std::vector<size_t> &node_ids,
-              const jk::tree::KDTree<size_t, 3> &imageGPSLocations, bool final_global_relax);
+              const jk::tree::KDTree<size_t, 3> &imageGPSLocations, bool global_relax, const RelaxOptionSet &options);
+
+    void trim_groups(size_t max_size);
 
     std::vector<std::function<void()>> get_runners(const MeasurementGraph &graph);
 

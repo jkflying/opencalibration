@@ -40,6 +40,7 @@ void RelaxGroup::init(const MeasurementGraph &graph, const std::vector<size_t> &
         pose.orientation = node->payload.orientation;
         pose.position = node->payload.position;
         _local_poses.push_back(pose);
+        _camera_models[node->payload.model->id] = *node->payload.model;
         build_optimization_edges(graph, imageGPSLocations, pose.node_id);
     }
 
@@ -66,6 +67,7 @@ void RelaxGroup::init(const MeasurementGraph &graph, const std::vector<size_t> &
             pose.orientation = node->payload.orientation;
             pose.position = node->payload.position;
             _local_poses.push_back(pose);
+            _camera_models[node->payload.model->id] = *node->payload.model;
             build_optimization_edges(graph, imageGPSLocations, pose.node_id);
         }
     }
@@ -114,7 +116,7 @@ void RelaxGroup::build_optimization_edges(const MeasurementGraph &graph,
 
 void RelaxGroup::run(const MeasurementGraph &graph)
 {
-    relax(graph, _local_poses, _edges_to_optimize, _relax_options);
+    relax(graph, _local_poses, _camera_models, _edges_to_optimize, _relax_options);
 }
 
 std::vector<size_t> RelaxGroup::finalize(MeasurementGraph &graph)
@@ -126,6 +128,7 @@ std::vector<size_t> RelaxGroup::finalize(MeasurementGraph &graph)
         auto *node = graph.getNode(pose.node_id);
         node->payload.orientation = pose.orientation;
         node->payload.position = pose.position;
+        *node->payload.model = _camera_models[node->payload.model->id];
         optimized_ids.push_back(pose.node_id);
     }
     _local_poses.clear();

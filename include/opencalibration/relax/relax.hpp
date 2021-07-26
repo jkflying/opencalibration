@@ -12,6 +12,7 @@ namespace opencalibration
 void initializeOrientation(const MeasurementGraph &graph, std::vector<NodePose> &nodes);
 
 void relax(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-           const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options);
+           std::unordered_map<size_t, CameraModel> &cam_models, const std::unordered_set<size_t> &edges_to_optimize,
+           const RelaxOptionSet &options);
 
 } // namespace opencalibration

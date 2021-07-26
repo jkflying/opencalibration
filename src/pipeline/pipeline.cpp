@@ -62,8 +62,8 @@ PipelineState Pipeline::chooseNextState(opencalibration::PipelineState currentSt
     USM_TABLE(currentState, PS::COMPLETE,
         USM_STATE(transition, PS::INITIAL_PROCESSING,   USM_MAP(NEXT1, PS::GLOBAL_RELAX););
         USM_STATE(transition, PS::GLOBAL_RELAX,         USM_MAP(NEXT1, PS::CAMERA_PARAMETERS););
-        USM_STATE(transition, PS::CAMERA_PARAMETERS,    USM_MAP(NEXT1, PS::GLOBAL_RELAX_2););
-        USM_STATE(transition, PS::GLOBAL_RELAX_2,       USM_MAP(NEXT1, PS::COMPLETE););
+        USM_STATE(transition, PS::CAMERA_PARAMETERS,    USM_MAP(NEXT1, PS::FOCAL_RELAX););
+        USM_STATE(transition, PS::FOCAL_RELAX,       USM_MAP(NEXT1, PS::COMPLETE););
     );
     // clang-format on
 }
@@ -86,8 +86,8 @@ usm::Transition Pipeline::runCurrentState(opencalibration::PipelineState current
     case PS::CAMERA_PARAMETERS:
         t = usm::NEXT1;
         break;
-    case PS::GLOBAL_RELAX_2:
-        t = global_relax();
+    case PS::FOCAL_RELAX:
+        t = focal_relax();
         break;
     case PS::COMPLETE:
         t = complete();
@@ -127,7 +127,7 @@ usm::Transition Pipeline::initial_processing()
 
         _load_stage->init(_graph, paths);
         _link_stage->init(_graph, _imageGPSLocations, _previous_loaded_ids);
-        _relax_stage->init(_graph, _previous_linked_ids, _imageGPSLocations, false);
+        _relax_stage->init(_graph, _previous_linked_ids, _imageGPSLocations, false, {Option::ORIENTATION});
 
         fvec funcs;
         {
@@ -153,7 +153,23 @@ usm::Transition Pipeline::initial_processing()
 
 usm::Transition Pipeline::global_relax()
 {
-    _relax_stage->init(_graph, {}, _imageGPSLocations, true);
+    _relax_stage->init(_graph, {}, _imageGPSLocations, true, {Option::ORIENTATION, Option::POINTS_3D});
+
+    fvec relax_funcs = _relax_stage->get_runners(_graph);
+    run_parallel(relax_funcs, _parallelism);
+    _next_relaxed_ids = _relax_stage->finalize(_graph);
+
+    if (stateRunCount() < 5)
+        return usm::Transition::REPEAT;
+    else
+        return usm::Transition::NEXT1;
+}
+
+usm::Transition Pipeline::focal_relax()
+{
+    _relax_stage->init(_graph, {}, _imageGPSLocations, true,
+                       {Option::ORIENTATION, Option::POINTS_3D, Option::FOCAL_LENGTH});
+    _relax_stage->trim_groups(1); // do it only with the largest cluster group
 
     fvec relax_funcs = _relax_stage->get_runners(_graph);
     run_parallel(relax_funcs, _parallelism);
@@ -181,8 +197,8 @@ std::string Pipeline::toString(PipelineState state)
         return "Global Relax";
     case PS::CAMERA_PARAMETERS:
         return "Camera Parameters";
-    case PS::GLOBAL_RELAX_2:
-        return "Global Relax 2";
+    case PS::FOCAL_RELAX:
+        return "Focal Length Relax";
     case PS::COMPLETE:
         return "Complete";
     };

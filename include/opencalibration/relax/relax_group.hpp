@@ -23,6 +23,8 @@ class RelaxGroup
 
   private:
     std::vector<NodePose> _local_poses;
+    std::unordered_map<size_t, CameraModel> _camera_models;
+
     std::unordered_set<size_t> _edges_to_optimize;
     std::unordered_set<size_t> _nodes_to_optimize;
     std::unordered_set<size_t> _directly_connected;

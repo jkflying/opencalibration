@@ -29,7 +29,8 @@ void RelaxProblem::setupDecompositionProblem(const MeasurementGraph &graph, std:
 {
 
     _loss.Reset(new ceres::HuberLoss(10 * M_PI / 180), ceres::TAKE_OWNERSHIP);
-    initialize(nodes);
+    std::unordered_map<size_t, CameraModel> cam_models;
+    initialize(nodes, cam_models);
     _solver_options.initial_trust_region_radius = 0.1;
 
     for (size_t edge_id : edges_to_optimize)
@@ -45,10 +46,11 @@ void RelaxProblem::setupDecompositionProblem(const MeasurementGraph &graph, std:
 }
 
 void RelaxProblem::setupGroundPlaneProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                                           std::unordered_map<size_t, CameraModel> &cam_models,
                                            const std::unordered_set<size_t> &edges_to_optimize,
                                            const RelaxOptionSet &options)
 {
-    initialize(nodes);
+    initialize(nodes, cam_models);
     initializeGroundPlane();
     _loss.Reset(new ceres::HuberLoss(1 * M_PI / 180), ceres::TAKE_OWNERSHIP);
     gridFilterMatchesPerImage(graph, edges_to_optimize);
@@ -63,11 +65,12 @@ void RelaxProblem::setupGroundPlaneProblem(const MeasurementGraph &graph, std::v
     }
 }
 
-void RelaxProblem::setup3dPointProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+void RelaxProblem::setup3dPointProblem(const MeasurementGraph &graph, std::vector<opencalibration::NodePose> &nodes,
+                                       std::unordered_map<size_t, opencalibration::CameraModel> &cam_models,
                                        const std::unordered_set<size_t> &edges_to_optimize,
                                        const RelaxOptionSet &options)
 {
-    initialize(nodes);
+    initialize(nodes, cam_models);
     _loss.Reset(new ceres::HuberLoss(10), ceres::TAKE_OWNERSHIP);
 
     gridFilterMatchesPerImage(graph, edges_to_optimize);
@@ -85,14 +88,19 @@ void RelaxProblem::setup3dPointProblem(const MeasurementGraph &graph, std::vecto
     _solver_options.linear_solver_type = ceres::SPARSE_SCHUR;
 }
 
-void RelaxProblem::initialize(std::vector<NodePose> &nodes)
+void RelaxProblem::initialize(std::vector<NodePose> &nodes, std::unordered_map<size_t, CameraModel> &cam_models)
 {
     _nodes_to_optimize.reserve(nodes.size());
-
     for (NodePose &n : nodes)
     {
         n.orientation.normalize();
         _nodes_to_optimize.emplace(n.node_id, &n);
+    }
+
+    _cam_models_to_optimize.reserve(cam_models.size());
+    for (auto &id_model : cam_models)
+    {
+        _cam_models_to_optimize[id_model.first] = &id_model.second;
     }
 }
 
@@ -113,11 +121,13 @@ bool RelaxProblem::shouldAddEdgeToOptimization(const std::unordered_set<size_t> 
     return true;
 }
 
-OptimizationPackage::PoseOpt RelaxProblem::nodeid2poseopt(const MeasurementGraph &graph, size_t node_id)
+OptimizationPackage::PoseOpt RelaxProblem::nodeid2poseopt(const MeasurementGraph &graph, size_t node_id,
+                                                          bool load_cam_model)
 {
     OptimizationPackage::PoseOpt po;
     po.node_id = node_id;
     auto opt_iter = _nodes_to_optimize.find(node_id);
+    const MeasurementGraph::Node *node = graph.getNode(node_id);
     if (opt_iter != _nodes_to_optimize.end())
     {
         po.optimize = true;
@@ -130,7 +140,6 @@ OptimizationPackage::PoseOpt RelaxProblem::nodeid2poseopt(const MeasurementGraph
     {
         po.optimize = false;
 
-        const MeasurementGraph::Node *node = graph.getNode(node_id);
         if (node != nullptr && node->payload.orientation.coeffs().allFinite() && node->payload.position.allFinite())
         {
             // const_cast these, but mark as "don't optimize" so that they don't get changed downstream
@@ -138,6 +147,30 @@ OptimizationPackage::PoseOpt RelaxProblem::nodeid2poseopt(const MeasurementGraph
             po.rot_ptr = const_cast<Eigen::Quaterniond *>(&node->payload.orientation);
         }
     }
+    if (load_cam_model)
+    {
+        if (node != nullptr)
+        {
+            auto model_iter = _cam_models_to_optimize.find(node->payload.model->id);
+            if (model_iter == _cam_models_to_optimize.end())
+            {
+                if (po.optimize)
+                {
+                    spdlog::warn("Trying to optimize camera without mutable model");
+                }
+                po.model_ptr = node->payload.model.get();
+            }
+            else
+            {
+                po.model_ptr = model_iter->second;
+            }
+        }
+        else
+        {
+            spdlog::warn("Need to get camera model from unknown node id {}", node_id);
+        }
+    }
+
     return po;
 }
 
@@ -193,8 +226,8 @@ void RelaxProblem::addRelationCost(const MeasurementGraph &graph, size_t edge_id
 {
     OptimizationPackage pkg;
     pkg.relations = &edge.payload;
-    pkg.source = nodeid2poseopt(graph, edge.getSource());
-    pkg.dest = nodeid2poseopt(graph, edge.getDest());
+    pkg.source = nodeid2poseopt(graph, edge.getSource(), false);
+    pkg.dest = nodeid2poseopt(graph, edge.getDest(), false);
 
     if (pkg.source.loc_ptr == nullptr || pkg.dest.loc_ptr == nullptr)
         return;
@@ -240,8 +273,8 @@ void RelaxProblem::addGlobalPlaneMeasurementsCost(const MeasurementGraph &graph,
     if (pkg.source.loc_ptr == nullptr || pkg.dest.loc_ptr == nullptr)
         return;
 
-    const auto &source_model = *graph.getNode(edge.getSource())->payload.model;
-    const auto &dest_model = *graph.getNode(edge.getDest())->payload.model;
+    const auto &source_model = *pkg.source.model_ptr;
+    const auto &dest_model = *pkg.dest.model_ptr;
 
     auto source_whitelist = _grid_filter[edge.getSource()].getBestMeasurementsPerCell();
     auto dest_whitelist = _grid_filter[edge.getDest()].getBestMeasurementsPerCell();
@@ -306,11 +339,6 @@ void RelaxProblem::relaxObservedModelOnly()
         _problem->SetParameterBlockConstant(p);
         params_set.insert(p);
     }
-    for (auto &t : _tracks)
-    {
-        if (params_set.find(t.point.data()) != params_set.end())
-            _problem->SetParameterBlockVariable(t.point.data());
-    }
     for (auto &et : _edge_tracks)
         for (auto &t : et.second)
             if (params_set.find(t.point.data()) != params_set.end())
@@ -349,8 +377,8 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
     if (pkg.source.loc_ptr == nullptr || pkg.dest.loc_ptr == nullptr)
         return;
 
-    const auto &source_model = *graph.getNode(edge.getSource())->payload.model;
-    const auto &dest_model = *graph.getNode(edge.getDest())->payload.model;
+    auto &source_model = *pkg.source.model_ptr;
+    auto &dest_model = *pkg.dest.model_ptr;
 
     auto source_whitelist = _grid_filter[edge.getSource()].getBestMeasurementsPerCell();
     auto dest_whitelist = _grid_filter[edge.getDest()].getBestMeasurementsPerCell();
@@ -383,33 +411,67 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
 
         // TODO: select correct cost function based on options
         (void)options;
-
-        func[0].reset(newAutoDiffPixelErrorCost_Orientation(*pkg.source.loc_ptr, source_model, inlier.pixel_1));
-        func[1].reset(newAutoDiffPixelErrorCost_Orientation(*pkg.dest.loc_ptr, dest_model, inlier.pixel_2));
-
-        bool all_finite = true;
-        for (int i = 0; i < 2; i++)
+        if (options.operator==({Option::FOCAL_LENGTH, Option::ORIENTATION, Option::POINTS_3D}))
         {
-            Eigen::Vector2d res{NAN, NAN};
-            const double *args[2] = {datas[i], points.back().point.data()};
-            func[0]->Evaluate(args, res.data(), nullptr);
+            func[0].reset(
+                newAutoDiffPixelErrorCost_OrientationFocal(*pkg.source.loc_ptr, source_model, inlier.pixel_1));
+            func[1].reset(newAutoDiffPixelErrorCost_OrientationFocal(*pkg.dest.loc_ptr, dest_model, inlier.pixel_2));
 
-            if (!res.array().allFinite())
+            bool all_finite = true;
+            for (int i = 0; i < 2; i++)
             {
-                all_finite = false;
-            }
-        }
-        if (!all_finite)
-        {
-            spdlog::trace("Skipping adding NaN track measurement residual");
-            continue;
-        }
+                Eigen::Vector2d res{NAN, NAN};
+                const double *args[2] = {datas[i], points.back().point.data()};
+                func[0]->Evaluate(args, res.data(), nullptr);
 
-        for (int i = 0; i < 2; i++)
-        {
-            _problem->AddResidualBlock(func[i].release(), &_loss, datas[i], points.back().point.data());
+                if (!res.array().allFinite())
+                {
+                    all_finite = false;
+                }
+            }
+            if (!all_finite)
+            {
+                spdlog::trace("Skipping adding NaN track measurement residual");
+                continue;
+            }
+
+            // TODO: keep local camera models, update at end
+            _problem->AddResidualBlock(func[0].release(), &_loss, datas[0], points.back().point.data(),
+                                       &source_model.focal_length_pixels);
+            _problem->AddResidualBlock(func[1].release(), &_loss, datas[1], points.back().point.data(),
+                                       &dest_model.focal_length_pixels);
+
+            points_added = true;
         }
-        points_added = true;
+        else if (options.operator==({Option::ORIENTATION, Option::POINTS_3D}))
+        {
+            func[0].reset(newAutoDiffPixelErrorCost_Orientation(*pkg.source.loc_ptr, source_model, inlier.pixel_1));
+            func[1].reset(newAutoDiffPixelErrorCost_Orientation(*pkg.dest.loc_ptr, dest_model, inlier.pixel_2));
+
+            bool all_finite = true;
+            for (int i = 0; i < 2; i++)
+            {
+                Eigen::Vector2d res{NAN, NAN};
+                const double *args[2] = {datas[i], points.back().point.data()};
+                func[0]->Evaluate(args, res.data(), nullptr);
+
+                if (!res.array().allFinite())
+                {
+                    all_finite = false;
+                }
+            }
+            if (!all_finite)
+            {
+                spdlog::trace("Skipping adding NaN track measurement residual");
+                continue;
+            }
+
+            for (int i = 0; i < 2; i++)
+            {
+                _problem->AddResidualBlock(func[i].release(), &_loss, datas[i], points.back().point.data());
+            }
+            points_added = true;
+        }
     }
 
     if (points_added)

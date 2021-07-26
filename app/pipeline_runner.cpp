@@ -109,7 +109,7 @@ int main(int argc, char *argv[])
             break;
         }
         case PipelineState::GLOBAL_RELAX:
-        case PipelineState::GLOBAL_RELAX_2: {
+        case PipelineState::FOCAL_RELAX: {
             std::cout << ": iteration: " << info.state_iteration << " relaxed: " << total_relaxed << std::endl;
             break;
         }

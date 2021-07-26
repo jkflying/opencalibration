@@ -25,14 +25,15 @@ RelaxStage::~RelaxStage()
 }
 
 void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &node_ids,
-                      const jk::tree::KDTree<size_t, 3> &imageGPSLocations, bool final_global_relax)
+                      const jk::tree::KDTree<size_t, 3> &imageGPSLocations, bool global_relax,
+                      const RelaxOptionSet &options)
 {
     PerformanceMeasure p("Relax init");
     _groups.clear();
 
     std::vector<size_t> actual_node_ids = node_ids;
 
-    if (final_global_relax)
+    if (global_relax)
     {
         actual_node_ids.clear();
         actual_node_ids.reserve(graph.size_nodes());
@@ -43,7 +44,7 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
     }
 
     const size_t num_groups =
-        final_global_relax ? std::max<size_t>(1, static_cast<size_t>(std::ceil(actual_node_ids.size() / 50))) : 1;
+        global_relax ? std::max<size_t>(1, static_cast<size_t>(std::ceil(actual_node_ids.size() / 50))) : 1;
 
     _k_groups->reset(num_groups);
 
@@ -94,16 +95,19 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
         }
         spdlog::info("Group added with {} nodes", group_ids.size());
         _groups.emplace_back();
-        RelaxOptionSet options({Option::ORIENTATION});
-        if (final_global_relax)
-        {
-            options.set(Option::POINTS_3D, true);
-        }
         _groups.back().init(graph, group_ids, imageGPSLocations, graph_connection_depth, options);
     }
     // k-means were smallest to biggest, but we want to process the big ones first to improve load balancing on really
     // large problem
     std::reverse(_groups.begin(), _groups.end());
+}
+
+void RelaxStage::trim_groups(size_t max_size)
+{
+    while (_groups.size() > max_size)
+    {
+        _groups.pop_back();
+    }
 }
 
 std::vector<std::function<void()>> RelaxStage::get_runners(const MeasurementGraph &graph)
