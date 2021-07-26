@@ -377,6 +377,9 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
     if (pkg.source.loc_ptr == nullptr || pkg.dest.loc_ptr == nullptr)
         return;
 
+    if (options.hasAll({Option::FOCAL_LENGTH}) && (pkg.source.model_ptr == nullptr || pkg.dest.model_ptr == nullptr))
+        return;
+
     auto &source_model = *pkg.source.model_ptr;
     auto &dest_model = *pkg.dest.model_ptr;
 
@@ -409,19 +412,18 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
         // add cost functions for this 3D point from both the source and dest camera
         std::unique_ptr<ceres::CostFunction> func[2];
 
-        // TODO: select correct cost function based on options
-        (void)options;
         if (options.operator==({Option::FOCAL_LENGTH, Option::ORIENTATION, Option::POINTS_3D}))
         {
             func[0].reset(
                 newAutoDiffPixelErrorCost_OrientationFocal(*pkg.source.loc_ptr, source_model, inlier.pixel_1));
             func[1].reset(newAutoDiffPixelErrorCost_OrientationFocal(*pkg.dest.loc_ptr, dest_model, inlier.pixel_2));
 
+            double *focals[2] = {&source_model.focal_length_pixels, &dest_model.focal_length_pixels};
             bool all_finite = true;
             for (int i = 0; i < 2; i++)
             {
                 Eigen::Vector2d res{NAN, NAN};
-                const double *args[2] = {datas[i], points.back().point.data()};
+                const double *args[3] = {datas[i], points.back().point.data(), focals[i]};
                 func[0]->Evaluate(args, res.data(), nullptr);
 
                 if (!res.array().allFinite())
@@ -435,11 +437,10 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
                 continue;
             }
 
-            // TODO: keep local camera models, update at end
-            _problem->AddResidualBlock(func[0].release(), &_loss, datas[0], points.back().point.data(),
-                                       &source_model.focal_length_pixels);
-            _problem->AddResidualBlock(func[1].release(), &_loss, datas[1], points.back().point.data(),
-                                       &dest_model.focal_length_pixels);
+            for (int i = 0; i < 2; i++)
+            {
+                _problem->AddResidualBlock(func[i].release(), &_loss, datas[i], points.back().point.data(), focals[i]);
+            }
 
             points_added = true;
         }
