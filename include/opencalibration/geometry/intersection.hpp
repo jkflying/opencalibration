@@ -1,5 +1,6 @@
 #pragma once
 
+#include <opencalibration/types/camera_model.hpp>
 #include <opencalibration/types/plane.hpp>
 #include <opencalibration/types/ray.hpp>
 
@@ -16,6 +17,11 @@ namespace opencalibration
  */
 std::pair<Eigen::Vector3d, double> rayIntersection(const ray_d &r1, const ray_d &r2);
 std::pair<Eigen::Vector3d, double> rayIntersection(const std::vector<ray_d> &rays);
+
+std::pair<Eigen::Vector3d, double> rayIntersection(const CameraModel &model1, CameraModel &model2,
+                                                   const Eigen::Vector3d &pos1, const Eigen::Vector3d &pos2,
+                                                   const Eigen::Quaterniond &rot1, const Eigen::Quaterniond &rot2,
+                                                   const Eigen::Vector2d &px1, const Eigen::Vector2d &px2);
 
 template <typename T> plane_norm_offset<T> cornerPlane2normOffsetPlane(const plane_3_corners<T> &p3)
 {

@@ -1,6 +1,104 @@
 #include <opencalibration/geometry/intersection.hpp>
 
+#include <opencalibration/distort/distort_keypoints.hpp>
+
 #include <Eigen/Geometry>
+#include <ceres/jet.h>
+#include <ceres/tiny_solver.h>
+
+namespace
+{
+using namespace opencalibration;
+
+struct pixel_cost_functor
+{
+    using Scalar = double;
+    enum
+    {
+        NUM_RESIDUALS = 2,
+        NUM_PARAMETERS = 3
+    };
+
+    pixel_cost_functor(const CameraModel &model, const Eigen::Vector3d &pos, const Eigen::Quaterniond &rot,
+                       const Eigen::Vector2d &px)
+        : model(model), pos(pos), rot(rot), px(px)
+    {
+    }
+
+    template <typename T> bool pixel_cost_function(const T *parameters, T *residuals) const
+    {
+        Eigen::Map<const Eigen::Matrix<T, 3, 1>> point(parameters);
+        Eigen::Map<Eigen::Matrix<T, 2, 1>> res(residuals);
+
+        res = image_from_3d<T>(rot.inverse().cast<T>() * (point - pos.cast<T>()), model.cast<T>()) - px.cast<T>();
+
+        return true;
+    }
+
+    bool operator()(const double *parameters, double *residuals) const
+    {
+        return pixel_cost_function<double>(parameters, residuals);
+    }
+
+    bool operator()(const double *parameters, double *residuals, double *jacobian) const
+    {
+        using T = ceres::Jet<double, 3>;
+        Eigen::Matrix<T, 3, 1> paramsT = Eigen::Map<const Eigen::Vector3d>(parameters).cast<T>();
+        Eigen::Matrix<T, 2, 1> resT;
+
+        bool ret = pixel_cost_function<T>(paramsT.data(), resT.data());
+
+        Eigen::Map<Eigen::Matrix<double, 2, 3>> jac(jacobian);
+        Eigen::Map<Eigen::Vector2d> res(residuals);
+
+        for (Eigen::Index i = 0; i < 2; i++)
+        {
+            res[i] = resT[i].a;
+            jac.row(i) = resT[i].v;
+        }
+
+        return ret;
+    }
+
+    const CameraModel &model;
+    const Eigen::Vector3d &pos;
+    const Eigen::Quaterniond &rot;
+    const Eigen::Vector2d &px;
+};
+
+struct twin_pixel_cost_functor
+{
+    pixel_cost_functor f1, f2;
+
+    using Scalar = pixel_cost_functor::Scalar;
+    enum
+    {
+        NUM_RESIDUALS = pixel_cost_functor::NUM_RESIDUALS * 2,
+        NUM_PARAMETERS = pixel_cost_functor::NUM_PARAMETERS
+    };
+
+    bool operator()(const double *parameters, double *residuals, double *jacobian) const
+    {
+        if (jacobian == nullptr)
+        {
+            return f1(parameters, residuals) && f2(parameters, residuals + pixel_cost_functor::NUM_RESIDUALS);
+        }
+        else
+        {
+            Eigen::Matrix<double, 2, 3> jac1, jac2;
+            bool ret = f1(parameters, residuals, jac1.data()) &&
+                       f2(parameters, residuals + pixel_cost_functor::NUM_RESIDUALS, jac2.data());
+
+            Eigen::Map<Eigen::Matrix<double, 4, 3>> jac(jacobian);
+            jac.topRows<2>() = jac1;
+            jac.bottomRows<2>() = jac2;
+
+            return ret;
+        }
+    }
+};
+
+} // namespace
 
 namespace opencalibration
 {
@@ -50,6 +148,27 @@ std::pair<Eigen::Vector3d, double> rayIntersection(const std::vector<ray_d> &ray
     }
 
     return std::make_pair(res, error);
+}
+
+std::pair<Eigen::Vector3d, double> rayIntersection(const CameraModel &model1, CameraModel &model2,
+                                                   const Eigen::Vector3d &pos1, const Eigen::Vector3d &pos2,
+                                                   const Eigen::Quaterniond &rot1, const Eigen::Quaterniond &rot2,
+                                                   const Eigen::Vector2d &px1, const Eigen::Vector2d &px2)
+{
+    ray_d ray1{rot1 * image_to_3d(px1, model1), pos1};
+    ray_d ray2{rot2 * image_to_3d(px2, model2), pos2};
+
+    auto initial_guess = rayIntersection(ray1, ray2);
+
+    const twin_pixel_cost_functor func{pixel_cost_functor(model1, pos1, rot1, px1),
+                                       pixel_cost_functor(model2, pos2, rot2, px2)};
+
+    ceres::TinySolver<twin_pixel_cost_functor> solver;
+
+    const auto &summary = solver.Solve(func, &initial_guess.first);
+    initial_guess.second = summary.final_cost;
+
+    return initial_guess;
 }
 
 } // namespace opencalibration

@@ -386,9 +386,6 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
     auto source_whitelist = _grid_filter[edge.getSource()].getBestMeasurementsPerCell();
     auto dest_whitelist = _grid_filter[edge.getDest()].getBestMeasurementsPerCell();
 
-    Eigen::Matrix3d source_rot = pkg.source.rot_ptr->toRotationMatrix();
-    Eigen::Matrix3d dest_rot = pkg.dest.rot_ptr->toRotationMatrix();
-
     double *datas[2] = {pkg.source.rot_ptr->coeffs().data(), pkg.dest.rot_ptr->coeffs().data()};
     bool points_added = false;
     for (const auto &inlier : edge.payload.inlier_matches)
@@ -399,9 +396,8 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
             continue;
 
         // make 3D intersection, add it to `points`
-        Eigen::Vector3d source_ray = source_rot * image_to_3d(inlier.pixel_1, source_model);
-        Eigen::Vector3d dest_ray = dest_rot * image_to_3d(inlier.pixel_2, dest_model);
-        auto intersection = rayIntersection(ray_d{source_ray, *pkg.source.loc_ptr}, ray_d{dest_ray, *pkg.dest.loc_ptr});
+        auto intersection = rayIntersection(source_model, dest_model, *pkg.source.loc_ptr, *pkg.dest.loc_ptr,
+                                            *pkg.source.rot_ptr, *pkg.dest.rot_ptr, inlier.pixel_1, inlier.pixel_2);
         NodeIdFeatureIndex nifi[2];
         nifi[0].node_id = edge.getSource();
         nifi[0].feature_index = inlier.feature_index_1;
