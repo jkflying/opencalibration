@@ -22,7 +22,8 @@ template <typename T> struct DifferentiableCameraModel
 
     Eigen::Matrix<T, 2, 1> principle_point{T(0), T(0)};
 
-    // TODO: add distortion
+    Eigen::Matrix<T, 6, 1> radial_distortion{};
+    Eigen::Matrix<T, 2, 1> tangential_distortion{};
 
     ProjectionType projection_type = ProjectionType::PLANAR;
 
@@ -30,6 +31,7 @@ template <typename T> struct DifferentiableCameraModel
     {
         return pixels_rows == other.pixels_rows && pixels_cols == other.pixels_cols &&
                focal_length_pixels == other.focal_length_pixels && principle_point == other.principle_point &&
+               radial_distortion == other.radial_distortion && tangential_distortion == other.tangential_distortion &&
                projection_type == other.projection_type;
     }
 
@@ -41,6 +43,8 @@ template <typename T> struct DifferentiableCameraModel
         model.pixels_cols = pixels_cols;
         model.focal_length_pixels = K(focal_length_pixels);
         model.principle_point = principle_point.template cast<K>();
+        model.radial_distortion = radial_distortion.template cast<K>();
+        model.tangential_distortion = tangential_distortion.template cast<K>();
         model.projection_type = projection_type;
 
         return model;

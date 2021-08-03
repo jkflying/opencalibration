@@ -456,7 +456,7 @@ TEST_F(relax_, measurement_3_images_points_internals_point_triangulation_noise)
 
     // AND: it took many iterations, and started with lots of error, but it minimizes to almost zero error
     EXPECT_GT(rp.test_get_solver_summary().iterations.size(), 10);
-    EXPECT_GT(rp.test_get_solver_summary().initial_cost, 5e2);
+    EXPECT_GT(rp.test_get_solver_summary().initial_cost, 4e2);
     EXPECT_LT(rp.test_get_solver_summary().final_cost, 1e-10);
 }
 
@@ -500,4 +500,44 @@ TEST_F(relax_, measurement_3_images_points_internals_point_triangulation_noise_f
     EXPECT_GT(rp.test_get_solver_summary().iterations.size(), 10);
     EXPECT_GT(rp.test_get_solver_summary().initial_cost, 5e2);
     EXPECT_LT(rp.test_get_solver_summary().final_cost, 1e-10);
+}
+
+TEST_F(relax_, measurement_3_images_points_internals_point_triangulation_accuracy)
+{
+    // a test which just optimizes the points to check how they move from triangulation -> full bundle
+
+    // GIVEN: a graph, 3 images with edges between them all, with some noise
+    init_cameras();
+    auto points = generate_3d_points();
+    auto vec2arr = [](const Eigen::Vector3d &vec) { return std::array<double, 3>{vec.x(), vec.y(), vec.z()}; };
+    jk::tree::KDTree<size_t, 3> points_tree;
+    for (size_t i = 0; i < points.size(); i++)
+        points_tree.addPoint(vec2arr(points[i]), i);
+    add_point_measurements(points);
+    add_ori_noise({-0.05, 0.05, 0.05});
+
+    // WHEN: we set up the problem and
+    std::unordered_set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
+    TestRelaxProblem rp;
+    rp.setup3dPointProblem(graph, np, cam_models, edges, {Option::ORIENTATION, Option::POINTS_3D});
+
+    // THEN: the 3D points shouldn't be well triangulated
+    auto tracks_before = rp.test_get_tracks();
+    for (const auto &track : tracks_before)
+    {
+        auto nearest = points_tree.search(vec2arr(track.point));
+        EXPECT_GT(nearest.distance, 1);
+    }
+
+    rp.relaxObservedModelOnly();
+
+    auto tracks_after = rp.test_get_tracks();
+
+    // verify that the points for the tracks didn't move (much)
+    ASSERT_EQ(tracks_before.size(), tracks_after.size());
+    for (size_t i = 0; i < tracks_before.size(); i++)
+    {
+        EXPECT_LT((tracks_before[i].point - tracks_after[i].point).norm(), 0.1)
+            << "Before: " << tracks_before[i].point.transpose() << "  after: " << tracks_after[i].point.transpose();
+    }
 }

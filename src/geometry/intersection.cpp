@@ -44,14 +44,19 @@ struct pixel_cost_functor
     {
         using T = ceres::Jet<double, 3>;
         Eigen::Matrix<T, 3, 1> paramsT = Eigen::Map<const Eigen::Vector3d>(parameters).cast<T>();
+        for (Eigen::Index i = 0; i < NUM_PARAMETERS; i++)
+        {
+            paramsT[i].v[i] = 1;
+        }
+
         Eigen::Matrix<T, 2, 1> resT;
 
         bool ret = pixel_cost_function<T>(paramsT.data(), resT.data());
 
-        Eigen::Map<Eigen::Matrix<double, 2, 3>> jac(jacobian);
+        Eigen::Map<Eigen::Matrix<double, NUM_RESIDUALS, NUM_PARAMETERS>> jac(jacobian);
         Eigen::Map<Eigen::Vector2d> res(residuals);
 
-        for (Eigen::Index i = 0; i < 2; i++)
+        for (Eigen::Index i = 0; i < NUM_RESIDUALS; i++)
         {
             res[i] = resT[i].a;
             jac.row(i) = resT[i].v;

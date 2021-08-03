@@ -5,7 +5,6 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test_data/LICENSE")
 endif()
 
 add_executable(functional_tests gtest_main.cpp
-                                test_distort.cpp
                                 test_extract_features.cpp
                                 test_extract_metadata.cpp
                                 test_match.cpp
@@ -26,6 +25,7 @@ target_compile_definitions(functional_tests PUBLIC TEST_DATA_DIR=\"${CMAKE_CURRE
 
 add_executable(unit_tests gtest_main.cpp
                           test_combinatorics.cpp
+                          test_distort.cpp
                           test_geo_coord.cpp
                           test_geometry.cpp
                           test_graph.cpp
