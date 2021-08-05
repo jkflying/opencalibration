@@ -72,7 +72,7 @@ void StateMachine<StateEnum, Transition>::iterateOnce() {
   Transition t = runCurrentState(m_currentState);
   m_stateRunCount++;
   StateEnum prev_state = m_currentState;
-  if (t != REPEAT) m_currentState = chooseNextState(m_currentState, t);
+  if (t != Transition::REPEAT) m_currentState = chooseNextState(m_currentState, t);
   if (m_currentState != prev_state) m_stateRunCount = 0;
 }
 

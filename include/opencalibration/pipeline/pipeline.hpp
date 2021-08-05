@@ -24,12 +24,20 @@ enum class PipelineState
 {
     INITIAL_PROCESSING,
     GLOBAL_RELAX,
-    CAMERA_PARAMETERS,
     FOCAL_RELAX,
+    CAMERA_PARAMETERS,
+    FINAL_GLOBAL_RELAX,
     COMPLETE
 };
 
-class Pipeline : public usm::StateMachine<PipelineState>
+enum class PipelineTransition
+{
+    REPEAT,
+    NEXT,
+    ERROR
+};
+
+class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
 {
   public:
     struct StepCompletionInfo
@@ -42,7 +50,7 @@ class Pipeline : public usm::StateMachine<PipelineState>
     };
     using StepCompletionCallback = std::function<void(const StepCompletionInfo &)>;
 
-    Pipeline(size_t parallelism = 1);
+    Pipeline(size_t batch_size = 1, size_t parallelism = 0); // parallelism = 0 --> unlimited
     ~Pipeline();
 
     void add(const std::vector<std::string> &filename);
@@ -63,14 +71,15 @@ class Pipeline : public usm::StateMachine<PipelineState>
     static std::string toString(PipelineState state);
 
   protected:
-    PipelineState chooseNextState(opencalibration::PipelineState currentState, usm::Transition transition) override;
-    usm::Transition runCurrentState(opencalibration::PipelineState currentState) override;
+    PipelineState chooseNextState(PipelineState currentState, PipelineTransition transition) override;
+    PipelineTransition runCurrentState(PipelineState currentState) override;
 
   private:
-    usm::Transition initial_processing();
-    usm::Transition global_relax();
-    usm::Transition focal_relax();
-    usm::Transition complete();
+    PipelineTransition initial_processing();
+    PipelineTransition global_relax();
+    PipelineTransition focal_relax();
+    PipelineTransition final_global_relax();
+    PipelineTransition complete();
 
     std::vector<size_t> _previous_loaded_ids, _previous_linked_ids, _next_loaded_ids, _next_linked_ids;
 
@@ -90,6 +99,7 @@ class Pipeline : public usm::StateMachine<PipelineState>
 
     StepCompletionCallback _step_callback;
 
+    size_t _batch_size;
     size_t _parallelism;
 };
 } // namespace opencalibration
