@@ -63,12 +63,12 @@ class StateMachine {
 
 /*---------------IMPLEMENTATION------------------*/
 
-template <typename StateEnum>
-StateMachine<StateEnum>::StateMachine(StateEnum startingState)
+template <typename StateEnum, typename Transition>
+StateMachine<StateEnum, Transition>::StateMachine(StateEnum startingState)
     : m_currentState(startingState), m_stateRunCount(0) {}
 
-template <typename StateEnum>
-void StateMachine<StateEnum>::iterateOnce() {
+template <typename StateEnum, typename Transition>
+void StateMachine<StateEnum, Transition>::iterateOnce() {
   Transition t = runCurrentState(m_currentState);
   m_stateRunCount++;
   StateEnum prev_state = m_currentState;
@@ -76,13 +76,13 @@ void StateMachine<StateEnum>::iterateOnce() {
   if (m_currentState != prev_state) m_stateRunCount = 0;
 }
 
-template <typename StateEnum>
-StateEnum StateMachine<StateEnum>::getState() {
+template <typename StateEnum, typename Transition>
+StateEnum StateMachine<StateEnum, Transition>::getState() {
   return m_currentState;
 }
 
-template <typename StateEnum>
-uint64_t StateMachine<StateEnum>::stateRunCount() {
+template <typename StateEnum, typename Transition>
+uint64_t StateMachine<StateEnum, Transition>::stateRunCount() {
     return m_stateRunCount;
 }
 
