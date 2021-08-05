@@ -35,11 +35,13 @@
 * For usage examples, look at the tests.
 */
 
+#include <cstdint>
+
 namespace usm {
 
 enum Transition { REPEAT, NEXT1, NEXT2, NEXT3, NEXT4, ERROR };
 
-template <typename StateEnum>
+template <typename StateEnum, typename Transition = Transition>
 class StateMachine {
  public:
   StateMachine(StateEnum startingState);
