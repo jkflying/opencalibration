@@ -39,22 +39,23 @@
 
 namespace usm {
 
-enum Transition { REPEAT, NEXT1, NEXT2, NEXT3, NEXT4, ERROR };
+enum class Transition { REPEAT, NEXT1, NEXT2, NEXT3, NEXT4, ERROR };
 
-template <typename StateEnum, typename Transition = Transition>
+template <typename StateEnum, typename TransitionEnum = Transition>
 class StateMachine {
  public:
-  StateMachine(StateEnum startingState);
+  using State = StateEnum;
+  using Transition = TransitionEnum;
+
+  StateMachine(State startingState);
   void iterateOnce();
 
-  StateEnum getState();
+  State getState();
   uint64_t stateRunCount();
 
  protected:
-  virtual Transition runCurrentState(
-      StateEnum currentState) = 0;  // a big switch
-  virtual StateEnum chooseNextState(
-      StateEnum currentState, Transition transition) = 0;  // nested switches
+  virtual Transition runCurrentState(State currentState) = 0;  // a big switch
+  virtual State chooseNextState(State currentState, Transition transition) = 0;  // nested switches
 
  private:
   StateEnum m_currentState;
@@ -63,12 +64,12 @@ class StateMachine {
 
 /*---------------IMPLEMENTATION------------------*/
 
-template <typename StateEnum, typename Transition>
-StateMachine<StateEnum, Transition>::StateMachine(StateEnum startingState)
+template <typename StateEnum, typename TransitionEnum>
+StateMachine<StateEnum, TransitionEnum>::StateMachine(State startingState)
     : m_currentState(startingState), m_stateRunCount(0) {}
 
-template <typename StateEnum, typename Transition>
-void StateMachine<StateEnum, Transition>::iterateOnce() {
+template <typename StateEnum, typename TransitionEnum>
+void StateMachine<StateEnum, TransitionEnum>::iterateOnce() {
   Transition t = runCurrentState(m_currentState);
   m_stateRunCount++;
   StateEnum prev_state = m_currentState;
@@ -76,13 +77,13 @@ void StateMachine<StateEnum, Transition>::iterateOnce() {
   if (m_currentState != prev_state) m_stateRunCount = 0;
 }
 
-template <typename StateEnum, typename Transition>
-StateEnum StateMachine<StateEnum, Transition>::getState() {
+template <typename StateEnum, typename TransitionEnum>
+StateEnum StateMachine<StateEnum, TransitionEnum>::getState() {
   return m_currentState;
 }
 
-template <typename StateEnum, typename Transition>
-uint64_t StateMachine<StateEnum, Transition>::stateRunCount() {
+template <typename StateEnum, typename TransitionEnum>
+uint64_t StateMachine<StateEnum, TransitionEnum>::stateRunCount() {
     return m_stateRunCount;
 }
 
