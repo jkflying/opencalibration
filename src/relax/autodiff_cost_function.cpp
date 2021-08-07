@@ -50,6 +50,28 @@ ceres::CostFunction *newAutoDiffPixelErrorCost_OrientationFocal(const Eigen::Vec
     return new CostFunction(new Functor(camera_loc, camera_model, camera_pixel));
 }
 
+ceres::CostFunction *newAutoDiffPixelErrorCost_OrientationFocalRadial(const Eigen::Vector3d &camera_loc,
+                                                                      const CameraModel &camera_model,
+                                                                      const Eigen::Vector2d &camera_pixel)
+{
+    using Functor = PixelErrorCost_OrientationFocalRadial;
+    using CostFunction =
+        ceres::AutoDiffCostFunction<Functor, Functor::NUM_RESIDUALS, Functor::NUM_PARAMETERS_1,
+                                    Functor::NUM_PARAMETERS_2, Functor::NUM_PARAMETERS_3, Functor::NUM_PARAMETERS_4>;
+    return new CostFunction(new Functor(camera_loc, camera_model, camera_pixel));
+}
+
+ceres::CostFunction *newAutoDiffPixelErrorCost_OrientationFocalRadialTangential(const Eigen::Vector3d &camera_loc,
+                                                                                const CameraModel &camera_model,
+                                                                                const Eigen::Vector2d &camera_pixel)
+{
+    using Functor = PixelErrorCost_OrientationFocalRadialTangential;
+    using CostFunction = ceres::AutoDiffCostFunction<Functor, Functor::NUM_RESIDUALS, Functor::NUM_PARAMETERS_1,
+                                                     Functor::NUM_PARAMETERS_2, Functor::NUM_PARAMETERS_3,
+                                                     Functor::NUM_PARAMETERS_4, Functor::NUM_PARAMETERS_5>;
+    return new CostFunction(new Functor(camera_loc, camera_model, camera_pixel));
+}
+
 ceres::CostFunction *newAutoDiffPointsDownwardsPrior()
 {
     using Functor = PointsDownwardsPrior;

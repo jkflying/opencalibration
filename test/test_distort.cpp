@@ -42,7 +42,7 @@ TEST(distort, image_to_3d_to_image_radial_distortion)
     model.pixels_cols = 4000;
     model.pixels_rows = 3000;
     model.principle_point = Eigen::Vector2d(model.pixels_cols, model.pixels_rows) / 2;
-    model.radial_distortion << 0, 0.02, 0, -0.07, 0, 0.1;
+    model.radial_distortion << 0.02, -0.07, 0.1;
 
     EXPECT_NO_FATAL_FAILURE(verify(model, 1e-2)); // only solve to 1/100 of a pixel error
 }
@@ -54,7 +54,7 @@ TEST(distort, image_to_3d_to_image_radial_tangential_distortion)
     model.pixels_cols = 4000;
     model.pixels_rows = 3000;
     model.principle_point = Eigen::Vector2d(model.pixels_cols, model.pixels_rows) / 2;
-    model.radial_distortion << 0, 0.02, 0, -0.07, 0, 0.1;
+    model.radial_distortion << 0.02, -0.07, 0.1;
     model.tangential_distortion << 0.08, -0.08;
 
     EXPECT_NO_FATAL_FAILURE(verify(model, 1e-2)); // only solve to 1/100 of a pixel error

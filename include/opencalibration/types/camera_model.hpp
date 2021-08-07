@@ -22,7 +22,7 @@ template <typename T> struct DifferentiableCameraModel
 
     Eigen::Matrix<T, 2, 1> principle_point{T(0), T(0)};
 
-    Eigen::Matrix<T, 6, 1> radial_distortion{};
+    Eigen::Matrix<T, 3, 1> radial_distortion{};
     Eigen::Matrix<T, 2, 1> tangential_distortion{};
 
     ProjectionType projection_type = ProjectionType::PLANAR;

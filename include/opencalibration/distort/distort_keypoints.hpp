@@ -24,8 +24,8 @@ Eigen::Matrix<T, 2, 1> distortProjectedRay(const Eigen::Matrix<T, 2, 1> &ray_pro
                                            const DifferentiableCameraModel<T> &model)
 {
 
-    Eigen::Matrix<T, 6, 1> distortion_coefficients;
-    distortion_coefficients[0] = ray_projected.norm();
+    Eigen::Matrix<T, 3, 1> distortion_coefficients;
+    distortion_coefficients[0] = ray_projected.squaredNorm();
     for (Eigen::Index i = 1; i < distortion_coefficients.size(); i++)
         distortion_coefficients[i] = distortion_coefficients[i - 1] * distortion_coefficients[0];
 
@@ -33,7 +33,7 @@ Eigen::Matrix<T, 2, 1> distortProjectedRay(const Eigen::Matrix<T, 2, 1> &ray_pro
         (T(1) + model.radial_distortion.dot(distortion_coefficients)) * ray_projected.array() +
         T(2) * ray_projected.prod() * model.tangential_distortion.array() +
         model.tangential_distortion.reverse().array() *
-            (distortion_coefficients[1] + T(2) * ray_projected.array() * ray_projected.array());
+            (distortion_coefficients[0] + T(2) * ray_projected.array() * ray_projected.array());
 
     return ray_distorted;
 }

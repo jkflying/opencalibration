@@ -82,6 +82,11 @@ class RelaxProblem
 
     ceres::Problem::Options _problemOptions;
     ceres::EigenQuaternionParameterization _quat_parameterization;
+
+    ceres::SubsetParameterization _brown2_parameterization;
+    ceres::SubsetParameterization _brown24_parameterization;
+    ceres::IdentityParameterization _brown246_parameterization;
+
     std::unique_ptr<ceres::Problem> _problem;
 
     std::unordered_map<size_t, GridFilter<const feature_match_denormalized *>> _grid_filter;

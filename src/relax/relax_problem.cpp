@@ -7,7 +7,8 @@ namespace opencalibration
 {
 
 RelaxProblem::RelaxProblem()
-    : _log_forwarder_dependency(GetCeresLogForwarder()), _loss(new ceres::TrivialLoss(), ceres::TAKE_OWNERSHIP)
+    : _log_forwarder_dependency(GetCeresLogForwarder()), _loss(new ceres::TrivialLoss(), ceres::TAKE_OWNERSHIP),
+      _brown2_parameterization(3, {1, 2}), _brown24_parameterization(3, {2}), _brown246_parameterization(3)
 {
     _problemOptions.cost_function_ownership = ceres::TAKE_OWNERSHIP;
     _problemOptions.loss_function_ownership = ceres::DO_NOT_TAKE_OWNERSHIP;
@@ -386,7 +387,7 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
     auto source_whitelist = _grid_filter[edge.getSource()].getBestMeasurementsPerCell();
     auto dest_whitelist = _grid_filter[edge.getDest()].getBestMeasurementsPerCell();
 
-    double *datas[2] = {pkg.source.rot_ptr->coeffs().data(), pkg.dest.rot_ptr->coeffs().data()};
+    double *orientation_ptrs[2] = {pkg.source.rot_ptr->coeffs().data(), pkg.dest.rot_ptr->coeffs().data()};
     bool points_added = false;
     for (const auto &inlier : edge.payload.inlier_matches)
     {
@@ -407,81 +408,121 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
 
         // add cost functions for this 3D point from both the source and dest camera
         std::unique_ptr<ceres::CostFunction> func[2];
+        std::vector<double *> args[2];
 
-        if (options.operator==({Option::FOCAL_LENGTH, Option::ORIENTATION, Option::POINTS_3D}))
+        double *focals[2] = {&source_model.focal_length_pixels, &dest_model.focal_length_pixels};
+        double *radials[2] = {source_model.radial_distortion.data(), dest_model.radial_distortion.data()};
+        double *tangentials[2] = {source_model.tangential_distortion.data(), dest_model.tangential_distortion.data()};
+
+        if (options.operator==({Option::LENS_DISTORTIONS_TANGENTIAL, Option::LENS_DISTORTIONS_RADIAL,
+                                Option::FOCAL_LENGTH, Option::ORIENTATION, Option::POINTS_3D}))
+        {
+            func[0].reset(newAutoDiffPixelErrorCost_OrientationFocalRadialTangential(*pkg.source.loc_ptr, source_model,
+                                                                                     inlier.pixel_1));
+            func[1].reset(newAutoDiffPixelErrorCost_OrientationFocalRadialTangential(*pkg.dest.loc_ptr, dest_model,
+                                                                                     inlier.pixel_2));
+            for (int i = 0; i < 2; i++)
+            {
+                args[i] = {orientation_ptrs[i], points.back().point.data(), focals[i], radials[i], tangentials[i]};
+            }
+        }
+        else if (options.operator==
+                 ({Option::LENS_DISTORTIONS_RADIAL, Option::FOCAL_LENGTH, Option::ORIENTATION, Option::POINTS_3D}))
+        {
+            func[0].reset(
+                newAutoDiffPixelErrorCost_OrientationFocalRadial(*pkg.source.loc_ptr, source_model, inlier.pixel_1));
+            func[1].reset(
+                newAutoDiffPixelErrorCost_OrientationFocalRadial(*pkg.dest.loc_ptr, dest_model, inlier.pixel_2));
+            for (int i = 0; i < 2; i++)
+            {
+                args[i] = {orientation_ptrs[i], points.back().point.data(), focals[i], radials[i]};
+            }
+        }
+        else if (options.operator==({Option::FOCAL_LENGTH, Option::ORIENTATION, Option::POINTS_3D}))
         {
             func[0].reset(
                 newAutoDiffPixelErrorCost_OrientationFocal(*pkg.source.loc_ptr, source_model, inlier.pixel_1));
             func[1].reset(newAutoDiffPixelErrorCost_OrientationFocal(*pkg.dest.loc_ptr, dest_model, inlier.pixel_2));
 
-            double *focals[2] = {&source_model.focal_length_pixels, &dest_model.focal_length_pixels};
-            bool all_finite = true;
             for (int i = 0; i < 2; i++)
             {
-                Eigen::Vector2d res{NAN, NAN};
-                const double *args[3] = {datas[i], points.back().point.data(), focals[i]};
-                func[0]->Evaluate(args, res.data(), nullptr);
-
-                if (!res.array().allFinite())
-                {
-                    all_finite = false;
-                }
+                args[i] = {orientation_ptrs[i], points.back().point.data(), focals[i]};
             }
-            if (!all_finite)
-            {
-                spdlog::trace("Skipping adding NaN track measurement residual");
-                continue;
-            }
-
-            for (int i = 0; i < 2; i++)
-            {
-                _problem->AddResidualBlock(func[i].release(), &_loss, datas[i], points.back().point.data(), focals[i]);
-            }
-
-            points_added = true;
         }
         else if (options.operator==({Option::ORIENTATION, Option::POINTS_3D}))
         {
             func[0].reset(newAutoDiffPixelErrorCost_Orientation(*pkg.source.loc_ptr, source_model, inlier.pixel_1));
             func[1].reset(newAutoDiffPixelErrorCost_Orientation(*pkg.dest.loc_ptr, dest_model, inlier.pixel_2));
 
-            bool all_finite = true;
             for (int i = 0; i < 2; i++)
             {
-                Eigen::Vector2d res{NAN, NAN};
-                const double *args[2] = {datas[i], points.back().point.data()};
-                func[0]->Evaluate(args, res.data(), nullptr);
-
-                if (!res.array().allFinite())
-                {
-                    all_finite = false;
-                }
+                args[i] = {orientation_ptrs[i], points.back().point.data()};
             }
-            if (!all_finite)
-            {
-                spdlog::trace("Skipping adding NaN track measurement residual");
-                continue;
-            }
-
-            for (int i = 0; i < 2; i++)
-            {
-                _problem->AddResidualBlock(func[i].release(), &_loss, datas[i], points.back().point.data());
-            }
-            points_added = true;
         }
+        else
+        {
+            spdlog::critical("No viable bundle options found");
+        }
+
+        bool all_finite = true;
+        for (int i = 0; i < 2; i++)
+        {
+            Eigen::Vector2d res{NAN, NAN};
+            func[i]->Evaluate(args[i].data(), res.data(), nullptr);
+
+            if (!res.array().allFinite())
+            {
+                all_finite = false;
+            }
+        }
+        if (!all_finite)
+        {
+            spdlog::trace("Skipping adding NaN track measurement residual");
+            continue;
+        }
+
+        for (int i = 0; i < 2; i++)
+        {
+            _problem->AddResidualBlock(func[i].get(), &_loss, args[i]);
+            func[i].release();
+        }
+
+        points_added = true;
     }
 
     if (points_added)
     {
-        _problem->SetParameterization(datas[0], &_quat_parameterization);
-        _problem->SetParameterization(datas[1], &_quat_parameterization);
+        _problem->SetParameterization(orientation_ptrs[0], &_quat_parameterization);
+        _problem->SetParameterization(orientation_ptrs[1], &_quat_parameterization);
         if (!pkg.source.optimize)
         {
-            _problem->SetParameterBlockConstant(datas[0]);
+            _problem->SetParameterBlockConstant(orientation_ptrs[0]);
         }
         if (!pkg.dest.optimize)
         {
-            _problem->SetParameterBlockConstant(datas[1]);
+            _problem->SetParameterBlockConstant(orientation_ptrs[1]);
+        }
+        if (options.hasAll({Option::LENS_DISTORTIONS_RADIAL}))
+        {
+            if (options.hasAll({Option::LENS_DISTORTIONS_RADIAL_BROWN246_PARAMETERIZATION}))
+            {
+                _problem->SetParameterization(source_model.radial_distortion.data(), &_brown246_parameterization);
+                _problem->SetParameterization(dest_model.radial_distortion.data(), &_brown246_parameterization);
+            }
+            else if (options.hasAll({Option::LENS_DISTORTIONS_RADIAL_BROWN24_PARAMETERIZATION}))
+            {
+                _problem->SetParameterization(source_model.radial_distortion.data(), &_brown24_parameterization);
+                _problem->SetParameterization(dest_model.radial_distortion.data(), &_brown24_parameterization);
+            }
+            else if (options.hasAll({Option::LENS_DISTORTIONS_RADIAL_BROWN2_PARAMETERIZATION}))
+            {
+                _problem->SetParameterization(source_model.radial_distortion.data(), &_brown2_parameterization);
+                _problem->SetParameterization(dest_model.radial_distortion.data(), &_brown2_parameterization);
+            }
+            else
+            {
+                spdlog::warn("No parameterization chosen for radial distortion");
+            }
         }
     }
 
