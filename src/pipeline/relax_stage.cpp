@@ -29,6 +29,7 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
                       const RelaxOptionSet &options)
 {
     PerformanceMeasure p("Relax init");
+    spdlog::info("Initializing relax with options: {}", toString(options));
     _groups.clear();
 
     std::vector<size_t> actual_node_ids = node_ids;

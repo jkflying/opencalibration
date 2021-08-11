@@ -81,6 +81,11 @@ template <> class Deserializer<MeasurementGraph>
                         img.model->focal_length_pixels = model["focal_length"].GetDouble();
                         img.model->principle_point[0] = model["principal"].GetArray()[0].GetDouble();
                         img.model->principle_point[1] = model["principal"].GetArray()[1].GetDouble();
+                        img.model->radial_distortion[0] = model["radial_distortion"].GetArray()[0].GetDouble();
+                        img.model->radial_distortion[1] = model["radial_distortion"].GetArray()[1].GetDouble();
+                        img.model->radial_distortion[2] = model["radial_distortion"].GetArray()[2].GetDouble();
+                        img.model->tangential_distortion[0] = model["tangential_distortion"].GetArray()[0].GetDouble();
+                        img.model->tangential_distortion[1] = model["tangential_distortion"].GetArray()[1].GetDouble();
                         img.model->projection_type = "planar" == std::string(model["projection"].GetString())
                                                          ? ProjectionType::PLANAR
                                                          : ProjectionType::UNKNOWN;

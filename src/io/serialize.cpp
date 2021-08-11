@@ -245,6 +245,23 @@ template <> class Serializer<MeasurementGraph>
                     }
                     writer.EndArray();
 
+                    writer.Key("radial_distortion");
+                    writer.StartArray();
+                    {
+                        writer.Double(node.payload.model->radial_distortion[0]);
+                        writer.Double(node.payload.model->radial_distortion[1]);
+                        writer.Double(node.payload.model->radial_distortion[2]);
+                    }
+                    writer.EndArray();
+
+                    writer.Key("tangential_distortion");
+                    writer.StartArray();
+                    {
+                        writer.Double(node.payload.model->tangential_distortion[0]);
+                        writer.Double(node.payload.model->tangential_distortion[1]);
+                    }
+                    writer.EndArray();
+
                     writer.Key("projection");
                     switch (node.payload.model->projection_type)
                     {

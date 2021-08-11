@@ -73,4 +73,50 @@ class RelaxOptionSet
     std::bitset<static_cast<int32_t>(Option::__NUM_ENTRIES)> enabled;
 };
 
+inline std::string toString(Option o)
+{
+    switch (o)
+    {
+    case Option::ORIENTATION:
+        return "ORIENTATION";
+    case Option::POSITION:
+        return "POSITION";
+    case Option::GROUND_PLANE:
+        return "GROUND_PLANE";
+    case Option::POINTS_3D:
+        return "POINTS_3D";
+    case Option::FOCAL_LENGTH:
+        return "FOCAL_LENGTH";
+    case Option::LENS_DISTORTIONS_RADIAL:
+        return "LENS_DISTORTIONS_RADIAL";
+    case Option::LENS_DISTORTIONS_RADIAL_BROWN2_PARAMETERIZATION:
+        return "LENS_DISTORTIONS_RADIAL_BROWN2_PARAMETERIZATION";
+    case Option::LENS_DISTORTIONS_RADIAL_BROWN24_PARAMETERIZATION:
+        return "LENS_DISTORTIONS_RADIAL_BROWN24_PARAMETERIZATION";
+    case Option::LENS_DISTORTIONS_RADIAL_BROWN246_PARAMETERIZATION:
+        return "LENS_DISTORTIONS_RADIAL_BROWN246_PARAMETERIZATION";
+    case Option::LENS_DISTORTIONS_TANGENTIAL:
+        return "LENS_DISTORTIONS_TANGENTIAL";
+    case Option::__NUM_ENTRIES:
+        return "__NUM_ENTRIES";
+    }
+    return "UNKNOWN";
+}
+
+inline std::string toString(RelaxOptionSet set)
+{
+    std::ostringstream oss;
+    for (int32_t i = static_cast<int32_t>(Option::ORIENTATION); i < static_cast<int32_t>(Option::__NUM_ENTRIES); i++)
+    {
+        if (set.hasAll({static_cast<Option>(i)}))
+        {
+            if (oss.tellp() > 0)
+                oss << ", ";
+            oss << toString(static_cast<Option>(i));
+        }
+    }
+
+    return oss.str();
+}
+
 } // namespace opencalibration
