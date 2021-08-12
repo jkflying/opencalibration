@@ -25,6 +25,7 @@ int main(int argc, char *argv[])
     std::string input_dir = "";
     uint32_t debug_level = 2;
     std::string output_file = "";
+    std::string serialized_output = "";
     std::string log_file = "";
     int batch_size = omp_get_max_threads();
     bool printHelp = false;
@@ -33,7 +34,8 @@ int main(int argc, char *argv[])
     args.addArgument({"-i", "--input"}, &input_dir, "Input directory of images");
     args.addArgument({"-d", "--debug"}, &debug_level, "none=0, critical=1, error=2, warn=3, info=4, debug=5");
     args.addArgument({"-l", "--log-file"}, &log_file, "Output logging file, overwrites existing files");
-    args.addArgument({"-o", "--output"}, &output_file, "Output geojson file");
+    args.addArgument({"-g", "--geojson"}, &output_file, "Output geojson file");
+    args.addArgument({"-s", "--serialize"}, &serialized_output, "Serialized camera graph output file");
     args.addArgument({"-b", "--batch-size"}, &batch_size, "Processing batch size");
     args.addArgument({"-h", "--help"}, &printHelp, "You must specify at least an input file");
 
@@ -144,6 +146,16 @@ int main(int argc, char *argv[])
 
         std::ofstream output;
         output.open(output_file, std::ios::out | std::ios::trunc);
+        output << out;
+        output.close();
+    }
+
+    if (serialized_output.size() > 0)
+    {
+        std::string out = serialize(p.getGraph());
+
+        std::ofstream output;
+        output.open(serialized_output, std::ios::out | std::ios::trunc);
         output << out;
         output.close();
     }
