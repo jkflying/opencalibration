@@ -414,8 +414,8 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
         double *radials[2] = {source_model.radial_distortion.data(), dest_model.radial_distortion.data()};
         double *tangentials[2] = {source_model.tangential_distortion.data(), dest_model.tangential_distortion.data()};
 
-        if (options.operator==({Option::LENS_DISTORTIONS_TANGENTIAL, Option::LENS_DISTORTIONS_RADIAL,
-                                Option::FOCAL_LENGTH, Option::ORIENTATION, Option::POINTS_3D}))
+        if (options.hasAll({Option::LENS_DISTORTIONS_TANGENTIAL, Option::LENS_DISTORTIONS_RADIAL, Option::FOCAL_LENGTH,
+                            Option::ORIENTATION, Option::POINTS_3D}))
         {
             func[0].reset(newAutoDiffPixelErrorCost_OrientationFocalRadialTangential(*pkg.source.loc_ptr, source_model,
                                                                                      inlier.pixel_1));
@@ -426,8 +426,8 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
                 args[i] = {orientation_ptrs[i], points.back().point.data(), focals[i], radials[i], tangentials[i]};
             }
         }
-        else if (options.operator==
-                 ({Option::LENS_DISTORTIONS_RADIAL, Option::FOCAL_LENGTH, Option::ORIENTATION, Option::POINTS_3D}))
+        else if (options.hasAll(
+                     {Option::LENS_DISTORTIONS_RADIAL, Option::FOCAL_LENGTH, Option::ORIENTATION, Option::POINTS_3D}))
         {
             func[0].reset(
                 newAutoDiffPixelErrorCost_OrientationFocalRadial(*pkg.source.loc_ptr, source_model, inlier.pixel_1));
@@ -438,7 +438,7 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
                 args[i] = {orientation_ptrs[i], points.back().point.data(), focals[i], radials[i]};
             }
         }
-        else if (options.operator==({Option::FOCAL_LENGTH, Option::ORIENTATION, Option::POINTS_3D}))
+        else if (options.hasAll({Option::FOCAL_LENGTH, Option::ORIENTATION, Option::POINTS_3D}))
         {
             func[0].reset(
                 newAutoDiffPixelErrorCost_OrientationFocal(*pkg.source.loc_ptr, source_model, inlier.pixel_1));
@@ -449,7 +449,7 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
                 args[i] = {orientation_ptrs[i], points.back().point.data(), focals[i]};
             }
         }
-        else if (options.operator==({Option::ORIENTATION, Option::POINTS_3D}))
+        else if (options.hasAll({Option::ORIENTATION, Option::POINTS_3D}))
         {
             func[0].reset(newAutoDiffPixelErrorCost_Orientation(*pkg.source.loc_ptr, source_model, inlier.pixel_1));
             func[1].reset(newAutoDiffPixelErrorCost_Orientation(*pkg.dest.loc_ptr, dest_model, inlier.pixel_2));

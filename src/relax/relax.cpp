@@ -36,6 +36,34 @@ std::vector<Backend> getBackends()
                               rp.setupDecompositionProblem(graph, nodes, edges_to_optimize);
                               rp.solve();
                           });
+    backends.emplace_back(RelaxOptionSet{Option::LENS_DISTORTIONS_TANGENTIAL, Option::LENS_DISTORTIONS_RADIAL,
+                                         Option::LENS_DISTORTIONS_RADIAL_BROWN2_PARAMETERIZATION,
+                                         Option::LENS_DISTORTIONS_RADIAL_BROWN24_PARAMETERIZATION,
+                                         Option::LENS_DISTORTIONS_RADIAL_BROWN246_PARAMETERIZATION,
+                                         Option::FOCAL_LENGTH, Option::ORIENTATION, Option::POINTS_3D},
+                          [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                             std::unordered_map<size_t, CameraModel> &cam_models,
+                             const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options) {
+                              PerformanceMeasure p("Relax runner 3d points focal radial tangential");
+                              RelaxProblem rp;
+                              rp.setup3dPointProblem(graph, nodes, cam_models, edges_to_optimize, options);
+                              rp.relaxObservedModelOnly();
+                              rp.solve();
+                          });
+    backends.emplace_back(RelaxOptionSet{Option::LENS_DISTORTIONS_RADIAL,
+                                         Option::LENS_DISTORTIONS_RADIAL_BROWN2_PARAMETERIZATION,
+                                         Option::LENS_DISTORTIONS_RADIAL_BROWN24_PARAMETERIZATION,
+                                         Option::LENS_DISTORTIONS_RADIAL_BROWN246_PARAMETERIZATION,
+                                         Option::FOCAL_LENGTH, Option::ORIENTATION, Option::POINTS_3D},
+                          [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                             std::unordered_map<size_t, CameraModel> &cam_models,
+                             const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options) {
+                              PerformanceMeasure p("Relax runner 3d points focal radial");
+                              RelaxProblem rp;
+                              rp.setup3dPointProblem(graph, nodes, cam_models, edges_to_optimize, options);
+                              rp.relaxObservedModelOnly();
+                              rp.solve();
+                          });
     backends.emplace_back(RelaxOptionSet{Option::FOCAL_LENGTH, Option::ORIENTATION, Option::POINTS_3D},
                           [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                              std::unordered_map<size_t, CameraModel> &cam_models,
