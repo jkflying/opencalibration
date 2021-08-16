@@ -116,6 +116,12 @@ template <> class Deserializer<MeasurementGraph>
 
                             camera_info.principal_point_px[0] = camera_info_j["principal"].GetArray()[0].GetDouble();
                             camera_info.principal_point_px[1] = camera_info_j["principal"].GetArray()[1].GetDouble();
+
+                            camera_info.make = camera_info_j["make"].GetString();
+                            camera_info.model = camera_info_j["model"].GetString();
+                            camera_info.serial_no = camera_info_j["serial_no"].GetString();
+                            camera_info.lens_make = camera_info_j["lens_make"].GetString();
+                            camera_info.lens_model = camera_info_j["lens_model"].GetString();
                         }
 
                         {

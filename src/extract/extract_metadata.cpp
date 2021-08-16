@@ -101,6 +101,11 @@ image_metadata extract_metadata(const std::string &path)
 
     res.camera_info.width_px = imageEXIF.ImageWidth;
     res.camera_info.height_px = imageEXIF.ImageHeight;
+    res.camera_info.make = imageEXIF.Make;
+    res.camera_info.model = imageEXIF.Model;
+    res.camera_info.serial_no = imageEXIF.SerialNumber;
+    res.camera_info.lens_make = imageEXIF.LensInfo.Make;
+    res.camera_info.lens_model = imageEXIF.LensInfo.Model;
 
     if (imageEXIF.Calibration.FocalLength > 1)
     {

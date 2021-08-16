@@ -290,65 +290,82 @@ template <> class Serializer<MeasurementGraph>
                     writer.Key("camera_info");
                     writer.StartObject();
                     {
+                        const auto &camera_info = node.payload.metadata.camera_info;
                         writer.Key("dimensions");
                         writer.StartArray();
                         {
-                            writer.Uint64(node.payload.metadata.camera_info.width_px);
-                            writer.Uint64(node.payload.metadata.camera_info.height_px);
+                            writer.Uint64(camera_info.width_px);
+                            writer.Uint64(camera_info.height_px);
                         }
                         writer.EndArray();
 
                         writer.Key("focal_length_px");
-                        writer.Double(node.payload.metadata.camera_info.focal_length_px);
+                        writer.Double(camera_info.focal_length_px);
 
                         writer.Key("principal");
                         writer.StartArray();
                         {
-                            writer.Double(node.payload.metadata.camera_info.principal_point_px[0]);
-                            writer.Double(node.payload.metadata.camera_info.principal_point_px[1]);
+                            writer.Double(camera_info.principal_point_px[0]);
+                            writer.Double(camera_info.principal_point_px[1]);
                         }
                         writer.EndArray();
+
+                        writer.Key("make");
+                        writer.String(camera_info.make.c_str());
+
+                        writer.Key("model");
+                        writer.String(camera_info.model.c_str());
+
+                        writer.Key("serial_no");
+                        writer.String(camera_info.serial_no.c_str());
+
+                        writer.Key("lens_make");
+                        writer.String(camera_info.lens_make.c_str());
+
+                        writer.Key("lens_model");
+                        writer.String(camera_info.lens_model.c_str());
                     }
                     writer.EndObject();
 
                     writer.Key("capture_info");
                     writer.StartObject();
                     {
+                        const auto &capture_info = node.payload.metadata.capture_info;
                         writer.Key("latitude");
-                        writer.Double(node.payload.metadata.capture_info.latitude);
+                        writer.Double(capture_info.latitude);
 
                         writer.Key("longitude");
-                        writer.Double(node.payload.metadata.capture_info.longitude);
+                        writer.Double(capture_info.longitude);
 
                         writer.Key("altitude");
-                        writer.Double(node.payload.metadata.capture_info.altitude);
+                        writer.Double(capture_info.altitude);
 
                         writer.Key("relative_altitude");
-                        writer.Double(node.payload.metadata.capture_info.relativeAltitude);
+                        writer.Double(capture_info.relativeAltitude);
 
                         writer.Key("roll");
-                        writer.Double(node.payload.metadata.capture_info.rollDegree);
+                        writer.Double(capture_info.rollDegree);
 
                         writer.Key("pitch");
-                        writer.Double(node.payload.metadata.capture_info.pitchDegree);
+                        writer.Double(capture_info.pitchDegree);
 
                         writer.Key("yaw");
-                        writer.Double(node.payload.metadata.capture_info.yawDegree);
+                        writer.Double(capture_info.yawDegree);
 
                         writer.Key("accuracy_xy");
-                        writer.Double(node.payload.metadata.capture_info.accuracyXY);
+                        writer.Double(capture_info.accuracyXY);
 
                         writer.Key("accuracy_z");
-                        writer.Double(node.payload.metadata.capture_info.accuracyZ);
+                        writer.Double(capture_info.accuracyZ);
 
                         writer.Key("datum");
-                        writer.String(node.payload.metadata.capture_info.datum.c_str());
+                        writer.String(capture_info.datum.c_str());
 
                         writer.Key("timestamp");
-                        writer.String(node.payload.metadata.capture_info.timestamp.c_str());
+                        writer.String(capture_info.timestamp.c_str());
 
                         writer.Key("datestamp");
-                        writer.String(node.payload.metadata.capture_info.datestamp.c_str());
+                        writer.String(capture_info.datestamp.c_str());
                     }
                     writer.EndObject();
                 }
