@@ -72,8 +72,6 @@ void RelaxGroup::init(const MeasurementGraph &graph, const std::vector<size_t> &
         }
     }
 
-    initializeOrientation(graph, _local_poses);
-
     spdlog::info("Queueing {} image nodes, {} edges for graph relaxation", _local_poses.size(),
                  _edges_to_optimize.size());
 }

@@ -94,7 +94,6 @@ void RelaxProblem::initialize(std::vector<NodePose> &nodes, std::unordered_map<s
     _nodes_to_optimize.reserve(nodes.size());
     for (NodePose &n : nodes)
     {
-        n.orientation.normalize();
         _nodes_to_optimize.emplace(n.node_id, &n);
     }
 
@@ -576,9 +575,12 @@ void RelaxProblem::addDownwardsPrior()
 {
     for (auto &p : _nodes_to_optimize)
     {
-        double *d = p.second->orientation.coeffs().data();
-        _problem->AddResidualBlock(newAutoDiffPointsDownwardsPrior(), nullptr, d);
-        _problem->SetParameterization(d, &_quat_parameterization);
+        if (!p.second->orientation.coeffs().hasNaN())
+        {
+            double *d = p.second->orientation.coeffs().data();
+            _problem->AddResidualBlock(newAutoDiffPointsDownwardsPrior(), nullptr, d);
+            _problem->SetParameterization(d, &_quat_parameterization);
+        }
     }
 }
 

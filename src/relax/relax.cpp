@@ -8,6 +8,8 @@ namespace
 
 using namespace opencalibration;
 
+static const Eigen::Quaterniond DOWN_ORIENTED_NORTH(Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()));
+
 struct Backend
 {
     using run_f =
@@ -32,6 +34,23 @@ std::vector<Backend> getBackends()
                               (void)cam_models;
 
                               PerformanceMeasure p("Relax runner relative");
+
+                              for (auto &node : nodes)
+                              {
+                                  if (node.orientation.coeffs().hasNaN())
+                                  {
+                                      node.orientation = DOWN_ORIENTED_NORTH;
+
+                                      // add just one image at a time with a bad initial orientation, then force an
+                                      // optimize otherwise we could disturb the other images and end up in a bad local
+                                      // minima the setup will already discard images which are uninitialized
+                                      RelaxProblem rp;
+                                      rp.setupDecompositionProblem(graph, nodes, edges_to_optimize);
+                                      rp.solve();
+                                  }
+                              }
+
+                              // finally do an optimize for the whole batch
                               RelaxProblem rp;
                               rp.setupDecompositionProblem(graph, nodes, edges_to_optimize);
                               rp.solve();
@@ -47,7 +66,6 @@ std::vector<Backend> getBackends()
                               PerformanceMeasure p("Relax runner 3d points focal radial tangential");
                               RelaxProblem rp;
                               rp.setup3dPointProblem(graph, nodes, cam_models, edges_to_optimize, options);
-                              rp.relaxObservedModelOnly();
                               rp.solve();
                           });
     backends.emplace_back(RelaxOptionSet{Option::LENS_DISTORTIONS_RADIAL,
@@ -61,7 +79,6 @@ std::vector<Backend> getBackends()
                               PerformanceMeasure p("Relax runner 3d points focal radial");
                               RelaxProblem rp;
                               rp.setup3dPointProblem(graph, nodes, cam_models, edges_to_optimize, options);
-                              rp.relaxObservedModelOnly();
                               rp.solve();
                           });
     backends.emplace_back(RelaxOptionSet{Option::FOCAL_LENGTH, Option::ORIENTATION, Option::POINTS_3D},
@@ -71,7 +88,6 @@ std::vector<Backend> getBackends()
                               PerformanceMeasure p("Relax runner 3d points focal");
                               RelaxProblem rp;
                               rp.setup3dPointProblem(graph, nodes, cam_models, edges_to_optimize, options);
-                              rp.relaxObservedModelOnly();
                               rp.solve();
                           });
     backends.emplace_back(RelaxOptionSet{Option::ORIENTATION, Option::POINTS_3D},
@@ -81,7 +97,6 @@ std::vector<Backend> getBackends()
                               PerformanceMeasure p("Relax runner 3d points");
                               RelaxProblem rp;
                               rp.setup3dPointProblem(graph, nodes, cam_models, edges_to_optimize, options);
-                              rp.relaxObservedModelOnly();
                               rp.solve();
                           });
     backends.emplace_back(RelaxOptionSet{Option::ORIENTATION, Option::GROUND_PLANE},
@@ -97,24 +112,11 @@ std::vector<Backend> getBackends()
     return backends;
 }
 
-std::vector<Backend> backends = getBackends();
+static const std::vector<Backend> backends = getBackends();
 } // namespace
 
 namespace opencalibration
 {
-
-void initializeOrientation(const MeasurementGraph &graph, std::vector<NodePose> &nodes)
-{
-    (void)graph;
-    static const Eigen::Quaterniond DOWN_ORIENTED_NORTH(Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()));
-    for (NodePose &node_pose : nodes)
-    {
-        if (!node_pose.orientation.coeffs().allFinite())
-        {
-            node_pose.orientation = DOWN_ORIENTED_NORTH;
-        }
-    }
-}
 
 void relax(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
            std::unordered_map<size_t, CameraModel> &cam_models, const std::unordered_set<size_t> &edges_to_optimize,
