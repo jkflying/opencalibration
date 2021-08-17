@@ -85,14 +85,16 @@ std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph
         {
             auto run_func = [i, node_id, near_image, &img, &mtx, &meas]() {
                 PerformanceMeasure p("Link runner match");
+                camera_relations relations;
+
                 // match
-                auto matches = match_features(img.features, std::get<1>(near_image).get().features);
+                relations.matches = match_features(img.features, std::get<1>(near_image).get().features);
 
                 // distort
                 p.reset("Link runner undistort");
                 std::vector<correspondence> correspondences =
-                    distort_keypoints(img.features, std::get<1>(near_image).get().features, matches, *img.model,
-                                      *std::get<1>(near_image).get().model);
+                    distort_keypoints(img.features, std::get<1>(near_image).get().features, relations.matches,
+                                      *img.model, *std::get<1>(near_image).get().model);
 
                 // ransac
                 p.reset("Link runner ransac");
@@ -101,7 +103,6 @@ std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph
                 ransac(correspondences, h, inliers);
 
                 p.reset("Link runner decompose");
-                camera_relations relations;
                 relations.ransac_relation = h.homography;
                 relations.relationType = camera_relations::RelationType::HOMOGRAPHY;
 
@@ -109,27 +110,29 @@ std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph
 
                 size_t num_inliers = std::count(inliers.begin(), inliers.end(), true);
 
-                spdlog::trace("Matches: {}  inliers: {}  can_decompose: {}", matches.size(), num_inliers,
+                spdlog::trace("Matches: {}  inliers: {}  can_decompose: {}", relations.matches.size(), num_inliers,
                               can_decompose);
+
                 if (can_decompose && num_inliers > h.MINIMUM_POINTS * 1.5)
                 {
                     relations.inlier_matches.reserve(num_inliers);
-                    for (size_t i = 0; i < inliers.size(); i++)
+                    for (size_t i = 0; i < relations.matches.size(); i++)
                     {
                         if (inliers[i])
                         {
                             feature_match_denormalized fmd;
-                            fmd.pixel_1 = img.features[matches[i].feature_index_1].location;
-                            fmd.pixel_2 = std::get<1>(near_image).get().features[matches[i].feature_index_2].location;
-                            fmd.feature_index_1 = matches[i].feature_index_1;
-                            fmd.feature_index_2 = matches[i].feature_index_2;
+                            fmd.pixel_1 = img.features[relations.matches[i].feature_index_1].location;
+                            fmd.pixel_2 =
+                                std::get<1>(near_image).get().features[relations.matches[i].feature_index_2].location;
+                            fmd.feature_index_1 = relations.matches[i].feature_index_1;
+                            fmd.feature_index_2 = relations.matches[i].feature_index_2;
                             relations.inlier_matches.push_back(fmd);
                         }
                     }
-
-                    std::lock_guard<std::mutex> lock(mtx);
-                    meas.emplace_back(inlier_measurement{i, node_id, std::get<0>(near_image), std::move(relations)});
                 }
+                std::lock_guard<std::mutex> lock(mtx);
+
+                meas.emplace_back(edge_payload{i, node_id, std::get<0>(near_image), std::move(relations)});
             };
             funcs.push_back(run_func);
         }

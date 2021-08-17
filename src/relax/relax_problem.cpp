@@ -224,6 +224,9 @@ void RelaxProblem::gridFilterMatchesPerImage(const MeasurementGraph &graph,
 
 void RelaxProblem::addRelationCost(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge)
 {
+    if (edge.payload.inlier_matches.size() == 0)
+        return;
+
     OptimizationPackage pkg;
     pkg.relations = &edge.payload;
     pkg.source = nodeid2poseopt(graph, edge.getSource(), false);
@@ -238,8 +241,8 @@ void RelaxProblem::addRelationCost(const MeasurementGraph &graph, size_t edge_id
     if (!pkg.source.loc_ptr->allFinite() || !pkg.dest.loc_ptr->allFinite())
         return;
 
-    std::unique_ptr<ceres::CostFunction> func(
-        newAutoDiffMultiDecomposedRotationCost(*pkg.relations, pkg.source.loc_ptr, pkg.dest.loc_ptr));
+    std::unique_ptr<ceres::CostFunction> func(newAutoDiffMultiDecomposedRotationCost(
+        *pkg.relations, pkg.source.loc_ptr, pkg.dest.loc_ptr, edge.payload.inlier_matches.size()));
 
     double *datas[2] = {pkg.source.rot_ptr->coeffs().data(), pkg.dest.rot_ptr->coeffs().data()};
 

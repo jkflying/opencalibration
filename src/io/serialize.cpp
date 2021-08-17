@@ -431,8 +431,19 @@ template <> class Serializer<MeasurementGraph>
                     std::string dest_id = std::to_string(edge.getDest());
                     writer.String(dest_id.c_str(), dest_id.size());
 
-                    writer.Key("keypoints");
+                    writer.Key("matches");
+                    writer.StartArray();
+                    for (const auto &match : edge.payload.matches)
+                    {
+                        writer.StartArray();
+                        writer.Int64(match.feature_index_1);
+                        writer.Int64(match.feature_index_2);
+                        writer.Double(match.distance);
+                        writer.EndArray();
+                    }
+                    writer.EndArray();
 
+                    writer.Key("inlier_matches");
                     writer.StartArray();
                     for (const auto &pair : edge.payload.inlier_matches)
                     {

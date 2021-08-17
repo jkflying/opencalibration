@@ -7,13 +7,13 @@ namespace opencalibration
 {
 ceres::CostFunction *newAutoDiffMultiDecomposedRotationCost(const camera_relations &relations,
                                                             const Eigen::Vector3d *translation1,
-                                                            const Eigen::Vector3d *translation2)
+                                                            const Eigen::Vector3d *translation2, size_t inlier_count)
 
 {
     using Functor = MultiDecomposedRotationCost;
     using CostFunction = ceres::AutoDiffCostFunction<Functor, Functor::NUM_RESIDUALS, Functor::NUM_PARAMETERS_1,
                                                      Functor::NUM_PARAMETERS_2>;
-    return new CostFunction(new Functor(relations, translation1, translation2));
+    return new CostFunction(new Functor(relations, translation1, translation2, inlier_count));
 }
 
 ceres::CostFunction *newAutoDiffPlaneIntersectionAngleCost(

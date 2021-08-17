@@ -47,7 +47,7 @@ std::vector<feature_match> match_features(const std::vector<feature_2d> &set_1, 
     }
 
     std::sort(results.begin(), results.end(),
-              [](const feature_match &f1, const feature_match &f2) -> bool { return f1.distance < f2.distance; });
+              [](const feature_match &f1, const feature_match &f2) -> bool { return f1.distance > f2.distance; });
     return results;
 }
 } // namespace opencalibration

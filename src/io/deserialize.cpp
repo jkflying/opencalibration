@@ -174,9 +174,21 @@ template <> class Deserializer<MeasurementGraph>
                     size_t dest = std::strtoull(eiter->value.GetObject()["dest"].GetString(), &end, 10);
 
                     camera_relations relations;
-                    const auto &keypoints = eiter->value.GetObject()["keypoints"].GetArray();
-                    relations.inlier_matches.reserve(keypoints.Size());
-                    for (const auto &kp : keypoints)
+                    const auto &matches = eiter->value.GetObject()["matches"].GetArray();
+                    relations.matches.reserve(matches.Size());
+                    for (const auto &m : matches)
+                    {
+                        feature_match fm;
+                        fm.feature_index_1 = m[0].GetInt64();
+                        fm.feature_index_2 = m[1].GetInt64();
+                        fm.distance = m[2].GetDouble();
+
+                        relations.matches.push_back(fm);
+                    }
+
+                    const auto &inlier_matches = eiter->value.GetObject()["inlier_matches"].GetArray();
+                    relations.inlier_matches.reserve(inlier_matches.Size());
+                    for (const auto &kp : inlier_matches)
                     {
                         feature_match_denormalized fmd;
                         fmd.pixel_1[0] = kp[0].GetArray()[0].GetDouble();

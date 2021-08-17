@@ -113,7 +113,8 @@ struct MultiDecomposedRotationCost
     static const int NUM_PARAMETERS_2 = 4;
 
     MultiDecomposedRotationCost(const camera_relations &relations, const Eigen::Vector3d *translation1,
-                                const Eigen::Vector3d *translation2)
+                                const Eigen::Vector3d *translation2, size_t inlier_count)
+        : weight(std::sqrt(inlier_count / 8.))
     {
         decompose.reserve(relations.relative_poses.size());
         for (const auto &pose : relations.relative_poses)
@@ -145,12 +146,13 @@ struct MultiDecomposedRotationCost
         }
 
         VectorRTM res_vec(residuals);
-        res_vec = lowest_res;
+        res_vec = T(weight) * lowest_res;
 
         return ceres::IsFinite(lowest_res_norm);
     }
 
     std::vector<DecomposedRotationCost> decompose;
+    const double weight;
 };
 
 struct PixelErrorCost_Orientation

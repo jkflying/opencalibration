@@ -12,7 +12,7 @@ namespace opencalibration
 
 class LinkStage
 {
-    struct inlier_measurement
+    struct edge_payload
     {
         size_t loop_index; // used for re-ordering multithreading component
 
@@ -30,7 +30,7 @@ class LinkStage
     std::vector<size_t> finalize(MeasurementGraph &graph);
 
   private:
-    std::vector<inlier_measurement> _all_inlier_measurements;
+    std::vector<edge_payload> _all_inlier_measurements;
     std::mutex _measurement_mutex;
 
     std::vector<NodeLinks> _links;
