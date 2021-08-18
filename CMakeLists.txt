@@ -44,7 +44,7 @@ else()
                     CACHE STRING "Flags used by the C++ compiler during coverage builds" FORCE)
     set(CMAKE_EXE_LINKER_FLAGS_COVERAGE "--coverage -ftest-coverage -lgcov"
                         CACHE STRING "Flags used for linking binaries during coverage builds" FORCE)
-    set(CMAKE_CXX_FLAGS_ASAN "-fsanitize=address -g")
+    set(CMAKE_CXX_FLAGS_ASAN "-fsanitize=address -g -O2 -DNDEBUG")
     set(CMAKE_EXE_LINKER_FLAGS_ASAN "-fsanitize=address -g")
 endif()
 
