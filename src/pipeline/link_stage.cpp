@@ -67,34 +67,29 @@ std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph
         const auto &nearest = node_nearest.link_ids;
 
         // match & distort
-        std::vector<std::tuple<size_t, std::reference_wrapper<const image>>> nearest_images;
-        nearest_images.reserve(nearest.size());
-        for (size_t match_node_id : nearest)
-        {
-            const auto *node = graph.getNode(match_node_id);
-            if (node != nullptr)
-            {
-                nearest_images.emplace_back(match_node_id, node->payload);
-            }
-        }
-
         auto &mtx = _measurement_mutex;
         auto &meas = _all_inlier_measurements;
 
-        for (const auto near_image : nearest_images)
+        for (size_t match_node_id : nearest)
         {
-            auto run_func = [i, node_id, near_image, &img, &mtx, &meas]() {
+            const auto *node = graph.getNode(match_node_id);
+            if (node == nullptr)
+            {
+                continue;
+            }
+            const image& near_image = node->payload;
+            auto run_func = [i, node_id, near_image, match_node_id, &img, &mtx, &meas]() {
                 PerformanceMeasure p("Link runner match");
                 camera_relations relations;
 
                 // match
-                relations.matches = match_features(img.features, std::get<1>(near_image).get().features);
+                relations.matches = match_features(img.features, near_image.features);
 
                 // distort
                 p.reset("Link runner undistort");
                 std::vector<correspondence> correspondences =
-                    distort_keypoints(img.features, std::get<1>(near_image).get().features, relations.matches,
-                                      *img.model, *std::get<1>(near_image).get().model);
+                    distort_keypoints(img.features, near_image.features, relations.matches,
+                                      *img.model, *near_image.model);
 
                 // ransac
                 p.reset("Link runner ransac");
@@ -122,8 +117,7 @@ std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph
                         {
                             feature_match_denormalized fmd;
                             fmd.pixel_1 = img.features[relations.matches[i].feature_index_1].location;
-                            fmd.pixel_2 =
-                                std::get<1>(near_image).get().features[relations.matches[i].feature_index_2].location;
+                            fmd.pixel_2 = near_image.features[relations.matches[i].feature_index_2].location;
                             fmd.feature_index_1 = relations.matches[i].feature_index_1;
                             fmd.feature_index_2 = relations.matches[i].feature_index_2;
                             relations.inlier_matches.push_back(fmd);
@@ -131,8 +125,7 @@ std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph
                     }
                 }
                 std::lock_guard<std::mutex> lock(mtx);
-
-                meas.emplace_back(edge_payload{i, node_id, std::get<0>(near_image), std::move(relations)});
+                meas.emplace_back(edge_payload{i, node_id, match_node_id, std::move(relations)});
             };
             funcs.push_back(run_func);
         }

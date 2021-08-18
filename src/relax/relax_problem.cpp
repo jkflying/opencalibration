@@ -205,10 +205,9 @@ void RelaxProblem::gridFilterMatchesPerImage(const MeasurementGraph &graph,
         for (const auto &inlier : edge.payload.inlier_matches)
         {
             // make 3D intersection, add it to `points`
-            Eigen::Vector3d source_ray = source_rot * image_to_3d(inlier.pixel_1, source_model);
-            Eigen::Vector3d dest_ray = dest_rot * image_to_3d(inlier.pixel_2, dest_model);
-            auto intersection =
-                rayIntersection(ray_d{source_ray, *pkg.source.loc_ptr}, ray_d{dest_ray, *pkg.dest.loc_ptr});
+            ray_d source_ray = {source_rot * image_to_3d(inlier.pixel_1, source_model), *pkg.source.loc_ptr};
+            ray_d dest_ray = {dest_rot * image_to_3d(inlier.pixel_2, dest_model), *pkg.dest.loc_ptr};
+            auto intersection = rayIntersection(source_ray, dest_ray);
 
             const double score = intersection.second < 0 ? 0. : 1. / (1. + intersection.second);
             if (score > 0)
