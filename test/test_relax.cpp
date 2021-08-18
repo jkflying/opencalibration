@@ -139,6 +139,7 @@ struct relax_ : public ::testing::Test
                 relation.relative_poses[1].position = actual_t;
                 relation.relative_poses[1].orientation = actual_r;
             }
+            relation.inlier_matches.emplace_back();
 
             edge_id[i] = graph.addEdge(std::move(relation), id[index[0]], id[index[1]]);
         }
@@ -300,6 +301,7 @@ TEST(relax, prior_2_images)
     relation.relative_poses[0].orientation = Eigen::Quaterniond::Identity();
     relation.relative_poses[0].position << 1, 0, 0;
     relation.relative_poses[0].score = 0;
+    relation.inlier_matches.resize(10);
     size_t edge_id = graph.addEdge(std::move(relation), id, id2);
 
     // WHEN: we relax the relative orientations
