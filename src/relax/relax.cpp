@@ -30,7 +30,6 @@ std::vector<Backend> getBackends()
                           [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                              std::unordered_map<size_t, CameraModel> &cam_models,
                              const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &) {
-
                               // doesn't use the camera model at all, just decomposed relative orientations
                               (void)cam_models;
 

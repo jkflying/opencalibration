@@ -43,7 +43,7 @@ template <typename T> class GridFilter
         }
     }
 
-    const std::unordered_set<T>& getBestMeasurementsPerCell() const
+    const std::unordered_set<T> &getBestMeasurementsPerCell() const
     {
         return _best;
     }

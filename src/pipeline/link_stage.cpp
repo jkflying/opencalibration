@@ -77,7 +77,7 @@ std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph
             {
                 continue;
             }
-            const image& near_image = node->payload;
+            const image &near_image = node->payload;
             auto run_func = [i, node_id, near_image, match_node_id, &img, &mtx, &meas]() {
                 PerformanceMeasure p("Link runner match");
                 camera_relations relations;
@@ -87,9 +87,8 @@ std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph
 
                 // distort
                 p.reset("Link runner undistort");
-                std::vector<correspondence> correspondences =
-                    distort_keypoints(img.features, near_image.features, relations.matches,
-                                      *img.model, *near_image.model);
+                std::vector<correspondence> correspondences = distort_keypoints(
+                    img.features, near_image.features, relations.matches, *img.model, *near_image.model);
 
                 // ransac
                 p.reset("Link runner ransac");
