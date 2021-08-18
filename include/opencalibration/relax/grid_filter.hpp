@@ -30,31 +30,28 @@ template <typename T> class GridFilter
         if (iter == _map.end())
         {
             _map.emplace(index, std::make_pair(score, value));
+            _best.insert(value);
         }
         else
         {
             if (iter->second.first < score)
             {
+                _best.erase(iter->second.second);
                 iter->second = std::make_pair(score, value);
+                _best.insert(value);
             }
         }
     }
 
-    std::unordered_set<T> getBestMeasurementsPerCell() const
+    const std::unordered_set<T>& getBestMeasurementsPerCell() const
     {
-        std::unordered_set<T> best_measurements;
-        best_measurements.reserve(_map.size());
-
-        for (const auto &index_data : _map)
-        {
-            best_measurements.insert(index_data.second.second);
-        }
-        return best_measurements;
+        return _best;
     }
 
   private:
     double _grid_resolution;
     std::unordered_map<uint64_t, std::pair<double, T>> _map;
+    std::unordered_set<T> _best;
 };
 
 } // namespace opencalibration

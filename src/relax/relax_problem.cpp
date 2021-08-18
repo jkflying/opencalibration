@@ -279,8 +279,8 @@ void RelaxProblem::addGlobalPlaneMeasurementsCost(const MeasurementGraph &graph,
     const auto &source_model = *pkg.source.model_ptr;
     const auto &dest_model = *pkg.dest.model_ptr;
 
-    auto source_whitelist = _grid_filter[edge.getSource()].getBestMeasurementsPerCell();
-    auto dest_whitelist = _grid_filter[edge.getDest()].getBestMeasurementsPerCell();
+    const auto &source_whitelist = _grid_filter[edge.getSource()].getBestMeasurementsPerCell();
+    const auto &dest_whitelist = _grid_filter[edge.getDest()].getBestMeasurementsPerCell();
 
     double *datas[5] = {pkg.source.rot_ptr->coeffs().data(), pkg.dest.rot_ptr->coeffs().data(),
                         &_global_plane.corner[0].z(), &_global_plane.corner[1].z(), &_global_plane.corner[2].z()};
@@ -386,8 +386,8 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
     auto &source_model = *pkg.source.model_ptr;
     auto &dest_model = *pkg.dest.model_ptr;
 
-    auto source_whitelist = _grid_filter[edge.getSource()].getBestMeasurementsPerCell();
-    auto dest_whitelist = _grid_filter[edge.getDest()].getBestMeasurementsPerCell();
+    const auto &source_whitelist = _grid_filter[edge.getSource()].getBestMeasurementsPerCell();
+    const auto &dest_whitelist = _grid_filter[edge.getDest()].getBestMeasurementsPerCell();
 
     double *orientation_ptrs[2] = {pkg.source.rot_ptr->coeffs().data(), pkg.dest.rot_ptr->coeffs().data()};
     bool points_added = false;
