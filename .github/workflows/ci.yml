@@ -21,9 +21,13 @@ jobs:
       uses: hendrikmuhs/ccache-action@v1.0.4
     - name: cmake
       run: mkdir build && cd build && PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH" cmake .. -G Ninja -DCMAKE_BUILD_TYPE=asan
-    - name: Address Sanitizer Build & Test
+    - name: Address Sanitizer Build
+      run: cd build && ASAN_OPTIONS=detect_leaks=0 ninja
+    - name: Address Sanitizer Test
       run: cd build && ASAN_OPTIONS=detect_leaks=0 ninja test
-    - name: Coverage Build & Test
-      run: cd build && cmake -DCMAKE_BUILD_TYPE=Coverage .. && ninja test_coverage_html
+    - name: Coverage Build
+      run: cd build && cmake -DCMAKE_BUILD_TYPE=Coverage .. && ninja
+    - name: Coverage Test
+      run: cd build && ninja test_coverage_html
     - name: upload to codecov
       run:  bash <(curl -s https://codecov.io/bash) -f build/test/clean_coverage.info
