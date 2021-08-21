@@ -1,7 +1,10 @@
 #include <opencalibration/relax/relax_group.hpp>
 
+#include <opencalibration/distort/distort_keypoints.hpp>
+#include <opencalibration/model_inliers/ransac.hpp>
 #include <opencalibration/performance/performance.hpp>
 #include <opencalibration/relax/relax.hpp>
+#include <opencalibration/types/correspondence.hpp>
 
 #include <spdlog/spdlog.h>
 
@@ -121,14 +124,61 @@ std::vector<size_t> RelaxGroup::finalize(MeasurementGraph &graph)
 {
     std::vector<size_t> optimized_ids;
     optimized_ids.reserve(_local_poses.size());
+    bool model_changed = _relax_options.hasAny({Option::FOCAL_LENGTH, Option::PRINCIPAL_POINT,
+                                                Option::LENS_DISTORTIONS_RADIAL, Option::LENS_DISTORTIONS_TANGENTIAL});
     for (const auto &pose : _local_poses)
     {
         auto *node = graph.getNode(pose.node_id);
         node->payload.orientation = pose.orientation;
         node->payload.position = pose.position;
-        *node->payload.model = _camera_models[node->payload.model->id];
+        if (model_changed && !(*node->payload.model == _camera_models[node->payload.model->id]))
+        {
+            *node->payload.model = _camera_models[node->payload.model->id];
+        }
         optimized_ids.push_back(pose.node_id);
     }
+
+    if (model_changed)
+    {
+        // recalculate all of the edge inliers based on camera models changing. Just iterate from current inliers,
+        // recalculate model.
+        for (auto eiter = graph.edgebegin(); eiter != graph.edgeend(); ++eiter)
+        {
+            auto &edge = eiter->second;
+            const auto *source = graph.getNode(edge.getSource());
+            const auto *dest = graph.getNode(edge.getDest());
+
+            const std::vector<correspondence> correspondences =
+                distort_keypoints(source->payload.features, dest->payload.features, edge.payload.matches,
+                                  *source->payload.model, *dest->payload.model);
+
+            homography_model h;
+            h.homography = edge.payload.ransac_relation;
+            std::vector<bool> inliers(correspondences.size(), false);
+
+            for (const auto &old_inlier : edge.payload.inlier_matches)
+            {
+                inliers[old_inlier.match_index] = true;
+            }
+            for (int i = 0; i < 3; i++)
+            {
+                h.fitInliers(correspondences, inliers);
+                h.evaluate(correspondences, inliers);
+            }
+            edge.payload.ransac_relation = h.homography;
+
+            bool can_decompose = h.decompose(correspondences, inliers, edge.payload.relative_poses);
+            size_t num_inliers = std::count(inliers.begin(), inliers.end(), true);
+
+            edge.payload.inlier_matches.clear();
+            if (can_decompose && num_inliers > h.MINIMUM_POINTS * 1.5)
+            {
+                assembleInliers(edge.payload.matches, inliers, source->payload.features, dest->payload.features,
+                                edge.payload.inlier_matches);
+            }
+        }
+    }
+
     _local_poses.clear();
     return optimized_ids;
 }

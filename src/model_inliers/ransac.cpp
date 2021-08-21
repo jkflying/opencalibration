@@ -254,4 +254,25 @@ double ransac(const std::vector<correspondence> &matches, Model &model, std::vec
 
 template double ransac(const std::vector<correspondence> &, homography_model &, std::vector<bool> &);
 
+void assembleInliers(const std::vector<feature_match> &matches, const std::vector<bool> &inliers,
+                     const std::vector<feature_2d> &source_features, const std::vector<feature_2d> &dest_features,
+                     std::vector<feature_match_denormalized> &inlier_list)
+{
+
+    inlier_list.reserve(std::count(inliers.begin(), inliers.end(), true));
+    for (size_t i = 0; i < matches.size(); i++)
+    {
+        if (inliers[i])
+        {
+            feature_match_denormalized fmd;
+            fmd.pixel_1 = source_features[matches[i].feature_index_1].location;
+            fmd.pixel_2 = dest_features[matches[i].feature_index_2].location;
+            fmd.feature_index_1 = matches[i].feature_index_1;
+            fmd.feature_index_2 = matches[i].feature_index_2;
+            fmd.match_index = i;
+            inlier_list.push_back(fmd);
+        }
+    }
+}
+
 } // namespace opencalibration

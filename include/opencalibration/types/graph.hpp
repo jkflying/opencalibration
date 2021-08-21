@@ -138,22 +138,42 @@ template <typename NodePayload, typename EdgePayload> class DirectedGraph
     bool removeNode(size_t identifier);
     bool removeEdge(size_t identifier);
 
-    using NodeIterator = typename std::unordered_map<size_t, Node>::const_iterator;
-    NodeIterator nodebegin() const
+    using NodeIterator = typename std::unordered_map<size_t, Node>::iterator;
+    NodeIterator nodebegin()
+    {
+        return _nodes.begin();
+    }
+    NodeIterator nodeend()
+    {
+        return _nodes.end();
+    }
+
+    using EdgeIterator = typename std::unordered_map<size_t, Edge>::iterator;
+    EdgeIterator edgebegin()
+    {
+        return _edges.begin();
+    }
+    EdgeIterator edgeend()
+    {
+        return _edges.end();
+    }
+
+    using CNodeIterator = typename std::unordered_map<size_t, Node>::const_iterator;
+    CNodeIterator cnodebegin() const
     {
         return _nodes.cbegin();
     }
-    NodeIterator nodeend() const
+    CNodeIterator cnodeend() const
     {
         return _nodes.cend();
     }
 
-    using EdgeIterator = typename std::unordered_map<size_t, Edge>::const_iterator;
-    EdgeIterator edgebegin() const
+    using CEdgeIterator = typename std::unordered_map<size_t, Edge>::const_iterator;
+    CEdgeIterator cedgebegin() const
     {
         return _edges.cbegin();
     }
-    EdgeIterator edgeend() const
+    CEdgeIterator cedgeend() const
     {
         return _edges.cend();
     }

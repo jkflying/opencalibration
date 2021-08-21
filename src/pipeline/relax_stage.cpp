@@ -38,14 +38,19 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
     {
         actual_node_ids.clear();
         actual_node_ids.reserve(graph.size_nodes());
-        for (auto iter = graph.nodebegin(); iter != graph.nodeend(); ++iter)
+        for (auto iter = graph.cnodebegin(); iter != graph.cnodeend(); ++iter)
         {
             actual_node_ids.push_back(iter->first);
         }
     }
 
+    bool optimizing_internals = options.hasAny({Option::FOCAL_LENGTH, Option::PRINCIPAL_POINT,
+                                                Option::LENS_DISTORTIONS_RADIAL, Option::LENS_DISTORTIONS_TANGENTIAL});
+
+    const int optimal_cluster_size = optimizing_internals ? 150 : 50;
+
     const size_t num_groups =
-        global_relax ? std::max<size_t>(1, static_cast<size_t>(std::ceil(actual_node_ids.size() / 50))) : 1;
+        std::max<size_t>(1, static_cast<size_t>(std::ceil(actual_node_ids.size() / optimal_cluster_size)));
 
     _k_groups->reset(num_groups);
 

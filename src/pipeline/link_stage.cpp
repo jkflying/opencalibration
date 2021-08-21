@@ -109,19 +109,8 @@ std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph
 
                 if (can_decompose && num_inliers > h.MINIMUM_POINTS * 1.5)
                 {
-                    relations.inlier_matches.reserve(num_inliers);
-                    for (size_t i = 0; i < relations.matches.size(); i++)
-                    {
-                        if (inliers[i])
-                        {
-                            feature_match_denormalized fmd;
-                            fmd.pixel_1 = img.features[relations.matches[i].feature_index_1].location;
-                            fmd.pixel_2 = near_image.features[relations.matches[i].feature_index_2].location;
-                            fmd.feature_index_1 = relations.matches[i].feature_index_1;
-                            fmd.feature_index_2 = relations.matches[i].feature_index_2;
-                            relations.inlier_matches.push_back(fmd);
-                        }
-                    }
+                    assembleInliers(relations.matches, inliers, img.features, near_image.features,
+                                    relations.inlier_matches);
                 }
                 std::lock_guard<std::mutex> lock(mtx);
                 meas.emplace_back(edge_payload{i, node_id, match_node_id, std::move(relations)});

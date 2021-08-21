@@ -28,7 +28,7 @@ void LoadStage::init(const MeasurementGraph &graph, const std::vector<std::strin
     // initialize camera models map if the graph was deserialized from elsewhere
     if (_camera_models.size() == 0 && graph.size_nodes() > 0)
     {
-        for (auto niter = graph.nodebegin(); niter != graph.nodeend(); ++niter)
+        for (auto niter = graph.cnodebegin(); niter != graph.cnodeend(); ++niter)
         {
             const auto &payload = niter->second.payload;
 

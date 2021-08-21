@@ -109,7 +109,8 @@ struct relax_ : public ::testing::Test
                 {
                     pixel[j] = graph.getNode(np[index[j]].node_id)->payload.features[counter].location;
                 }
-                relation.inlier_matches.emplace_back(feature_match_denormalized{pixel[0], pixel[1], counter, counter});
+                relation.inlier_matches.emplace_back(
+                    feature_match_denormalized{pixel[0], pixel[1], counter, counter, counter});
             }
             edge_id[i] = graph.addEdge(std::move(relation), id[index[0]], id[index[1]]);
         }

@@ -13,6 +13,7 @@ enum class Option : int32_t
     GROUND_PLANE,
     POINTS_3D,
     FOCAL_LENGTH,
+    PRINCIPAL_POINT,
     LENS_DISTORTIONS_RADIAL,
 
     LENS_DISTORTIONS_RADIAL_BROWN2_PARAMETERIZATION, // choose just one of these
@@ -54,6 +55,11 @@ class RelaxOptionSet
         return (other.enabled | enabled) == enabled;
     }
 
+    bool hasAny(const RelaxOptionSet &other) const
+    {
+        return (enabled & other.enabled).count() > 0;
+    }
+
     bool operator==(const RelaxOptionSet &other) const
     {
         return other.enabled == enabled;
@@ -87,6 +93,8 @@ inline std::string toString(Option o)
         return "POINTS_3D";
     case Option::FOCAL_LENGTH:
         return "FOCAL_LENGTH";
+    case Option::PRINCIPAL_POINT:
+        return "PRINCIPAL_POINT";
     case Option::LENS_DISTORTIONS_RADIAL:
         return "LENS_DISTORTIONS_RADIAL";
     case Option::LENS_DISTORTIONS_RADIAL_BROWN2_PARAMETERIZATION:

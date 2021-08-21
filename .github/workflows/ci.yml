@@ -22,7 +22,7 @@ jobs:
     - name: cmake
       run: mkdir build && cd build && PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH" cmake .. -G Ninja -DCMAKE_BUILD_TYPE=asan
     - name: Address Sanitizer Build
-      run: cd build && ASAN_OPTIONS=detect_leaks=0 ninja
+      run: cd build && ninja
     - name: Address Sanitizer Test
       run: cd build && ASAN_OPTIONS=detect_leaks=0 ninja test
     - name: Coverage Build
