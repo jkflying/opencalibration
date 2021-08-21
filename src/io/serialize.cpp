@@ -19,6 +19,28 @@ template <size_t N> std::string bitset_to_bytes(const std::bitset<N> &bs)
     return result;
 }
 
+struct Stream
+{
+    std::ostream *os = nullptr;
+    typedef char Ch;
+
+    static const int buf_capacity = 4096;
+    int buf_idx = 0;
+    Ch buffer[buf_capacity];
+    void Put(Ch ch)
+    {
+        buffer[buf_idx++] = ch;
+        if (buf_idx == buf_capacity)
+            Flush();
+    }
+    void Flush()
+    {
+        os->write(buffer, buf_idx);
+        buf_idx = 0;
+        os->flush();
+    }
+};
+
 } // namespace
 namespace opencalibration
 {
@@ -26,8 +48,9 @@ namespace opencalibration
 template <> class Serializer<MeasurementGraph>
 {
   public:
-    static std::string visualizeGeoJson(const MeasurementGraph &graph,
-                                        std::function<Eigen::Vector3d(const Eigen::Vector3d &)> toGlobalCoordinates)
+    static bool visualizeGeoJson(const MeasurementGraph &graph,
+                                 std::function<Eigen::Vector3d(const Eigen::Vector3d &)> toGlobalCoordinates,
+                                 std::ostream &out)
     {
         // sort nodes by id to make repeatable with unordered map
         std::vector<size_t> node_ids;
@@ -47,16 +70,18 @@ template <> class Serializer<MeasurementGraph>
         }
         std::sort(edge_ids.begin(), edge_ids.end());
 
-        return visualizeGeoJson(graph, node_ids, edge_ids, toGlobalCoordinates);
+        return visualizeGeoJson(graph, node_ids, edge_ids, toGlobalCoordinates, out);
     }
 
-    static std::string visualizeGeoJson(const MeasurementGraph &graph, const std::vector<size_t> &node_ids,
-                                        const std::vector<size_t> &edge_ids,
-                                        std::function<Eigen::Vector3d(const Eigen::Vector3d &)> toGlobalCoordinates)
+    static bool visualizeGeoJson(const MeasurementGraph &graph, const std::vector<size_t> &node_ids,
+                                 const std::vector<size_t> &edge_ids,
+                                 std::function<Eigen::Vector3d(const Eigen::Vector3d &)> toGlobalCoordinates,
+                                 std::ostream &out)
     {
-        rapidjson::StringBuffer buffer;
+        Stream stream;
+        stream.os = &out;
 
-        rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(buffer);
+        rapidjson::PrettyWriter<Stream> writer(stream);
 
         writer.SetFormatOptions(rapidjson::PrettyFormatOptions::kFormatSingleLineArray);
         writer.StartObject();
@@ -169,14 +194,15 @@ template <> class Serializer<MeasurementGraph>
 
         writer.EndObject();
 
-        return buffer.GetString();
+        return true;
     }
 
-    static std::string to_json(const MeasurementGraph &graph)
+    static bool to_json(const MeasurementGraph &graph, std::ostream &out)
     {
-        rapidjson::StringBuffer buffer;
+        Stream stream;
+        stream.os = &out;
 
-        rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(buffer);
+        rapidjson::PrettyWriter<Stream> writer(stream);
 
         writer.SetFormatOptions(rapidjson::PrettyFormatOptions::kFormatSingleLineArray);
         writer.StartObject();
@@ -529,24 +555,24 @@ template <> class Serializer<MeasurementGraph>
         }
         writer.EndObject();
 
-        return buffer.GetString();
+        return true;
     }
 };
-std::string serialize(const MeasurementGraph &graph)
+bool serialize(const MeasurementGraph &graph, std::ostream &out)
 {
-    return Serializer<MeasurementGraph>::to_json(graph);
+    return Serializer<MeasurementGraph>::to_json(graph, out);
 }
 
-std::string toVisualizedGeoJson(const MeasurementGraph &graph,
-                                std::function<Eigen::Vector3d(const Eigen::Vector3d &)> toGlobalCoordinates)
+bool toVisualizedGeoJson(const MeasurementGraph &graph,
+                         std::function<Eigen::Vector3d(const Eigen::Vector3d &)> toGlobalCoordinates, std::ostream &out)
 {
-    return Serializer<MeasurementGraph>::visualizeGeoJson(graph, toGlobalCoordinates);
+    return Serializer<MeasurementGraph>::visualizeGeoJson(graph, toGlobalCoordinates, out);
 }
 
-std::string toVisualizedGeoJson(const MeasurementGraph &graph, const std::vector<size_t> &node_ids,
-                                const std::vector<size_t> &edge_ids,
-                                std::function<Eigen::Vector3d(const Eigen::Vector3d &)> toGlobalCoordinates)
+bool toVisualizedGeoJson(const MeasurementGraph &graph, const std::vector<size_t> &node_ids,
+                         const std::vector<size_t> &edge_ids,
+                         std::function<Eigen::Vector3d(const Eigen::Vector3d &)> toGlobalCoordinates, std::ostream &out)
 {
-    return Serializer<MeasurementGraph>::visualizeGeoJson(graph, node_ids, edge_ids, toGlobalCoordinates);
+    return Serializer<MeasurementGraph>::visualizeGeoJson(graph, node_ids, edge_ids, toGlobalCoordinates, out);
 }
 } // namespace opencalibration

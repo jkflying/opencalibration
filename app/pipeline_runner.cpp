@@ -142,21 +142,18 @@ int main(int argc, char *argv[])
     if (output_file.size() > 0)
     {
         auto to_wgs84 = [&p](const Eigen::Vector3d &local) { return p.getCoord().toWGS84(local); };
-        std::string out = toVisualizedGeoJson(p.getGraph(), to_wgs84);
 
         std::ofstream output;
         output.open(output_file, std::ios::out | std::ios::trunc);
-        output << out;
+        toVisualizedGeoJson(p.getGraph(), to_wgs84, output);
         output.close();
     }
 
     if (serialized_output.size() > 0)
     {
-        std::string out = serialize(p.getGraph());
-
         std::ofstream output;
-        output.open(serialized_output, std::ios::out | std::ios::trunc);
-        output << out;
+        output.open(serialized_output, std::ios::binary);
+        serialize(p.getGraph(), output);
         output.close();
     }
     std::cout << "Complete!" << std::endl;

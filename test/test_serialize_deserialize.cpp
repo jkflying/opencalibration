@@ -10,12 +10,13 @@ using namespace std::chrono_literals;
 
 TEST(serialize_graph, empty_graph)
 {
-    std::string serialized = serialize(MeasurementGraph());
-    EXPECT_EQ(serialized, "{\n"
-                          "    \"version\": 1,\n"
-                          "    \"nodes\": {},\n"
-                          "    \"edges\": {}\n"
-                          "}");
+    std::ostringstream serialized;
+    EXPECT_TRUE(serialize(MeasurementGraph(), serialized));
+    EXPECT_EQ(serialized.str(), "{\n"
+                                "    \"version\": 1,\n"
+                                "    \"nodes\": {},\n"
+                                "    \"edges\": {}\n"
+                                "}");
 }
 
 TEST(serialize_graph, one_image)
@@ -28,12 +29,15 @@ TEST(serialize_graph, one_image)
         p.iterateOnce();
     }
 
-    std::string serialized = serialize(p.getGraph());
+    std::ostringstream serialized;
+    EXPECT_TRUE(serialize(p.getGraph(), serialized));
     MeasurementGraph g;
-    deserialize(serialized, g);
-    std::string dedeserialized = serialize(g);
+    deserialize(serialized.str(), g);
     EXPECT_TRUE(g == p.getGraph());
-    EXPECT_EQ(serialized, dedeserialized);
+
+    std::ostringstream dedeserialized;
+    EXPECT_TRUE(serialize(g, dedeserialized));
+    EXPECT_EQ(serialized.str(), dedeserialized.str());
 }
 
 TEST(serialize_graph, three_images)
@@ -46,10 +50,13 @@ TEST(serialize_graph, three_images)
         p.iterateOnce();
     }
 
-    std::string serialized = serialize(p.getGraph());
+    std::ostringstream serialized;
+    EXPECT_TRUE(serialize(p.getGraph(), serialized));
     MeasurementGraph g;
-    deserialize(serialized, g);
-    std::string dedeserialized = serialize(g);
+    deserialize(serialized.str(), g);
     EXPECT_TRUE(g == p.getGraph());
-    EXPECT_EQ(serialized, dedeserialized);
+
+    std::ostringstream dedeserialized;
+    EXPECT_TRUE(serialize(g, dedeserialized));
+    EXPECT_EQ(serialized.str(), dedeserialized.str());
 }
