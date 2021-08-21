@@ -51,14 +51,14 @@ struct DecomposedRotationCost
     static const int NUM_PARAMETERS_2 = 4;
 
     DecomposedRotationCost(const Eigen::Quaterniond &relative_rotation, const Eigen::Vector3d &relative_translation,
-                           const Eigen::Vector3d *translation1, const Eigen::Vector3d *translation2)
+                           const Eigen::Vector3d *translation1, const Eigen::Vector3d *translation2, int score)
         :
 
           _has_translation((*translation2 - *translation1).squaredNorm() > 1e-9 &&
                            relative_translation.squaredNorm() > 1e-9),
           _relative_rotation(relative_rotation.normalized()),
           _translation_direction((*translation2 - *translation1).normalized()),
-          _relative_translation_direction(relative_translation.normalized())
+          _relative_translation_direction(relative_translation.normalized()), _weight(std::sqrt(score / 8.))
     {
     }
 
@@ -71,27 +71,32 @@ struct DecomposedRotationCost
         const QuaterionTCM rotation1_em(rotation1);
         const QuaterionTCM rotation2_em(rotation2);
 
+        T res[3];
+
         if (_has_translation)
         {
             // angle from camera1 -> camera2
             const Vector3T rotated_translation2_1 = rotation1_em.inverse() * _translation_direction.cast<T>();
-            residuals[0] =
-                angleBetweenUnitVectors<T>(rotated_translation2_1, _relative_translation_direction.cast<T>());
+            res[0] = angleBetweenUnitVectors<T>(rotated_translation2_1, _relative_translation_direction.cast<T>());
 
             // angle from camera2 -> camera1
             const Vector3T rotated_translation1_2 =
                 rotation2_em.inverse() * (_relative_rotation * -_translation_direction).cast<T>();
-            residuals[1] =
-                angleBetweenUnitVectors<T>(rotated_translation1_2, -_relative_translation_direction.cast<T>());
+            res[1] = angleBetweenUnitVectors<T>(rotated_translation1_2, -_relative_translation_direction.cast<T>());
         }
         else
         {
-            residuals[0] = residuals[1] = T(M_PI);
+            res[0] = res[1] = T(M_PI);
         }
 
         // relative orientation of camera1 and camera2
         const QuaterionT rotation2_1 = rotation1_em * rotation2_em.inverse();
-        residuals[2] = Eigen::AngleAxis<T>(_relative_rotation.cast<T>() * rotation2_1).angle();
+        res[2] = Eigen::AngleAxis<T>(_relative_rotation.cast<T>() * rotation2_1).angle();
+
+        for (int i = 0; i < 3; i++)
+        {
+            residuals[i] = T(_weight) * res[i];
+        }
 
         return true;
     }
@@ -102,6 +107,7 @@ struct DecomposedRotationCost
     const bool _has_translation;
     const Eigen::Quaterniond _relative_rotation;
     const Eigen::Vector3d _translation_direction, _relative_translation_direction;
+    const double _weight;
 };
 
 // Homographies give two valid decompositions. Use this to evaluate the cost of these paired decompositions.
@@ -113,15 +119,15 @@ struct MultiDecomposedRotationCost
     static const int NUM_PARAMETERS_2 = 4;
 
     MultiDecomposedRotationCost(const camera_relations &relations, const Eigen::Vector3d *translation1,
-                                const Eigen::Vector3d *translation2, size_t inlier_count)
-        : weight(std::sqrt(inlier_count / 8.))
+                                const Eigen::Vector3d *translation2)
     {
         decompose.reserve(relations.relative_poses.size());
+
         for (const auto &pose : relations.relative_poses)
         {
-            if (pose.score >= 0)
+            if (pose.score > 0)
             {
-                decompose.emplace_back(pose.orientation, pose.position, translation1, translation2);
+                decompose.emplace_back(pose.orientation, pose.position, translation1, translation2, pose.score);
             }
         }
     }
@@ -146,13 +152,12 @@ struct MultiDecomposedRotationCost
         }
 
         VectorRTM res_vec(residuals);
-        res_vec = T(weight) * lowest_res;
+        res_vec = lowest_res;
 
         return ceres::IsFinite(lowest_res_norm);
     }
 
     std::vector<DecomposedRotationCost> decompose;
-    const double weight;
 };
 
 struct PixelErrorCost_Orientation

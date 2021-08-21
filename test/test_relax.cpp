@@ -130,13 +130,13 @@ struct relax_ : public ::testing::Test
 
             if (i == 0 || i == 2)
             {
+                relation.relative_poses[0].score = 8;
                 relation.relative_poses[0].position = actual_t;
                 relation.relative_poses[0].orientation = actual_r;
-                relation.relative_poses[0].score = 0;
             }
             if (i == 1 || i == 2)
             {
-                relation.relative_poses[1].score = 1;
+                relation.relative_poses[1].score = 18;
                 relation.relative_poses[1].position = actual_t;
                 relation.relative_poses[1].orientation = actual_r;
             }
@@ -191,7 +191,7 @@ TEST_F(relax_, rel_rot_cost_function)
     init_cameras();
     Eigen::Quaterniond rel_rot = ground_ori[1] * ground_ori[0].inverse();
     Eigen::Vector3d rel_pos = ground_ori[0].inverse() * (ground_pos[1] - ground_pos[0]);
-    DecomposedRotationCost cost(rel_rot, rel_pos, &ground_pos[0], &ground_pos[1]);
+    DecomposedRotationCost cost(rel_rot, rel_pos, &ground_pos[0], &ground_pos[1], 8);
 
     {
         // WHEN: we get the relative orientation cost with a perfect guess
@@ -301,7 +301,7 @@ TEST(relax, prior_2_images)
     camera_relations relation;
     relation.relative_poses[0].orientation = Eigen::Quaterniond::Identity();
     relation.relative_poses[0].position << 1, 0, 0;
-    relation.relative_poses[0].score = 0;
+    relation.relative_poses[0].score = 8;
     relation.inlier_matches.resize(10);
     size_t edge_id = graph.addEdge(std::move(relation), id, id2);
 
