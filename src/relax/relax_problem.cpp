@@ -65,6 +65,8 @@ void RelaxProblem::setupGroundPlaneProblem(const MeasurementGraph &graph, std::v
             addGlobalPlaneMeasurementsCost(graph, edge_id, *edge, options);
         }
     }
+
+    addDownwardsPrior();
 }
 
 void RelaxProblem::setup3dPointProblem(const MeasurementGraph &graph, std::vector<opencalibration::NodePose> &nodes,

@@ -50,7 +50,7 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
     const int optimal_cluster_size = optimizing_internals ? 150 : 50;
 
     const size_t num_groups =
-        std::max<size_t>(1, static_cast<size_t>(std::ceil(actual_node_ids.size() / optimal_cluster_size)));
+        std::max<size_t>(1, static_cast<size_t>(std::floor(actual_node_ids.size() / optimal_cluster_size)));
 
     _k_groups->reset(num_groups);
 

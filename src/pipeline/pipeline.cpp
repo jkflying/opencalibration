@@ -121,7 +121,8 @@ Pipeline::Transition Pipeline::initial_processing()
 
         _load_stage->init(_graph, paths);
         _link_stage->init(_graph, _imageGPSLocations, _previous_loaded_ids);
-        _relax_stage->init(_graph, _previous_linked_ids, _imageGPSLocations, false, {Option::ORIENTATION});
+        _relax_stage->init(_graph, _previous_linked_ids, _imageGPSLocations, false,
+                           {Option::ORIENTATION, Option::GROUND_PLANE});
 
         fvec funcs;
         {
