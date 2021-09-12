@@ -164,7 +164,7 @@ int main(int argc, char *argv[])
     {
         std::ofstream output;
         output.open(pointcloud_file, std::ios::binary);
-        toXYZ(p.getSurfaces(), output);
+        toXYZ(p.getSurfaces(), output, filterOutliers(p.getSurfaces()));
         output.close();
     }
 

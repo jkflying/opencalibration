@@ -93,11 +93,7 @@ std::vector<Backend> getBackends()
             for (auto &node : nodes)
             {
 
-                if (!node.orientation.coeffs().hasNaN())
-                {
-                    previous_node_orientation = node.orientation;
-                }
-                else
+                if (node.orientation.coeffs().hasNaN())
                 {
                     node.orientation = previous_node_orientation;
 
@@ -121,6 +117,7 @@ std::vector<Backend> getBackends()
                         rp.solve();
                     }
                 }
+                previous_node_orientation = node.orientation;
             }
 
             RelaxProblem rp;

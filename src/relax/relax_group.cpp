@@ -75,6 +75,11 @@ void RelaxGroup::init(const MeasurementGraph &graph, const std::vector<size_t> &
         }
     }
 
+    std::sort(_local_poses.begin(), _local_poses.end(), [&graph](const NodePose &a, const NodePose &b) {
+        const std::string &a_s = graph.getNode(a.node_id)->payload.path, &b_s = graph.getNode(b.node_id)->payload.path;
+        return a_s < b_s;
+    });
+
     spdlog::info("Queueing {} image nodes, {} edges for graph relaxation", _local_poses.size(),
                  _edges_to_optimize.size());
 }
