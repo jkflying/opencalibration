@@ -48,11 +48,6 @@ void Pipeline::add(const std::vector<std::string> &paths)
     _queue_condition_variable.notify_all();
 }
 
-const MeasurementGraph &Pipeline::getGraph()
-{
-    return _graph;
-}
-
 PipelineState Pipeline::chooseNextState(PipelineState currentState, Transition transition)
 {
     // clang-format off
@@ -96,8 +91,8 @@ Pipeline::Transition Pipeline::runCurrentState(PipelineState currentState)
         break;
     }
 
-    StepCompletionInfo info{_next_loaded_ids,  _next_linked_ids, _next_relaxed_ids, _graph.size_nodes(),
-                            _add_queue.size(), currentState,     stateRunCount()};
+    StepCompletionInfo info{_next_loaded_ids,    _next_linked_ids,  _next_relaxed_ids, _surfaces,
+                            _graph.size_nodes(), _add_queue.size(), currentState,      stateRunCount()};
     _step_callback(info);
 
     return t;
@@ -157,6 +152,7 @@ Pipeline::Transition Pipeline::global_relax()
     fvec relax_funcs = _relax_stage->get_runners(_graph);
     run_parallel(relax_funcs, _parallelism);
     _next_relaxed_ids = _relax_stage->finalize(_graph);
+    _surfaces = _relax_stage->getSurfaceModels();
 
     if (stateRunCount() < 5)
         return Transition::REPEAT;
@@ -201,6 +197,7 @@ Pipeline::Transition Pipeline::camera_parameter_relax()
     fvec relax_funcs = _relax_stage->get_runners(_graph);
     run_parallel(relax_funcs, _parallelism);
     _next_relaxed_ids = _relax_stage->finalize(_graph);
+    _surfaces = _relax_stage->getSurfaceModels();
 
     if (stateRunCount() < 5)
         return Transition::REPEAT;
@@ -215,6 +212,7 @@ Pipeline::Transition Pipeline::final_global_relax()
     fvec relax_funcs = _relax_stage->get_runners(_graph);
     run_parallel(relax_funcs, _parallelism);
     _next_relaxed_ids = _relax_stage->finalize(_graph);
+    _surfaces = _relax_stage->getSurfaceModels();
 
     if (stateRunCount() < 2)
         return Transition::REPEAT;

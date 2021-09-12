@@ -4,6 +4,7 @@
 #include <opencalibration/types/measurement_graph.hpp>
 #include <opencalibration/types/node_pose.hpp>
 #include <opencalibration/types/relax_options.hpp>
+#include <opencalibration/types/surface_model.hpp>
 
 #include <unordered_set>
 
@@ -17,11 +18,12 @@ class RelaxGroup
               const jk::tree::KDTree<size_t, 3> &imageGPSLocations, size_t graph_connection_depth,
               const RelaxOptionSet &options);
 
-    void run(const MeasurementGraph &graph);
+    surface_model run(const MeasurementGraph &graph);
 
     std::vector<size_t> finalize(MeasurementGraph &graph);
 
   private:
+    bool _incremental_relax;
     std::vector<NodePose> _local_poses;
     std::unordered_map<size_t, CameraModel> _camera_models;
 

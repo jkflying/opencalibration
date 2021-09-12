@@ -2,6 +2,7 @@
 
 #include <opencalibration/geo_coord/geo_coord.hpp>
 #include <opencalibration/types/measurement_graph.hpp>
+#include <opencalibration/types/surface_model.hpp>
 
 #include <jk/KDTree.h>
 #include <usm.hpp>
@@ -43,6 +44,7 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
     {
         std::reference_wrapper<std::vector<size_t>> loaded_ids, linked_ids;
         std::reference_wrapper<std::vector<std::vector<size_t>>> relaxed_ids;
+        std::reference_wrapper<std::vector<surface_model>> surfaces;
         size_t images_loaded, queue_size_remaining;
         PipelineState state;
         uint64_t state_iteration;
@@ -55,11 +57,19 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
     void add(const std::vector<std::string> &filename);
 
     // warning - not threadsafe, only access from callback or when finished
-    const MeasurementGraph &getGraph();
+    const MeasurementGraph &getGraph()
+    {
+        return _graph;
+    }
 
     const GeoCoord &getCoord() const
     {
         return _coordinate_system;
+    }
+
+    const std::vector<surface_model> &getSurfaces()
+    {
+        return _surfaces;
     }
 
     void set_callback(const StepCompletionCallback &step_complete)
@@ -93,6 +103,7 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
     std::deque<std::string> _add_queue;
 
     MeasurementGraph _graph;
+    std::vector<surface_model> _surfaces;
     jk::tree::KDTree<size_t, 3> _imageGPSLocations;
     GeoCoord _coordinate_system;
 

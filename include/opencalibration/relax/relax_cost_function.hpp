@@ -122,10 +122,16 @@ struct MultiDecomposedRotationCost
                                 const Eigen::Vector3d *translation2)
     {
         decompose.reserve(relations.relative_poses.size());
+        int max_score = 0;
+        for (const auto &pose : relations.relative_poses)
+        {
+            if (pose.score > max_score)
+                max_score = pose.score;
+        }
 
         for (const auto &pose : relations.relative_poses)
         {
-            if (pose.score > 0)
+            if (pose.score > 0.25 * max_score)
             {
                 decompose.emplace_back(pose.orientation, pose.position, translation1, translation2, pose.score);
             }

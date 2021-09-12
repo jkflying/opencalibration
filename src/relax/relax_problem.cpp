@@ -1,14 +1,15 @@
 #include <opencalibration/relax/relax_problem.hpp>
 
-#include "ceres_log_forwarding.hpp"
 #include <opencalibration/relax/autodiff_cost_function.hpp>
+
+#include "ceres_log_forwarding.cpp.inc"
 
 namespace opencalibration
 {
 
 RelaxProblem::RelaxProblem()
-    : _log_forwarder_dependency(GetCeresLogForwarder()), _loss(new ceres::TrivialLoss(), ceres::TAKE_OWNERSHIP),
-      _brown2_parameterization(3, {1, 2}), _brown24_parameterization(3, {2}), _brown246_parameterization(3)
+    : _loss(new ceres::TrivialLoss(), ceres::TAKE_OWNERSHIP), _brown2_parameterization(3, {1, 2}),
+      _brown24_parameterization(3, {2}), _brown246_parameterization(3)
 {
     _problemOptions.cost_function_ownership = ceres::TAKE_OWNERSHIP;
     _problemOptions.loss_function_ownership = ceres::DO_NOT_TAKE_OWNERSHIP;
@@ -598,6 +599,28 @@ void RelaxProblem::solve()
     {
         p.second->orientation.normalize();
     }
+}
+
+surface_model RelaxProblem::getSurfaceModel()
+{
+    surface_model s;
+    s.cloud.reserve(_edge_tracks.size());
+    for (const auto &tv : _edge_tracks)
+    {
+        s.cloud.emplace_back();
+        s.cloud.back().reserve(tv.second.size());
+        for (const auto &t : tv.second)
+        {
+            s.cloud.back().push_back(t.point);
+        }
+    }
+
+    if (!_global_plane.corner[0].hasNaN())
+    {
+        s.mesh.push_back(_global_plane);
+    }
+
+    return s;
 }
 
 } // namespace opencalibration

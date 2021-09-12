@@ -2,6 +2,7 @@
 
 #include <opencalibration/performance/performance.hpp>
 #include <opencalibration/relax/relax_problem.hpp>
+#include <opencalibration/types/surface_model.hpp>
 
 namespace
 {
@@ -12,10 +13,10 @@ static const Eigen::Quaterniond DOWN_ORIENTED_NORTH(Eigen::AngleAxisd(M_PI, Eige
 
 struct Backend
 {
-    using run_f =
-        std::function<void(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                           std::unordered_map<size_t, CameraModel> &cam_models,
-                           const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options)>;
+    using run_f = std::function<surface_model(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                                              std::unordered_map<size_t, CameraModel> &cam_models,
+                                              const std::unordered_set<size_t> &edges_to_optimize,
+                                              const RelaxOptionSet &options)>;
     Backend(const RelaxOptionSet &caps, run_f &&func) : capabilities(caps), runner(func)
     {
     }
@@ -54,61 +55,81 @@ std::vector<Backend> getBackends()
                               RelaxProblem rp;
                               rp.setupDecompositionProblem(graph, nodes, edges_to_optimize);
                               rp.solve();
+
+                              return rp.getSurfaceModel();
                           });
+    auto points_solver = [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                            std::unordered_map<size_t, CameraModel> &cam_models,
+                            const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options) {
+        PerformanceMeasure p("Relax runner 3d points");
+        RelaxProblem rp;
+        rp.setup3dPointProblem(graph, nodes, cam_models, edges_to_optimize, options);
+        rp.solve();
+
+        return rp.getSurfaceModel();
+    };
     backends.emplace_back(RelaxOptionSet{Option::LENS_DISTORTIONS_TANGENTIAL, Option::LENS_DISTORTIONS_RADIAL,
                                          Option::LENS_DISTORTIONS_RADIAL_BROWN2_PARAMETERIZATION,
                                          Option::LENS_DISTORTIONS_RADIAL_BROWN24_PARAMETERIZATION,
                                          Option::LENS_DISTORTIONS_RADIAL_BROWN246_PARAMETERIZATION,
                                          Option::FOCAL_LENGTH, Option::ORIENTATION, Option::POINTS_3D},
-                          [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                             std::unordered_map<size_t, CameraModel> &cam_models,
-                             const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options) {
-                              PerformanceMeasure p("Relax runner 3d points frt");
-                              RelaxProblem rp;
-                              rp.setup3dPointProblem(graph, nodes, cam_models, edges_to_optimize, options);
-                              rp.solve();
-                          });
+                          points_solver);
     backends.emplace_back(RelaxOptionSet{Option::LENS_DISTORTIONS_RADIAL,
                                          Option::LENS_DISTORTIONS_RADIAL_BROWN2_PARAMETERIZATION,
                                          Option::LENS_DISTORTIONS_RADIAL_BROWN24_PARAMETERIZATION,
                                          Option::LENS_DISTORTIONS_RADIAL_BROWN246_PARAMETERIZATION,
                                          Option::FOCAL_LENGTH, Option::ORIENTATION, Option::POINTS_3D},
-                          [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                             std::unordered_map<size_t, CameraModel> &cam_models,
-                             const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options) {
-                              PerformanceMeasure p("Relax runner 3d points fr");
-                              RelaxProblem rp;
-                              rp.setup3dPointProblem(graph, nodes, cam_models, edges_to_optimize, options);
-                              rp.solve();
-                          });
-    backends.emplace_back(RelaxOptionSet{Option::FOCAL_LENGTH, Option::ORIENTATION, Option::POINTS_3D},
-                          [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                             std::unordered_map<size_t, CameraModel> &cam_models,
-                             const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options) {
-                              PerformanceMeasure p("Relax runner 3d points f");
-                              RelaxProblem rp;
-                              rp.setup3dPointProblem(graph, nodes, cam_models, edges_to_optimize, options);
-                              rp.solve();
-                          });
-    backends.emplace_back(RelaxOptionSet{Option::ORIENTATION, Option::POINTS_3D},
-                          [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                             std::unordered_map<size_t, CameraModel> &cam_models,
-                             const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options) {
-                              PerformanceMeasure p("Relax runner 3d points");
-                              RelaxProblem rp;
-                              rp.setup3dPointProblem(graph, nodes, cam_models, edges_to_optimize, options);
-                              rp.solve();
-                          });
-    backends.emplace_back(RelaxOptionSet{Option::ORIENTATION, Option::GROUND_PLANE},
-                          [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                             std::unordered_map<size_t, CameraModel> &cam_models,
-                             const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options) {
-                              PerformanceMeasure p("Relax runner ground plane");
-                              RelaxProblem rp;
-                              rp.setupGroundPlaneProblem(graph, nodes, cam_models, edges_to_optimize, options);
-                              rp.relaxObservedModelOnly();
-                              rp.solve();
-                          });
+                          points_solver);
+    backends.emplace_back(RelaxOptionSet{Option::FOCAL_LENGTH, Option::ORIENTATION, Option::POINTS_3D}, points_solver);
+    backends.emplace_back(RelaxOptionSet{Option::ORIENTATION, Option::POINTS_3D}, points_solver);
+    backends.emplace_back(
+        RelaxOptionSet{Option::ORIENTATION, Option::GROUND_PLANE},
+        [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+           std::unordered_map<size_t, CameraModel> &cam_models, const std::unordered_set<size_t> &edges_to_optimize,
+           const RelaxOptionSet &options) {
+            PerformanceMeasure p("Relax runner ground plane");
+
+            Eigen::Quaterniond previous_node_orientation = DOWN_ORIENTED_NORTH;
+            for (auto &node : nodes)
+            {
+
+                if (!node.orientation.coeffs().hasNaN())
+                {
+                    previous_node_orientation = node.orientation;
+                }
+                else
+                {
+                    node.orientation = previous_node_orientation;
+
+                    // add just one image at a time with a bad initial orientation, and optimize it while holding others
+                    // still if there are enough images to do so
+                    // The setup will already discard images which are uninitialized
+                    if (graph.size_nodes() > 2 * nodes.size())
+                    {
+                        std::vector<NodePose> justThis{node};
+                        RelaxProblem rp;
+                        rp.setupGroundPlaneProblem(graph, justThis, cam_models, edges_to_optimize, options);
+                        rp.relaxObservedModelOnly();
+                        rp.solve();
+                        node = justThis[0];
+                    }
+                    else
+                    {
+                        RelaxProblem rp;
+                        rp.setupGroundPlaneProblem(graph, nodes, cam_models, edges_to_optimize, options);
+                        rp.relaxObservedModelOnly();
+                        rp.solve();
+                    }
+                }
+            }
+
+            RelaxProblem rp;
+            rp.setupGroundPlaneProblem(graph, nodes, cam_models, edges_to_optimize, options);
+            rp.relaxObservedModelOnly();
+            rp.solve();
+
+            return rp.getSurfaceModel();
+        });
     return backends;
 }
 
@@ -118,9 +139,9 @@ static const std::vector<Backend> backends = getBackends();
 namespace opencalibration
 {
 
-void relax(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-           std::unordered_map<size_t, CameraModel> &cam_models, const std::unordered_set<size_t> &edges_to_optimize,
-           const RelaxOptionSet &options)
+surface_model relax(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                    std::unordered_map<size_t, CameraModel> &cam_models,
+                    const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options)
 {
 
     size_t best_index = std::numeric_limits<size_t>::max();
@@ -143,7 +164,9 @@ void relax(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
 
     if (best_index != std::numeric_limits<size_t>::max())
     {
-        backends[best_index].runner(graph, nodes, cam_models, edges_to_optimize, options);
+        return backends[best_index].runner(graph, nodes, cam_models, edges_to_optimize, options);
     }
+
+    return surface_model();
 }
 } // namespace opencalibration

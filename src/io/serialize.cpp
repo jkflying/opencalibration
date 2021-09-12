@@ -24,9 +24,13 @@ struct Stream
     std::ostream *os = nullptr;
     typedef char Ch;
 
-    static const int buf_capacity = 4096;
+    static const int buf_capacity = 1024 * 1024;
     int buf_idx = 0;
-    Ch buffer[buf_capacity];
+    std::unique_ptr<char[]> buffer;
+
+    Stream() : buffer(new char[buf_capacity])
+    {
+    }
     void Put(Ch ch)
     {
         buffer[buf_idx++] = ch;
@@ -35,7 +39,7 @@ struct Stream
     }
     void Flush()
     {
-        os->write(buffer, buf_idx);
+        os->write(buffer.get(), buf_idx);
         buf_idx = 0;
         os->flush();
     }

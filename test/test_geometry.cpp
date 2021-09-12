@@ -87,7 +87,7 @@ TEST(geometry, ray_intersection_inexact)
 TEST(geometry, plane_conversion)
 {
     // GIVEN: a plane defined by 3 points
-    plane_3_corners p3;
+    plane_3_corners_d p3;
     p3.corner[0] << 0, 0, -2;
     p3.corner[1] << 1, 0, -2;
     p3.corner[2] << 0, 1, -2;

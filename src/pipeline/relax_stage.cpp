@@ -119,9 +119,13 @@ void RelaxStage::trim_groups(size_t max_size)
 std::vector<std::function<void()>> RelaxStage::get_runners(const MeasurementGraph &graph)
 {
     std::vector<std::function<void()>> funcs;
-    for (auto &g : _groups)
+    _surface_models.clear();
+    _surface_models.resize(_groups.size());
+    for (size_t i = 0; i < _groups.size(); i++)
     {
-        funcs.push_back([&]() { g.run(graph); });
+        auto &g = _groups[i];
+        auto &s = _surface_models[i];
+        funcs.push_back([&s, &g, &graph]() { s = g.run(graph); });
     }
     return funcs;
 }
@@ -136,6 +140,11 @@ std::vector<std::vector<size_t>> RelaxStage::finalize(MeasurementGraph &graph)
     }
     _groups.clear();
     return optimized_ids;
+}
+
+const std::vector<surface_model> &RelaxStage::getSurfaceModels()
+{
+    return _surface_models;
 }
 
 } // namespace opencalibration

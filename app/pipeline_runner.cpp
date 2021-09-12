@@ -1,6 +1,7 @@
 #include <opencalibration/performance/performance.hpp>
 #include <opencalibration/pipeline/pipeline.hpp>
 
+#include <opencalibration/io/saveXYZ.hpp>
 #include <opencalibration/io/serialize.hpp>
 
 #include <spdlog/sinks/basic_file_sink.h>
@@ -25,7 +26,8 @@ int main(int argc, char *argv[])
     std::string input_dir = "";
     uint32_t debug_level = 2;
     std::string output_file = "";
-    std::string serialized_output = "";
+    std::string serialized_graph_file = "";
+    std::string pointcloud_file = "";
     std::string log_file = "";
     int batch_size = omp_get_max_threads();
     bool printHelp = false;
@@ -35,7 +37,8 @@ int main(int argc, char *argv[])
     args.addArgument({"-d", "--debug"}, &debug_level, "none=0, critical=1, error=2, warn=3, info=4, debug=5");
     args.addArgument({"-l", "--log-file"}, &log_file, "Output logging file, overwrites existing files");
     args.addArgument({"-g", "--geojson"}, &output_file, "Output geojson file");
-    args.addArgument({"-s", "--serialize"}, &serialized_output, "Serialized camera graph output file");
+    args.addArgument({"-p", "--pointcloud-file"}, &pointcloud_file, "Output pointcloud file");
+    args.addArgument({"-s", "--serialize"}, &serialized_graph_file, "Output serialized camera graph file");
     args.addArgument({"-b", "--batch-size"}, &batch_size, "Processing batch size");
     args.addArgument({"-h", "--help"}, &printHelp, "You must specify at least an input file");
 
@@ -144,18 +147,27 @@ int main(int argc, char *argv[])
         auto to_wgs84 = [&p](const Eigen::Vector3d &local) { return p.getCoord().toWGS84(local); };
 
         std::ofstream output;
-        output.open(output_file, std::ios::out | std::ios::trunc);
+        output.open(output_file, std::ios::binary);
         toVisualizedGeoJson(p.getGraph(), to_wgs84, output);
         output.close();
     }
 
-    if (serialized_output.size() > 0)
+    if (serialized_graph_file.size() > 0)
     {
         std::ofstream output;
-        output.open(serialized_output, std::ios::binary);
+        output.open(serialized_graph_file, std::ios::binary);
         serialize(p.getGraph(), output);
         output.close();
     }
+
+    if (pointcloud_file.size() > 0)
+    {
+        std::ofstream output;
+        output.open(pointcloud_file, std::ios::binary);
+        toXYZ(p.getSurfaces(), output);
+        output.close();
+    }
+
     std::cout << "Complete!" << std::endl;
     std::cout << TotalPerformanceSummary() << std::endl;
 }

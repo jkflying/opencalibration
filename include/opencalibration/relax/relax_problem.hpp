@@ -9,6 +9,7 @@
 #include <opencalibration/types/plane.hpp>
 #include <opencalibration/types/point_cloud.hpp>
 #include <opencalibration/types/relax_options.hpp>
+#include <opencalibration/types/surface_model.hpp>
 
 #include <ceres/local_parameterization.h>
 #include <ceres/loss_function.h>
@@ -54,6 +55,8 @@ class RelaxProblem
     void relaxObservedModelOnly(); // only 3d points and ground plane
     void solve();
 
+    surface_model getSurfaceModel();
+
   protected:
     void initialize(std::vector<NodePose> &nodes, std::unordered_map<size_t, CameraModel> &cam_models);
     bool shouldAddEdgeToOptimization(const std::unordered_set<size_t> &edges_to_optimize, size_t edge_id);
@@ -74,8 +77,6 @@ class RelaxProblem
     void initializeGroundPlane();
 
     void addDownwardsPrior();
-
-    void *_log_forwarder_dependency;
 
     ceres::Solver::Options _solver_options;
     ceres::LossFunctionWrapper _loss;
@@ -100,7 +101,7 @@ class RelaxProblem
 
     // Surface models
     using track_vec = std::vector<FeatureTrack, Eigen::aligned_allocator<FeatureTrack>>;
-    plane_3_corners<double> _global_plane;
+    plane_3_corners_d _global_plane;
     std::unordered_map<size_t, track_vec> _edge_tracks;
 };
 

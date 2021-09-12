@@ -115,9 +115,9 @@ void RelaxGroup::build_optimization_edges(const MeasurementGraph &graph,
     }
 }
 
-void RelaxGroup::run(const MeasurementGraph &graph)
+surface_model opencalibration::RelaxGroup::run(const MeasurementGraph &graph)
 {
-    relax(graph, _local_poses, _camera_models, _edges_to_optimize, _relax_options);
+    return relax(graph, _local_poses, _camera_models, _edges_to_optimize, _relax_options);
 }
 
 std::vector<size_t> RelaxGroup::finalize(MeasurementGraph &graph)
