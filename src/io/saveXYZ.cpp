@@ -73,7 +73,7 @@ std::array<std::pair<int64_t, int64_t>, 3> filterOutliers(const std::vector<surf
         counts.insert(counts.end(), count_map.begin(), count_map.end());
         std::sort(counts.begin(), counts.end());
 
-        const size_t cutoff = total * 0.05;
+        const size_t cutoff = total * 0.025;
 
         size_t lowSum = 0, lowIndex = 0;
         while (lowIndex < counts.size() && lowSum < cutoff)
@@ -88,7 +88,7 @@ std::array<std::pair<int64_t, int64_t>, 3> filterOutliers(const std::vector<surf
         }
 
         int64_t lowBound = counts[lowIndex].first, highBound = counts[highIndex].first;
-        int64_t width = (highBound - lowBound);
+        int64_t width = (highBound - lowBound) * 2;
         int64_t mid = lowBound + width / 2;
 
         return {mid - width, mid + width};

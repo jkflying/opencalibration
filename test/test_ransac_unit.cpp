@@ -4,7 +4,7 @@
 
 using namespace opencalibration;
 
-TEST(ransac, homography_ransac_compiles)
+TEST(ransac_homography, ransac_compiles)
 {
     // GIVEN: some empty data
     std::vector<correspondence> matches;
@@ -19,7 +19,7 @@ TEST(ransac, homography_ransac_compiles)
     EXPECT_EQ(inliers.size(), 0);
 }
 
-TEST(ransac, homography_fits_identity)
+TEST(ransac_homography, fits_identity)
 {
     // GIVEN: 4 correspondences, from square A to square B when A == B
     std::vector<correspondence> matches;
@@ -51,6 +51,62 @@ TEST(ransac, homography_fits_identity)
     EXPECT_NEAR(Eigen::AngleAxisd(poses[0].orientation).angle(), 0, 1e-14);
 }
 
+TEST(ransac_fundamental_matrix, ransac_compiles)
+{
+    // GIVEN: some empty data
+    std::vector<correspondence> matches;
+    fundamental_matrix_model model;
+    std::vector<bool> inliers;
+
+    // WHEN: we get the ransac
+    double score = ransac(matches, model, inliers);
+
+    // THEN: it should have 0 score, no inliers
+    EXPECT_EQ(score, 0);
+    EXPECT_EQ(inliers.size(), 0);
+}
+
+TEST(ransac_fundamental_matrix, fits_identity)
+{
+    // GIVEN: 4 correspondences, from square A to square B when A == B
+    std::vector<correspondence> matches;
+    matches.push_back(correspondence{Eigen::Vector3d{1, 2, 1}, Eigen::Vector3d{1, 2, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{2, 2, 1}, Eigen::Vector3d{2, 2, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{2, 1, 1}, Eigen::Vector3d{2, 1, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{1, 1, 1}, Eigen::Vector3d{1, 1, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{1, 2, 3}, Eigen::Vector3d{1, 2, 3}});
+    matches.push_back(correspondence{Eigen::Vector3d{2, 2, 2}, Eigen::Vector3d{2, 2, 2}});
+    matches.push_back(correspondence{Eigen::Vector3d{2, 1, 3}, Eigen::Vector3d{2, 1, 3}});
+    matches.push_back(correspondence{Eigen::Vector3d{1, 1, 2}, Eigen::Vector3d{1, 1, 2}});
+    for (auto &m : matches)
+    {
+        m.measurement1.normalize();
+        m.measurement2.normalize();
+    }
+
+    fundamental_matrix_model model;
+    std::vector<bool> inliers;
+
+    // WHEN: we get the ransac model
+    double score = ransac(matches, model, inliers);
+
+    // THEN: it should have a 1 score because we only have 100% inliers
+    EXPECT_DOUBLE_EQ(score, 1);
+
+    // AND: the model should be correct, and all the points inliers, and the model an identity
+    EXPECT_EQ(inliers.size(), 8);
+    EXPECT_EQ(std::count(inliers.begin(), inliers.end(), true), 8);
+    EXPECT_NEAR(model.fundamental_matrix.norm(), 1, 1e-14) << model.fundamental_matrix;
+
+    double total_error = 0;
+    for (const auto &m : matches)
+    {
+        total_error += model.error(m);
+    }
+
+    EXPECT_NEAR(total_error, 0, 1e-10);
+}
+
 class ransac_p : public ::testing::TestWithParam<std::tuple<Eigen::Quaterniond, Eigen::Vector3d>>
 {
 };
@@ -80,8 +136,6 @@ TEST_P(ransac_p, homography_rotation_translation)
             Eigen::Vector3d p(i > 0 ? -1 : 1, j > 0 ? -1 : 1, 0);
             Eigen::Vector3d pers = perspective(p, down, Eigen::Vector3d::Zero()), pers_rt = perspective(p, R * down, T);
             matches.push_back(correspondence{pers_rt, pers});
-            //             std::cout << "p: " << p.transpose() << "  pers: " << pers.transpose() << "  pers_rt: " <<
-            //             pers_rt.transpose() << std::endl;
         }
     }
 
@@ -130,8 +184,4 @@ INSTANTIATE_TEST_SUITE_P(
                                        //  Eigen::Quaterniond(Eigen::AngleAxisd(-0.2, Eigen::Vector3d::UnitY()))
                                        ),
                        testing::Values(Eigen::Vector3d::Zero(), Eigen::Vector3d(1, 0, 0), Eigen::Vector3d(1, -1, 0),
-                                       Eigen::Vector3d(-1, 1, 0), Eigen::Vector3d(-1, -1, 0)
-
-                                           )
-
-                           ));
+                                       Eigen::Vector3d(-1, 1, 0), Eigen::Vector3d(-1, -1, 0))));

@@ -214,6 +214,10 @@ template <> class Deserializer<MeasurementGraph>
                     {
                         relations.relationType = camera_relations::RelationType::HOMOGRAPHY;
                     }
+                    else if (rel_type == "fundamental_matrix")
+                    {
+                        relations.relationType = camera_relations::RelationType::FUNDAMENTAL_MATRIX;
+                    }
                     else
                     {
                         relations.relationType = camera_relations::RelationType::UNKNOWN;

@@ -18,9 +18,17 @@ template <typename T> class GridFilter
     }
 
   public:
-    GridFilter(double grid_resolution = 0.1) : _grid_resolution(grid_resolution)
+    GridFilter(double grid_resolution = 0.075) : _grid_resolution(grid_resolution)
     {
         _map.reserve(static_cast<size_t>(1 / (grid_resolution * grid_resolution)));
+    }
+
+    void setResolution(double grid_resolution)
+    {
+        if (_map.size() == 0)
+        {
+            _grid_resolution = grid_resolution;
+        }
     }
 
     void addMeasurement(double x, double y, double score, const T &value)

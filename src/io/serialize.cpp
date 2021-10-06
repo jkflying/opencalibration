@@ -519,6 +519,9 @@ template <> class Serializer<MeasurementGraph>
                     case camera_relations::RelationType::HOMOGRAPHY:
                         writer.String("homography");
                         break;
+                    case camera_relations::RelationType::FUNDAMENTAL_MATRIX:
+                        writer.String("fundamental_matrix");
+                        break;
                     case camera_relations::RelationType::UNKNOWN:
                         writer.String("UNKNOWN");
                         break;

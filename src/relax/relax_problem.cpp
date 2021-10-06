@@ -55,7 +55,7 @@ void RelaxProblem::setupGroundPlaneProblem(const MeasurementGraph &graph, std::v
     initialize(nodes, cam_models);
     initializeGroundPlane();
     _loss.Reset(new ceres::HuberLoss(1 * M_PI / 180), ceres::TAKE_OWNERSHIP);
-    gridFilterMatchesPerImage(graph, edges_to_optimize);
+    gridFilterMatchesPerImage(graph, edges_to_optimize, 0.15);
 
     for (size_t edge_id : edges_to_optimize)
     {
@@ -77,7 +77,7 @@ void RelaxProblem::setup3dPointProblem(const MeasurementGraph &graph, std::vecto
     initialize(nodes, cam_models);
     _loss.Reset(new ceres::HuberLoss(10), ceres::TAKE_OWNERSHIP);
 
-    gridFilterMatchesPerImage(graph, edges_to_optimize);
+    gridFilterMatchesPerImage(graph, edges_to_optimize, 0.05);
 
     for (size_t edge_id : edges_to_optimize)
     {
@@ -178,7 +178,8 @@ OptimizationPackage::PoseOpt RelaxProblem::nodeid2poseopt(const MeasurementGraph
 }
 
 void RelaxProblem::gridFilterMatchesPerImage(const MeasurementGraph &graph,
-                                             const std::unordered_set<size_t> &edges_to_optimize)
+                                             const std::unordered_set<size_t> &edges_to_optimize,
+                                             double grid_cell_image_fraction)
 {
     for (size_t edge_id : edges_to_optimize)
     {
@@ -202,8 +203,10 @@ void RelaxProblem::gridFilterMatchesPerImage(const MeasurementGraph &graph,
         Eigen::Matrix3d source_rot = pkg.source.rot_ptr->toRotationMatrix();
         Eigen::Matrix3d dest_rot = pkg.dest.rot_ptr->toRotationMatrix();
 
-        auto &source_filter = _grid_filter[edge.getSource()];
-        auto &dest_filter = _grid_filter[edge.getDest()];
+        auto &source_filter = _grid_filter[edge.getSource()][edge_id];
+        auto &dest_filter = _grid_filter[edge.getDest()][edge_id];
+        source_filter.setResolution(grid_cell_image_fraction);
+        dest_filter.setResolution(grid_cell_image_fraction);
 
         for (const auto &inlier : edge.payload.inlier_matches)
         {
@@ -281,8 +284,8 @@ void RelaxProblem::addGlobalPlaneMeasurementsCost(const MeasurementGraph &graph,
     const auto &source_model = *pkg.source.model_ptr;
     const auto &dest_model = *pkg.dest.model_ptr;
 
-    const auto &source_whitelist = _grid_filter[edge.getSource()].getBestMeasurementsPerCell();
-    const auto &dest_whitelist = _grid_filter[edge.getDest()].getBestMeasurementsPerCell();
+    const auto &source_whitelist = _grid_filter[edge.getSource()][edge_id].getBestMeasurementsPerCell();
+    const auto &dest_whitelist = _grid_filter[edge.getDest()][edge_id].getBestMeasurementsPerCell();
 
     double *datas[5] = {pkg.source.rot_ptr->coeffs().data(), pkg.dest.rot_ptr->coeffs().data(),
                         &_global_plane.corner[0].z(), &_global_plane.corner[1].z(), &_global_plane.corner[2].z()};
@@ -388,8 +391,8 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
     auto &source_model = *pkg.source.model_ptr;
     auto &dest_model = *pkg.dest.model_ptr;
 
-    const auto &source_whitelist = _grid_filter[edge.getSource()].getBestMeasurementsPerCell();
-    const auto &dest_whitelist = _grid_filter[edge.getDest()].getBestMeasurementsPerCell();
+    const auto &source_whitelist = _grid_filter[edge.getSource()][edge_id].getBestMeasurementsPerCell();
+    const auto &dest_whitelist = _grid_filter[edge.getDest()][edge_id].getBestMeasurementsPerCell();
 
     double *orientation_ptrs[2] = {pkg.source.rot_ptr->coeffs().data(), pkg.dest.rot_ptr->coeffs().data()};
     bool points_added = false;
@@ -398,7 +401,9 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
 
         if (source_whitelist.find(&inlier) == source_whitelist.end() &&
             dest_whitelist.find(&inlier) == dest_whitelist.end())
+        {
             continue;
+        }
 
         // make 3D intersection, add it to `points`
         auto intersection = rayIntersection(source_model, dest_model, *pkg.source.loc_ptr, *pkg.dest.loc_ptr,

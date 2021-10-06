@@ -66,7 +66,8 @@ class RelaxProblem
 
     void addRelationCost(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge);
 
-    void gridFilterMatchesPerImage(const MeasurementGraph &graph, const std::unordered_set<size_t> &edges_to_optimize);
+    void gridFilterMatchesPerImage(const MeasurementGraph &graph, const std::unordered_set<size_t> &edges_to_optimize,
+                                   double grid_cell_image_fraction);
 
     void addPointMeasurementsCost(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge,
                                   const RelaxOptionSet &options);
@@ -90,7 +91,7 @@ class RelaxProblem
 
     std::unique_ptr<ceres::Problem> _problem;
 
-    std::unordered_map<size_t, GridFilter<const feature_match_denormalized *>> _grid_filter;
+    std::unordered_map<size_t, std::unordered_map<size_t, GridFilter<const feature_match_denormalized *>>> _grid_filter;
 
     ceres::Solver::Summary _summary;
     ceres::Solver _solver;

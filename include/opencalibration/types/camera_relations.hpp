@@ -19,6 +19,7 @@ struct camera_relations
     enum class RelationType
     {
         HOMOGRAPHY,
+        FUNDAMENTAL_MATRIX,
         UNKNOWN
     } relationType = RelationType::HOMOGRAPHY;
 

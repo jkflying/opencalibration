@@ -157,20 +157,22 @@ std::vector<size_t> RelaxGroup::finalize(MeasurementGraph &graph)
                 distort_keypoints(source->payload.features, dest->payload.features, edge.payload.matches,
                                   *source->payload.model, *dest->payload.model);
 
-            homography_model h;
-            h.homography = edge.payload.ransac_relation;
             std::vector<bool> inliers(correspondences.size(), false);
 
             for (const auto &old_inlier : edge.payload.inlier_matches)
             {
                 inliers[old_inlier.match_index] = true;
             }
+
+            // do a sort of 'maximum likelihood' based on the previous inliers
+            homography_model h;
             for (int i = 0; i < 3; i++)
             {
                 h.fitInliers(correspondences, inliers);
                 h.evaluate(correspondences, inliers);
             }
             edge.payload.ransac_relation = h.homography;
+            edge.payload.relationType = camera_relations::RelationType::HOMOGRAPHY;
 
             bool can_decompose = h.decompose(correspondences, inliers, edge.payload.relative_poses);
             size_t num_inliers = std::count(inliers.begin(), inliers.end(), true);
