@@ -163,12 +163,17 @@ std::pair<Eigen::Vector3d, double> rayIntersection(const CameraModel &model1, Ca
     ray_d ray1{rot1 * image_to_3d(px1, model1), pos1};
     ray_d ray2{rot2 * image_to_3d(px2, model2), pos2};
 
-    auto initial_guess = rayIntersection(ray1, ray2);
+    std::pair<Eigen::Vector3d, double> initial_guess = rayIntersection(ray1, ray2);
 
     const twin_pixel_cost_functor func{pixel_cost_functor(model1, pos1, rot1, px1),
                                        pixel_cost_functor(model2, pos2, rot2, px2)};
 
     ceres::TinySolver<twin_pixel_cost_functor> solver;
+    solver.options.max_num_iterations = 50;
+    solver.options.cost_threshold = 1e-7;
+    solver.options.parameter_tolerance = 1e-14;
+    solver.options.gradient_tolerance = 1e-12;
+    solver.options.initial_trust_region_radius = 1e6;
 
     const auto &summary = solver.Solve(func, &initial_guess.first);
     initial_guess.second = summary.final_cost;
