@@ -41,7 +41,7 @@ target_link_libraries(unit_tests PUBLIC gtest pthread oc_geo_coord
 add_custom_target(test
                   COMMAND ${CMAKE_BINARY_DIR}/test/functional_tests
                   COMMAND ${CMAKE_BINARY_DIR}/test/unit_tests
-                  COMMAND ${CMAKE_BINARY_DIR}/app/pipeline_runner -i "${CMAKE_CURRENT_SOURCE_DIR}/test_data/" -g test_data.geojson -d 4
+                  COMMAND ${CMAKE_BINARY_DIR}/app/pipeline_runner -i "${CMAKE_CURRENT_SOURCE_DIR}/test_data/" -g test_data.geojson -d 4 -s test_data.json -p test_data.xyz
                   DEPENDS functional_tests unit_tests pipeline_runner)
 
 if ("${CMAKE_BUILD_TYPE}" STREQUAL "Coverage")
