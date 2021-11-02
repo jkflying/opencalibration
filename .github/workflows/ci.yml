@@ -30,4 +30,7 @@ jobs:
     - name: Coverage Test
       run: cd build && ninja test_coverage_html
     - name: upload to codecov
-      run:  bash <(curl -s https://codecov.io/bash) -f build/test/clean_coverage.info
+      run:  |
+        curl -Os https://uploader.codecov.io/latest/linux/codecov
+        chmod +x codecov
+        ./codecov -f build/test/clean_coverage.info
