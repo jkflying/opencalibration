@@ -173,6 +173,8 @@ template <> class Deserializer<MeasurementGraph>
                     size_t source = std::strtoull(eiter->value.GetObject()["source"].GetString(), &end, 10);
                     size_t dest = std::strtoull(eiter->value.GetObject()["dest"].GetString(), &end, 10);
 
+                    graph._edge_id_from_nodes_lookup.emplace(MeasurementGraph::SourceDestIndex{source, dest}, edge_id);
+
                     camera_relations relations;
                     const auto &matches = eiter->value.GetObject()["matches"].GetArray();
                     relations.matches.reserve(matches.Size());

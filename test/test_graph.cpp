@@ -9,6 +9,18 @@ TEST(graph, compiles)
     DirectedGraph<int, int> g;
 }
 
+TEST(graph, can_reset)
+{
+    DirectedGraph<int, int> g;
+    g.addNode(42);
+
+    EXPECT_EQ(g.size_nodes(), 1);
+
+    g = DirectedGraph<int, int>();
+
+    EXPECT_EQ(g.size_nodes(), 0);
+}
+
 TEST(graph, add_node)
 {
     // GIVEN: a graph
@@ -44,4 +56,12 @@ TEST(graph, add_nodes_and_edge)
 
     auto g2 = g;
     EXPECT_EQ(g2, g);
+
+    // THEN: the edge at the two node ids should be the same too
+    const auto *edge2 = g.getEdge(node_id, node_id2);
+    EXPECT_EQ(edge_val, edge2);
+
+    const auto &g3 = g;
+    const auto *edge3 = g3.getEdge(node_id, node_id2);
+    EXPECT_EQ(edge_val, edge3);
 }

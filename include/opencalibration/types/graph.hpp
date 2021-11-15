@@ -13,6 +13,8 @@ template <typename T> class Deserializer;
 
 template <typename NodePayload, typename EdgePayload> class DirectedGraph
 {
+    struct SourceDestIndex;
+
   public:
     class Node
     {
@@ -91,6 +93,7 @@ template <typename NodePayload, typename EdgePayload> class DirectedGraph
 
         _nodes.find(source)->second._edges.push_back(identifier);
         _nodes.find(dest)->second._edges.push_back(identifier);
+        _edge_id_from_nodes_lookup.emplace(SourceDestIndex{source, dest}, identifier);
 
         return identifier;
     }
@@ -133,6 +136,28 @@ template <typename NodePayload, typename EdgePayload> class DirectedGraph
             return nullptr;
         }
         return &(iter->second);
+    }
+
+    const Edge *getEdge(size_t source_node_id, size_t dest_node_id) const
+    {
+        SourceDestIndex idx{source_node_id, dest_node_id};
+        auto iter = _edge_id_from_nodes_lookup.find(idx);
+        if (iter != _edge_id_from_nodes_lookup.end())
+        {
+            return getEdge(iter->second);
+        }
+        return nullptr;
+    }
+
+    Edge *getEdge(size_t source_node_id, size_t dest_node_id)
+    {
+        SourceDestIndex idx{source_node_id, dest_node_id};
+        auto iter = _edge_id_from_nodes_lookup.find(idx);
+        if (iter != _edge_id_from_nodes_lookup.end())
+        {
+            return getEdge(iter->second);
+        }
+        return nullptr;
     }
 
     bool removeNode(size_t identifier);
@@ -180,7 +205,8 @@ template <typename NodePayload, typename EdgePayload> class DirectedGraph
 
     bool operator==(const DirectedGraph &other) const
     {
-        return _nodes == other._nodes && _edges == other._edges;
+        return _nodes == other._nodes && _edges == other._edges &&
+               _edge_id_from_nodes_lookup == other._edge_id_from_nodes_lookup;
     }
 
     size_t size_nodes() const
@@ -193,10 +219,27 @@ template <typename NodePayload, typename EdgePayload> class DirectedGraph
     }
 
   private:
+    struct SourceDestIndex
+    {
+        size_t source_id, dest_id;
+
+        bool operator==(const SourceDestIndex &other) const
+        {
+            return source_id == other.source_id && dest_id == other.dest_id;
+        }
+
+        // hash operator
+        size_t operator()(const SourceDestIndex &x) const
+        {
+            return x.source_id ^ x.dest_id;
+        }
+    };
+
     std::default_random_engine generator;
     std::uniform_int_distribution<size_t> distribution;
     std::unordered_map<size_t, Node> _nodes;
     std::unordered_map<size_t, Edge> _edges;
+    std::unordered_map<SourceDestIndex, size_t, SourceDestIndex> _edge_id_from_nodes_lookup;
 
     friend Serializer<DirectedGraph>;
     friend Deserializer<DirectedGraph>;

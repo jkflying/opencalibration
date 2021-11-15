@@ -18,6 +18,12 @@ struct NodeIdFeatureIndex
     {
         return std::make_pair(node_id, feature_index) < std::make_pair(nifi.node_id, nifi.feature_index);
     }
+
+    // hash operator
+    std::size_t operator()(opencalibration::NodeIdFeatureIndex const &nifi) const
+    {
+        return nifi.node_id ^ nifi.feature_index; // random number XOR incrementing number is safe and fast
+    }
 };
 
 struct FeatureTrack
@@ -28,16 +34,3 @@ struct FeatureTrack
 };
 
 } // namespace opencalibration
-
-namespace std
-{
-
-template <> struct hash<opencalibration::NodeIdFeatureIndex>
-{
-    std::size_t operator()(opencalibration::NodeIdFeatureIndex const &nifi) const noexcept
-    {
-        return nifi.node_id ^ nifi.feature_index; // random number XOR incrementing number is safe and fast
-    }
-};
-
-} // namespace std
