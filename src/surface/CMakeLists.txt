@@ -1,0 +1,5 @@
+add_library(oc_surface expand_mesh.cpp
+                       #refine_mesh.cpp
+                       )
+target_link_libraries(oc_surface PUBLIC spdlog::spdlog)
+target_include_directories(oc_surface PRIVATE ${PROJECT_SOURCE_DIR}/external/jk-tree/include)

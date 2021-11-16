@@ -29,6 +29,7 @@ add_executable(unit_tests gtest_main.cpp
                           test_geo_coord.cpp
                           test_geometry.cpp
                           test_graph.cpp
+                          test_meshgraph.cpp
                           test_ransac_unit.cpp
                           test_relax.cpp
                           test_tree.cpp)
@@ -36,7 +37,8 @@ add_executable(unit_tests gtest_main.cpp
 target_link_libraries(unit_tests PUBLIC gtest pthread oc_geo_coord
                                                       oc_geometry
                                                       oc_model_inliers
-                                                      oc_relax)
+                                                      oc_relax
+                                                      oc_surface)
 
 add_custom_target(test
                   COMMAND ${CMAKE_BINARY_DIR}/test/functional_tests
