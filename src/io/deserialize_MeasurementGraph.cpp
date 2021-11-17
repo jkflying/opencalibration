@@ -2,6 +2,7 @@
 
 #include "base64.h"
 
+#define RAPIDJSON_HAS_STDSTRING 1
 #define RAPIDJSON_PARSE_DEFAULT_FLAGS (kParseFullPrecisionFlag | kParseNanAndInfFlag)
 
 #include <rapidjson/document.h>
@@ -38,7 +39,7 @@ template <> class Deserializer<MeasurementGraph>
         std::unordered_map<size_t, std::shared_ptr<CameraModel>> camera_models;
 
         DocumentType d(&valueAllocator, sizeof(parseBuffer), &parseAllocator);
-        d.Parse(json.c_str());
+        d.Parse(json);
 
         bool parsed = false;
         char *end = nullptr;
@@ -101,7 +102,7 @@ template <> class Deserializer<MeasurementGraph>
                     const auto &edge_ids = niter->value.GetObject()["edges"].GetArray();
                     for (const auto &edge_id : edge_ids)
                     {
-                        node._edges.push_back(std::strtoull(edge_id.GetString(), &end, 10));
+                        node._edges.insert(std::strtoull(edge_id.GetString(), &end, 10));
                     }
 
                     {

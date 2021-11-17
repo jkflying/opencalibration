@@ -2,10 +2,13 @@
 
 #include "base64.h"
 
+#define RAPIDJSON_HAS_STDSTRING 1
 #define RAPIDJSON_WRITE_DEFAULT_FLAGS kWriteNanAndInfFlag
 #include <rapidjson/document.h>
 #include <rapidjson/prettywriter.h>
 #include <rapidjson/stringbuffer.h>
+
+#include <unordered_set>
 
 namespace
 {
@@ -307,7 +310,10 @@ template <> class Serializer<MeasurementGraph>
 
                 writer.Key("edges");
                 writer.StartArray();
-                for (const auto &edge : node.getEdges())
+                std::vector<size_t> sortedEdges;
+                sortedEdges.insert(sortedEdges.end(), node.getEdges().begin(), node.getEdges().end());
+                std::sort(sortedEdges.begin(), sortedEdges.end());
+                for (const auto &edge : sortedEdges)
                 {
                     std::string edge_id = std::to_string(edge);
                     writer.String(edge_id.c_str(), edge_id.size());
@@ -565,6 +571,7 @@ template <> class Serializer<MeasurementGraph>
         return true;
     }
 };
+
 bool serialize(const MeasurementGraph &graph, std::ostream &out)
 {
     return Serializer<MeasurementGraph>::to_json(graph, out);

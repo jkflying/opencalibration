@@ -5,6 +5,7 @@
 #include <optional>
 #include <random>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace opencalibration
 {
@@ -25,7 +26,7 @@ template <typename NodePayload, typename EdgePayload> class DirectedGraph
 
         NodePayload payload;
 
-        const std::deque<size_t> &getEdges() const
+        const std::unordered_set<size_t> &getEdges() const
         {
             return _edges;
         }
@@ -36,7 +37,7 @@ template <typename NodePayload, typename EdgePayload> class DirectedGraph
         }
 
       private:
-        std::deque<size_t> _edges;
+        std::unordered_set<size_t> _edges;
         friend DirectedGraph;
 
         friend Serializer<DirectedGraph>;
@@ -91,8 +92,8 @@ template <typename NodePayload, typename EdgePayload> class DirectedGraph
             identifier = distribution(generator);
         }
 
-        _nodes.find(source)->second._edges.push_back(identifier);
-        _nodes.find(dest)->second._edges.push_back(identifier);
+        _nodes.find(source)->second._edges.insert(identifier);
+        _nodes.find(dest)->second._edges.insert(identifier);
         _edge_id_from_nodes_lookup.emplace(SourceDestIndex{source, dest}, identifier);
 
         return identifier;

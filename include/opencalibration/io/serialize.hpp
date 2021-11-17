@@ -1,12 +1,15 @@
 #pragma once
 
 #include <opencalibration/types/measurement_graph.hpp>
+#include <opencalibration/types/mesh_graph.hpp>
 
 #include <iosfwd>
 
 namespace opencalibration
 {
 bool serialize(const MeasurementGraph &graph, std::ostream &out);
+
+bool serialize(const MeshGraph &graph, std::ostream &out);
 
 bool toVisualizedGeoJson(const MeasurementGraph &graph,
                          std::function<Eigen::Vector3d(const Eigen::Vector3d &)> toGlobalCoordinates,

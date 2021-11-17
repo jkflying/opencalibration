@@ -17,7 +17,8 @@ target_link_libraries(functional_tests PUBLIC gtest pthread oc_distort
                                                             oc_io
                                                             oc_match
                                                             oc_model_inliers
-                                                            oc_pipeline)
+                                                            oc_pipeline
+                                                            oc_surface)
 
 target_compile_definitions(functional_tests PUBLIC TEST_DATA_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/test_data/\"
                                                    TEST_DATA_OUTPUT_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/test_output/\"
