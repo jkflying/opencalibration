@@ -119,6 +119,71 @@ TEST(geometry, ray_plane_intersection)
     EXPECT_NEAR(0, (Eigen::Vector3d(3, 3, 2) - i).norm(), 1e-9);
 }
 
+TEST(geometry, ray_triangle_intersection)
+{
+    // GIVEN: a plane defined by 3 points, and a ray through it
+    plane_3_corners_d p3;
+    p3.corner[0] << 0, 0, -2;
+    p3.corner[1] << 10, 0, -2;
+    p3.corner[2] << 0, 10, -2;
+
+    ray_d r;
+    r.dir << 0, 0, 0.5;
+    r.offset << 0.5, 0.5, -10;
+
+    // WHEN: we test the intersection
+    Eigen::Vector3d intersectionPoint;
+    bool intersects = rayTriangleIntersection(r, p3, intersectionPoint);
+
+    // THEN: it should intersect, and at the right place
+    EXPECT_TRUE(intersects);
+    Eigen::Vector3d expectedIntersectionPoint(0.5, 0.5, -2);
+    EXPECT_NEAR((intersectionPoint - expectedIntersectionPoint).norm(), 0, 1e-9) << intersectionPoint.transpose();
+}
+
+TEST(geometry, ray_triangle_intersection_parallel)
+{
+    // GIVEN: a plane defined by 3 points, and a ray parallel to it
+    plane_3_corners_d p3;
+    p3.corner[0] << 0, 0, -2;
+    p3.corner[1] << 10, 0, -2;
+    p3.corner[2] << 0, 10, -2;
+
+    ray_d r;
+    r.dir << 1, 0, 0;
+    r.offset << 0.5, 0.5, -10;
+
+    // WHEN: we test the intersection
+    Eigen::Vector3d intersectionPoint;
+    bool intersects = rayTriangleIntersection(r, p3, intersectionPoint);
+
+    // THEN: it should not intersect, and the intersection point should be NaN
+    EXPECT_FALSE(intersects);
+    EXPECT_TRUE(intersectionPoint.array().isNaN().all());
+}
+
+TEST(geometry, ray_triangle_intersection_outside)
+{
+    // GIVEN: a plane defined by 3 points, and a ray that goes *not* through it
+    plane_3_corners_d p3;
+    p3.corner[0] << 0, 0, -2;
+    p3.corner[1] << 10, 0, -2;
+    p3.corner[2] << 0, 10, -2;
+
+    ray_d r;
+    r.dir << 0, 0, 0.5;
+    r.offset << -10, -10, -10;
+
+    // WHEN: we test the intersection
+    Eigen::Vector3d intersectionPoint;
+    bool intersects = rayTriangleIntersection(r, p3, intersectionPoint);
+
+    // THEN: it should *NOT* intersect, and at ray-plane intersection should be at the right place
+    EXPECT_FALSE(intersects);
+    Eigen::Vector3d expectedIntersectionPoint(-10, -10, -2);
+    EXPECT_NEAR((intersectionPoint - expectedIntersectionPoint).norm(), 0, 1e-9) << intersectionPoint.transpose();
+}
+
 TEST(kmeans, clusters)
 {
     opencalibration::KMeans<size_t, 2> kmeans(4);

@@ -37,4 +37,54 @@ typename Eigen::Matrix<T, 3, 1> rayPlaneIntersection(const ray<T> &r, const plan
     T t = (p.norm.dot(p.offset) - r.offset.dot(p.norm)) / p.norm.dot(r.dir);
     return r.offset + t * r.dir;
 }
+
+template <typename T>
+bool rayTriangleIntersection(const ray<T> &ray, const plane_3_corners<T> &triangle,
+                             typename Eigen::Matrix<T, 3, 1> &intersectionPoint)
+{
+    T eps(1e-9);
+
+    auto edge1 = triangle.corner[1] - triangle.corner[0];
+    auto edge2 = triangle.corner[2] - triangle.corner[0];
+
+    auto h = ray.dir.cross(edge2);
+
+    T a = edge1.dot(h);
+
+    if (a > -eps && a < eps)
+    {
+        intersectionPoint.fill(T(NAN));
+        return false;
+    }
+
+    T f = 1 / a;
+
+    bool failed = false;
+
+    auto s = ray.offset - triangle.corner[0];
+
+    T u = f * s.dot(h);
+    if (u < T(0) || u > T(1))
+    {
+        failed = true;
+    }
+
+    auto q = s.cross(edge1);
+    T v = f * ray.dir.dot(q);
+    if (v < T(0) || v > T(1))
+    {
+        failed = true;
+    }
+
+    T t = f * edge2.dot(q);
+
+    if (t < eps)
+    {
+        failed = true;
+    }
+
+    intersectionPoint = ray.offset + ray.dir * t;
+
+    return !failed;
+}
 } // namespace opencalibration
