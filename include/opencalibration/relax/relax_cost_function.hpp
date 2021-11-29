@@ -392,8 +392,9 @@ struct PlaneIntersectionAngleCost
         plane_norm_offset<T> pno = cornerPlane2normOffsetPlane(plane3);
 
         Vector3T intersection[2];
+        bool intersections = true;
         for (int i = 0; i < 2; i++)
-            intersection[i] = rayPlaneIntersection(rays[i], pno);
+            intersections &= rayPlaneIntersection(rays[i], pno, intersection[i]);
 
         Vector3T distance_error = intersection[0] - intersection[1];
         T avg_dist = ((intersection[0] - camera_loc[0]).norm() + (intersection[1] - camera_loc[1]).norm()) * T(0.5);
@@ -402,7 +403,7 @@ struct PlaneIntersectionAngleCost
         Vector3TM final_error(residuals);
         final_error = angle_error;
 
-        return true;
+        return intersections;
     }
 
   private:

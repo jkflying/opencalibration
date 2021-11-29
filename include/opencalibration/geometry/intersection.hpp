@@ -32,59 +32,51 @@ template <typename T> plane_norm_offset<T> cornerPlane2normOffsetPlane(const pla
 }
 
 template <typename T>
-typename Eigen::Matrix<T, 3, 1> rayPlaneIntersection(const ray<T> &r, const plane_norm_offset<T> &p)
+bool rayPlaneIntersection(const ray<T> &r, const plane_norm_offset<T> &p,
+                          typename Eigen::Matrix<T, 3, 1> &intersectionPoint)
 {
-    T t = (p.norm.dot(p.offset) - r.offset.dot(p.norm)) / p.norm.dot(r.dir);
-    return r.offset + t * r.dir;
+    const T denom = p.norm.dot(r.dir);
+    if (abs(denom) < T(1e-9))
+    {
+        intersectionPoint.fill(T(NAN));
+        return false;
+    }
+    const T t = (p.norm.dot(p.offset) - r.offset.dot(p.norm)) / denom;
+    intersectionPoint = r.offset + t * r.dir;
+    return true;
+}
+
+template <typename T, typename R = Eigen::Matrix<T, 3, 1>>
+bool onSameSideOfEdge(const R &vertex0, const R &vertex1, const R &reference, const R &test)
+{
+    const auto edgeDir = vertex1 - vertex0;
+    const auto rawDir = reference - vertex0;
+    const auto perpDir = rawDir - edgeDir * (rawDir.dot(edgeDir) / edgeDir.squaredNorm()); // fast but bad numerically
+    const auto testDir = test - vertex0;
+    const T result = testDir.dot(perpDir);
+    return result > 0;
+}
+
+template <typename T>
+bool pointInsideTriangle(const typename Eigen::Matrix<T, 3, 1> &point, const plane_3_corners<T> &triangle)
+{
+    bool inside = true;
+
+    for (size_t i = 0; i < 3; i++)
+    {
+        inside &=
+            onSameSideOfEdge<T>(triangle.corner[i], triangle.corner[(i + 1) % 3], triangle.corner[(i + 2) % 3], point);
+    }
+
+    return inside;
 }
 
 template <typename T>
 bool rayTriangleIntersection(const ray<T> &ray, const plane_3_corners<T> &triangle,
                              typename Eigen::Matrix<T, 3, 1> &intersectionPoint)
 {
-    T eps(1e-9);
-
-    auto edge1 = triangle.corner[1] - triangle.corner[0];
-    auto edge2 = triangle.corner[2] - triangle.corner[0];
-
-    auto h = ray.dir.cross(edge2);
-
-    T a = edge1.dot(h);
-
-    if (a > -eps && a < eps)
-    {
-        intersectionPoint.fill(T(NAN));
-        return false;
-    }
-
-    T f = 1 / a;
-
-    bool failed = false;
-
-    auto s = ray.offset - triangle.corner[0];
-
-    T u = f * s.dot(h);
-    if (u < T(0) || u > T(1))
-    {
-        failed = true;
-    }
-
-    auto q = s.cross(edge1);
-    T v = f * ray.dir.dot(q);
-    if (v < T(0) || v > T(1))
-    {
-        failed = true;
-    }
-
-    T t = f * edge2.dot(q);
-
-    if (t < eps)
-    {
-        failed = true;
-    }
-
-    intersectionPoint = ray.offset + ray.dir * t;
-
-    return !failed;
+    const plane_norm_offset<T> plane = cornerPlane2normOffsetPlane(triangle);
+    const bool intersects = rayPlaneIntersection(ray, plane, intersectionPoint);
+    return intersects && pointInsideTriangle(intersectionPoint, triangle);
 }
 } // namespace opencalibration
