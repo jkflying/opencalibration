@@ -63,27 +63,65 @@ TEST(serialize_graph, three_images)
     EXPECT_EQ(serialized.str(), dedeserialized.str());
 }
 
-TEST(serialize_meshgraph, simple_flat)
+TEST(serialize_meshgraph, simple_surface)
+{
+    // GIVEN: a mesh
+    MeshGraph g;
+    point_cloud p{Eigen::Vector3d(0, 0, 0), Eigen::Vector3d(1, 0, 0)};
+    g = rebuildMesh(p, g);
+
+    // WHEN: we write it to a string
+    std::ostringstream osstream;
+    EXPECT_TRUE(serialize(g, osstream));
+    std::istringstream isstream(osstream.str());
+
+    // THEN: it should be exaclty the same when we read it from the string
+    MeshGraph deserialized;
+    EXPECT_TRUE(deserialize(isstream, deserialized));
+    EXPECT_EQ(g, deserialized);
+
+    // AND: when we write it to a string again it should be the same again
+    std::ostringstream osstream2;
+    EXPECT_TRUE(serialize(deserialized, osstream2));
+    EXPECT_EQ(osstream.str(), osstream2.str());
+
+    // AND: write a copy to file to help with debugging
+    {
+        std::ofstream ofstream;
+        ofstream.open(TEST_DATA_OUTPUT_DIR "simple.ply");
+        EXPECT_TRUE(serialize(g, ofstream));
+        ofstream.close();
+    }
+}
+
+TEST(serialize_meshgraph, complex_uniform_surface)
 {
     MeshGraph g;
     point_cloud p{Eigen::Vector3d(0, 0, 0), Eigen::Vector3d(1, 0, 0.5), Eigen::Vector3d(1, 1, 0.3),
                   Eigen::Vector3d(0, 1, -0.5)};
 
-    auto expanded = rebuildMesh(p, g);
+    g = rebuildMesh(p, g);
 
-    std::ofstream ofstream;
-    ofstream.open(TEST_DATA_OUTPUT_DIR "surface.ply");
-
-    EXPECT_TRUE(serialize(expanded, ofstream));
-    ofstream.close();
-
+    // WHEN: we write it to a string
     std::ostringstream osstream;
-    EXPECT_TRUE(serialize(expanded, osstream));
+    EXPECT_TRUE(serialize(g, osstream));
     std::istringstream isstream(osstream.str());
+
+    // THEN: it should be exaclty the same when we read it from the string
     MeshGraph deserialized;
     EXPECT_TRUE(deserialize(isstream, deserialized));
-    EXPECT_EQ(expanded, deserialized);
+    EXPECT_EQ(g, deserialized);
+
+    // AND: when we write it to a string again it should be the same again
     std::ostringstream osstream2;
     EXPECT_TRUE(serialize(deserialized, osstream2));
     EXPECT_EQ(osstream.str(), osstream2.str());
+
+    // AND: write a copy to file to help with debugging
+    {
+        std::ofstream ofstream;
+        ofstream.open(TEST_DATA_OUTPUT_DIR "surface.ply");
+        EXPECT_TRUE(serialize(g, ofstream));
+        ofstream.close();
+    }
 }

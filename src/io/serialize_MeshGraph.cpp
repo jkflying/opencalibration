@@ -1,5 +1,7 @@
 #include <opencalibration/io/serialize.hpp>
 
+#include <opencalibration/geometry/utils.hpp>
+
 #include <iostream>
 
 #include <set>
@@ -39,15 +41,14 @@ template <> class Serializer<MeshGraph>
         out << "property double z" << newline;
         out << "property int nodeIndex" << newline;
 
-        auto anticlockwise = [&graph](const std::array<size_t, 3> &face) {
-            Eigen::Matrix3d locs;
+        auto nodes_anticlockwise = [&graph](const std::array<size_t, 3> &face) {
+            std::array<Eigen::Vector3d, 3> corners;
             Eigen::Index i = 0;
             for (size_t node_id : face)
             {
-                locs.row(i++) = graph.getNode(node_id)->payload.location;
+                corners[i++] = graph.getNode(node_id)->payload.location;
             }
-            double crossZ = (locs.row(1) - locs.row(0)).cross(locs.row(2) - locs.row(0)).z();
-            return crossZ < 0;
+            return anticlockwise(corners);
         };
 
         std::unordered_set<std::array<size_t, 3>, ArrayHash> faces;
@@ -70,7 +71,7 @@ template <> class Serializer<MeshGraph>
 
                 auto sortedFace = face;
                 std::sort(sortedFace.begin(), sortedFace.end());
-                if (anticlockwise(sortedFace))
+                if (nodes_anticlockwise(sortedFace))
                     std::swap(sortedFace[0], sortedFace[1]);
                 faces.insert(sortedFace);
             };

@@ -1,6 +1,7 @@
 #include <opencalibration/surface/intersect.hpp>
 
 #include <opencalibration/geometry/intersection.hpp>
+#include <opencalibration/geometry/utils.hpp>
 
 namespace opencalibration
 {
@@ -60,6 +61,13 @@ const MeshIntersectionSearcher::IntersectionInfo &MeshIntersectionSearcher::tria
 
     while (true)
     {
+        if (anticlockwise(plane.corner))
+        {
+            std::swap(plane.corner[0], plane.corner[1]);
+            std::swap(_info.nodeIndexes[0], _info.nodeIndexes[1]);
+            std::swap(_info.nodeLocations[0], _info.nodeLocations[1]);
+        }
+
         _info.intersectionLocation.fill(NAN);
         if (rayTriangleIntersection(r, plane, _info.intersectionLocation))
         {
@@ -73,26 +81,25 @@ const MeshIntersectionSearcher::IntersectionInfo &MeshIntersectionSearcher::tria
             break;
         }
 
-        // otherwise find the edge across from the furthest vertex to the intersection
-        double maxDist = 0;
-        size_t maxIndex = 0;
-        for (size_t i = 0; i < 3; i++)
+        // find an edge which puts two points of the old triangle + test point in the opposite rotation order
+        size_t edgeIndex = 3;
+        for (int i = 0; i < 3; i++)
         {
-            const double distSq = (plane.corner[i] - _info.intersectionLocation).squaredNorm();
-            if (distSq > maxDist)
+            const std::array<Eigen::Vector3d, 3> corners{_info.intersectionLocation, plane.corner[i],
+                                                         plane.corner[(i + 1) % 3]};
+            if (anticlockwise(corners))
             {
-                maxDist = distSq;
-                maxIndex = i;
+                edgeIndex = i;
+                break;
             }
         }
 
-        keepNodes = {_info.nodeIndexes[0], _info.nodeIndexes[1], _info.nodeIndexes[2]};
-        keepNodes.erase(keepNodes.begin() + maxIndex);
+        _keepNodes = {_info.nodeIndexes[edgeIndex], _info.nodeIndexes[(edgeIndex + 1) % 3]};
 
-        const MeshGraph::Edge *edge = _meshGraph->getEdge(keepNodes[0], keepNodes[1]);
+        const MeshGraph::Edge *edge = _meshGraph->getEdge(_keepNodes[0], _keepNodes[1]);
         if (edge == nullptr)
         {
-            edge = _meshGraph->getEdge(keepNodes[1], keepNodes[0]);
+            edge = _meshGraph->getEdge(_keepNodes[1], _keepNodes[0]);
         }
 
         if (edge == nullptr)
@@ -107,14 +114,16 @@ const MeshIntersectionSearcher::IntersectionInfo &MeshIntersectionSearcher::tria
             break;
         }
 
+        size_t replacedNode = (edgeIndex + 2) % 3;
+
         // switch to the other triangle on that edge
-        if (edge->payload.triangleOppositeNodes[0] == _info.nodeIndexes[maxIndex])
+        if (edge->payload.triangleOppositeNodes[0] == _info.nodeIndexes[replacedNode])
         {
-            _info.nodeIndexes[maxIndex] = edge->payload.triangleOppositeNodes[1];
+            _info.nodeIndexes[replacedNode] = edge->payload.triangleOppositeNodes[1];
         }
-        else if (edge->payload.triangleOppositeNodes[1] == _info.nodeIndexes[maxIndex])
+        else if (edge->payload.triangleOppositeNodes[1] == _info.nodeIndexes[replacedNode])
         {
-            _info.nodeIndexes[maxIndex] = edge->payload.triangleOppositeNodes[0];
+            _info.nodeIndexes[replacedNode] = edge->payload.triangleOppositeNodes[0];
         }
         else
         {
@@ -123,9 +132,9 @@ const MeshIntersectionSearcher::IntersectionInfo &MeshIntersectionSearcher::tria
         }
 
         // reload the changed node
-        const MeshGraph::Node *node = _meshGraph->getNode(_info.nodeIndexes[maxIndex]);
-        plane.corner[maxIndex] = node->payload.location;
-        _info.nodeLocations[maxIndex] = &node->payload.location;
+        const MeshGraph::Node *node = _meshGraph->getNode(_info.nodeIndexes[replacedNode]);
+        plane.corner[replacedNode] = node->payload.location;
+        _info.nodeLocations[replacedNode] = &node->payload.location;
         _info.steps++;
     }
 

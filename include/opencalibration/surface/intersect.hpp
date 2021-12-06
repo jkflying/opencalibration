@@ -11,7 +11,10 @@ class MeshIntersectionSearcher
   public:
     struct IntersectionInfo
     {
-        IntersectionInfo() : type(PENDING), nodeLocations({}), steps(0) {}
+        IntersectionInfo()
+            : type(PENDING), nodeIndexes({}), nodeLocations({}), intersectionLocation(NAN, NAN, NAN), steps(0)
+        {
+        }
         enum INTERSECTION_TYPE
         {
             UNINITIALIZED,
@@ -38,6 +41,6 @@ class MeshIntersectionSearcher
     const MeshGraph *_meshGraph;
     IntersectionInfo _info;
 
-    std::vector<size_t> keepNodes;
+    std::vector<size_t> _keepNodes;
 };
 } // namespace opencalibration
