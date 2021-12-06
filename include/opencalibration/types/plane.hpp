@@ -17,7 +17,8 @@ template <typename T> struct plane_3_corners
 {
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
-    Eigen::Matrix<T, 3, 1> corner[3] = {{T(NAN), T(NAN), T(NAN)}, {T(NAN), T(NAN), T(NAN)}, {T(NAN), T(NAN), T(NAN)}};
+    std::array<Eigen::Matrix<T, 3, 1>, 3> corner = {
+        {{T(NAN), T(NAN), T(NAN)}, {T(NAN), T(NAN), T(NAN)}, {T(NAN), T(NAN), T(NAN)}}};
 };
 
 using plane_norm_offset_d = plane_norm_offset<double>;

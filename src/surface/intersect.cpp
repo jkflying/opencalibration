@@ -11,6 +11,8 @@ bool MeshIntersectionSearcher::init(const MeshGraph &meshGraph, const Intersecti
 
     if (_meshGraph->size_nodes() == 0 || _meshGraph->size_edges() == 0)
     {
+        _meshGraph = nullptr;
+        _info = {};
         return false;
     }
 
@@ -30,31 +32,45 @@ bool MeshIntersectionSearcher::init(const MeshGraph &meshGraph, const Intersecti
         _info.nodeIndexes[2] = edge.payload.triangleOppositeNodes[0];
     }
 
+    for (size_t i = 0; i < 3; i++)
+    {
+        const MeshGraph::Node *node = _meshGraph->getNode(_info.nodeIndexes[i]);
+        _info.nodeLocations[i] = &node->payload.location;
+    }
+
     return true;
 }
 
 const MeshIntersectionSearcher::IntersectionInfo &MeshIntersectionSearcher::triangleIntersect(const ray_d &r)
 {
+    if (_meshGraph == nullptr)
+    {
+        _info.type = IntersectionInfo::UNINITIALIZED;
+        return _info;
+    }
 
     plane_3_corners_d plane;
     for (size_t i = 0; i < 3; i++)
     {
-        const MeshGraph::Node *node = _meshGraph->getNode(_info.nodeIndexes[i]);
-        plane.corner[i] = node->payload.location;
+        plane.corner[i] = *_info.nodeLocations[i];
     }
+
+    _info.type = IntersectionInfo::PENDING;
+    _info.steps = 0;
 
     while (true)
     {
         _info.intersectionLocation.fill(NAN);
         if (rayTriangleIntersection(r, plane, _info.intersectionLocation))
         {
-            return _info;
+            _info.type = IntersectionInfo::INTERSECTION;
+            break;
         }
 
         if (_info.intersectionLocation.hasNaN())
         {
             _info.type = IntersectionInfo::RAY_PARALLEL_TO_PLANE;
-            return _info; // can't continue due to numerical issues, ray and plane parallel
+            break;
         }
 
         // otherwise find the edge across from the furthest vertex to the intersection
@@ -82,16 +98,16 @@ const MeshIntersectionSearcher::IntersectionInfo &MeshIntersectionSearcher::tria
         if (edge == nullptr)
         {
             _info.type = IntersectionInfo::GRAPH_STRUCTURE_INCONSISTENT;
-            return _info; // internal graph structure messed up
+            break;
         }
 
         if (edge->payload.border)
         {
             _info.type = IntersectionInfo::OUTSIDE_BORDER;
-            return _info; // intersection point is off the mesh
+            break;
         }
 
-        // switch to the other triangle on that edge, and try again
+        // switch to the other triangle on that edge
         if (edge->payload.triangleOppositeNodes[0] == _info.nodeIndexes[maxIndex])
         {
             _info.nodeIndexes[maxIndex] = edge->payload.triangleOppositeNodes[1];
@@ -103,12 +119,17 @@ const MeshIntersectionSearcher::IntersectionInfo &MeshIntersectionSearcher::tria
         else
         {
             _info.type = IntersectionInfo::GRAPH_STRUCTURE_INCONSISTENT;
-            return _info; // we weren't in this triangle somehow
+            break;
         }
 
+        // reload the changed node
         const MeshGraph::Node *node = _meshGraph->getNode(_info.nodeIndexes[maxIndex]);
         plane.corner[maxIndex] = node->payload.location;
+        _info.nodeLocations[maxIndex] = &node->payload.location;
+        _info.steps++;
     }
+
+    return _info;
 }
 
 } // namespace opencalibration

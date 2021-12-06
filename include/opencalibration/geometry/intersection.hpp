@@ -54,7 +54,7 @@ bool onSameSideOfEdge(const R &vertex0, const R &vertex1, const R &reference, co
     const auto perpDir = rawDir - edgeDir * (rawDir.dot(edgeDir) / edgeDir.squaredNorm()); // fast but bad numerically
     const auto testDir = test - vertex0;
     const T result = testDir.dot(perpDir);
-    return result > 0;
+    return result >= 0;
 }
 
 template <typename T>
