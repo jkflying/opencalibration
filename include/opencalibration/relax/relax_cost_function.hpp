@@ -407,9 +407,9 @@ struct PlaneIntersectionAngleCost
     }
 
   private:
-    const Eigen::Vector3d camera_loc[2];
-    const Eigen::Vector3d camera_ray[2];
-    const Eigen::Vector2d plane_point[3];
+    const std::array<Eigen::Vector3d, 2> camera_loc;
+    const std::array<Eigen::Vector3d, 2> camera_ray;
+    const std::array<Eigen::Vector2d, 3> plane_point;
 };
 
 } // namespace opencalibration

@@ -1,6 +1,7 @@
 #include <opencalibration/relax/relax_problem.hpp>
 
 #include <opencalibration/relax/autodiff_cost_function.hpp>
+#include <opencalibration/surface/intersect.hpp>
 
 #include "ceres_log_forwarding.cpp.inc"
 
@@ -287,10 +288,11 @@ void RelaxProblem::addGlobalPlaneMeasurementsCost(const MeasurementGraph &graph,
     const auto &source_whitelist = _grid_filter[edge.getSource()][edge_id].getBestMeasurementsPerCell();
     const auto &dest_whitelist = _grid_filter[edge.getDest()][edge_id].getBestMeasurementsPerCell();
 
-    double *datas[5] = {pkg.source.rot_ptr->coeffs().data(), pkg.dest.rot_ptr->coeffs().data(),
-                        &_global_plane.corner[0].z(), &_global_plane.corner[1].z(), &_global_plane.corner[2].z()};
-    Eigen::Vector2d corner2d[3]{_global_plane.corner[0].topRows<2>(), _global_plane.corner[1].topRows<2>(),
-                                _global_plane.corner[2].topRows<2>()};
+    const std::array<double *, 2> datas = {pkg.source.rot_ptr->coeffs().data(), pkg.dest.rot_ptr->coeffs().data()};
+
+    MeshIntersectionSearcher intersectionSearcher;
+    intersectionSearcher.init(_global_mesh);
+
     bool points_added = false;
     for (const auto &inlier : edge.payload.inlier_matches)
     {
@@ -299,18 +301,42 @@ void RelaxProblem::addGlobalPlaneMeasurementsCost(const MeasurementGraph &graph,
             continue;
 
         // make 3D intersection, add it to `points`
-        Eigen::Vector3d source_ray = image_to_3d(inlier.pixel_1, source_model);
-        Eigen::Vector3d dest_ray = image_to_3d(inlier.pixel_2, dest_model);
+        ray_d sourceRay, destRay;
+        sourceRay.dir = image_to_3d(inlier.pixel_1, source_model);
+        sourceRay.offset = *pkg.source.loc_ptr;
+        destRay.dir = image_to_3d(inlier.pixel_2, dest_model);
+        destRay.offset = *pkg.dest.loc_ptr;
 
-        // add cost functions for this 3D point from both the source and dest camera
+        const auto sourceIntersection = intersectionSearcher.triangleIntersect(sourceRay);
+        const auto destIntersection = intersectionSearcher.triangleIntersect(destRay);
+
+        if (sourceIntersection.type != MeshIntersectionSearcher::IntersectionInfo::INTERSECTION ||
+            destIntersection.type != MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
+        {
+            continue;
+        }
+
+        // use source triangle. TODO: use triangle midway between intersection points
+        const auto &triangle = sourceIntersection.nodeLocations;
+
+        std::array<Eigen::Vector2d, 3> corner2d = {triangle[0]->topRows<2>(), triangle[1]->topRows<2>(),
+                                                   triangle[2]->topRows<2>()};
+
+        std::array<const double *, 3> constZValues{&triangle[0]->z(), &triangle[1]->z(), &triangle[2]->z()};
+        std::array<double *, 3> zValues;
+        for (size_t i = 0; i < 3; i++)
+        {
+            zValues[i] = const_cast<double *>(constZValues[i]);
+        }
 
         // TODO: select correct cost function based on options
         (void)options;
 
+        // add cost functions for this 3D point from both the source and dest camera
         std::unique_ptr<ceres::CostFunction> func(newAutoDiffPlaneIntersectionAngleCost(
-            *pkg.source.loc_ptr, *pkg.dest.loc_ptr, source_ray, dest_ray, corner2d[0], corner2d[1], corner2d[2]));
+            sourceRay.offset, destRay.offset, sourceRay.dir, destRay.dir, corner2d[0], corner2d[1], corner2d[2]));
 
-        _problem->AddResidualBlock(func.release(), &_loss, datas[0], datas[1], datas[2], datas[3], datas[4]);
+        _problem->AddResidualBlock(func.release(), &_loss, datas[0], datas[1], zValues[0], zValues[1], zValues[2]);
         points_added = true;
     }
     if (points_added)
@@ -352,9 +378,12 @@ void RelaxProblem::relaxObservedModelOnly()
             if (params_set.find(t.point.data()) != params_set.end())
                 _problem->SetParameterBlockVariable(t.point.data());
 
-    for (auto &p : _global_plane.corner)
+    for (auto iter = _global_mesh.nodebegin(); iter != _global_mesh.nodeend(); ++iter)
+    {
+        auto &p = iter->second.payload.location;
         if (params_set.find(&p.z()) != params_set.end())
             _problem->SetParameterBlockVariable(&p.z());
+    }
 
     spdlog::debug("optimizing 3d points only");
     solve();
@@ -575,10 +604,22 @@ void RelaxProblem::initializeGroundPlane()
     height -= margin;
     Eigen::Vector2d center = (xy_min + xy_max) / 2;
     const double spacing = (xy_max - xy_min).maxCoeff() + margin;
+    plane_3_corners_d plane;
 
-    _global_plane.corner[0] << Eigen::Vector2d(-spacing, -spacing) + center, height;
-    _global_plane.corner[1] << Eigen::Vector2d(spacing, -spacing) + center, height;
-    _global_plane.corner[2] << Eigen::Vector2d(0, spacing) + center, height;
+    plane.corner[0] << Eigen::Vector2d(-spacing, -spacing) + center, height;
+    plane.corner[1] << Eigen::Vector2d(spacing, -spacing) + center, height;
+    plane.corner[2] << Eigen::Vector2d(0, spacing) + center, height;
+
+    _global_mesh = MeshGraph();
+    std::array<size_t, 3> nodeIds;
+    for (size_t i = 0; i < 3; i++)
+    {
+        nodeIds[i] = _global_mesh.addNode(MeshNode{plane.corner[i]});
+    }
+    for (size_t i = 0; i < 3; i++)
+    {
+        _global_mesh.addEdge(MeshEdge{true, {nodeIds[(i + 2) % 3], 0}}, nodeIds[i], nodeIds[(i + 1) % 3]);
+    }
 }
 
 void RelaxProblem::addDownwardsPrior()
@@ -622,10 +663,7 @@ surface_model RelaxProblem::getSurfaceModel()
         }
     }
 
-    if (!_global_plane.corner[0].hasNaN())
-    {
-        s.mesh.push_back(_global_plane);
-    }
+    s.mesh = _global_mesh;
 
     return s;
 }

@@ -359,6 +359,8 @@ TEST_F(relax_, measurement_3_images_plane)
     // WHEN: we relax them with relative orientation
     std::unordered_set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
     relax(graph, np, cam_models, edges, {Option::ORIENTATION, Option::GROUND_PLANE});
+    // and again to re-init the inliers
+    relax(graph, np, cam_models, edges, {Option::ORIENTATION, Option::GROUND_PLANE});
 
     // THEN: it should put them back into the original orientation
     for (int i = 0; i < 3; i++)

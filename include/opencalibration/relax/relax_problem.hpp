@@ -102,8 +102,8 @@ class RelaxProblem
 
     // Surface models
     using track_vec = std::vector<FeatureTrack, Eigen::aligned_allocator<FeatureTrack>>;
-    plane_3_corners_d _global_plane;
     std::unordered_map<size_t, track_vec> _edge_tracks;
+    MeshGraph _global_mesh;
 };
 
 } // namespace opencalibration
