@@ -69,13 +69,8 @@ const MeshIntersectionSearcher::IntersectionInfo &MeshIntersectionSearcher::tria
         }
 
         _info.intersectionLocation.fill(NAN);
-        if (rayTriangleIntersection(r, plane, _info.intersectionLocation))
-        {
-            _info.type = IntersectionInfo::INTERSECTION;
-            break;
-        }
-
-        if (_info.intersectionLocation.hasNaN())
+        if (!rayPlaneIntersection(r, cornerPlane2normOffsetPlane(plane), _info.intersectionLocation) ||
+            _info.intersectionLocation.hasNaN())
         {
             _info.type = IntersectionInfo::RAY_PARALLEL_TO_PLANE;
             break;
@@ -92,6 +87,13 @@ const MeshIntersectionSearcher::IntersectionInfo &MeshIntersectionSearcher::tria
                 edgeIndex = i;
                 break;
             }
+        }
+
+        // the point is inside the triangle because the rotation stayed the same for all point combos
+        if (edgeIndex == 3)
+        {
+            _info.type = IntersectionInfo::INTERSECTION;
+            break;
         }
 
         _keepNodes = {_info.nodeIndexes[edgeIndex], _info.nodeIndexes[(edgeIndex + 1) % 3]};

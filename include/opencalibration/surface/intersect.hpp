@@ -37,6 +37,11 @@ class MeshIntersectionSearcher
     // Note: not threadsafe, use one instance of MeshIntersectionSearcher per thread
     const IntersectionInfo &triangleIntersect(const ray_d &r);
 
+    bool initialized() const
+    {
+        return _meshGraph != nullptr;
+    }
+
   private:
     const MeshGraph *_meshGraph;
     IntersectionInfo _info;
