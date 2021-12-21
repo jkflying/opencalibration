@@ -28,6 +28,7 @@ int main(int argc, char *argv[])
     std::string output_file = "";
     std::string serialized_graph_file = "";
     std::string pointcloud_file = "";
+    std::string mesh_file = "";
     std::string log_file = "";
     int batch_size = omp_get_max_threads();
     bool printHelp = false;
@@ -38,6 +39,7 @@ int main(int argc, char *argv[])
     args.addArgument({"-l", "--log-file"}, &log_file, "Output logging file, overwrites existing files");
     args.addArgument({"-g", "--geojson"}, &output_file, "Output geojson file");
     args.addArgument({"-p", "--pointcloud-file"}, &pointcloud_file, "Output pointcloud file");
+    args.addArgument({"-m", "--mesh-file"}, &mesh_file, "Output mesh PLY file");
     args.addArgument({"-s", "--serialize"}, &serialized_graph_file, "Output serialized camera graph file");
     args.addArgument({"-b", "--batch-size"}, &batch_size, "Processing batch size");
     args.addArgument({"-h", "--help"}, &printHelp, "You must specify at least an input file");
@@ -160,12 +162,32 @@ int main(int argc, char *argv[])
         output.close();
     }
 
-    if (pointcloud_file.size() > 0)
+    if (pointcloud_file.size() > 0 || mesh_file.size() > 0)
     {
-        std::ofstream output;
-        output.open(pointcloud_file, std::ios::binary);
-        toXYZ(p.getSurfaces(), output, filterOutliers(p.getSurfaces()));
-        output.close();
+        const auto &surface = p.getSurfaces();
+        if (pointcloud_file.size() > 0)
+        {
+            std::ofstream output;
+            output.open(pointcloud_file, std::ios::binary);
+            toXYZ(surface, output, filterOutliers(surface));
+            output.close();
+        }
+        if (mesh_file.size() > 0)
+        {
+            for (size_t i = 0; i < surface.size(); i++)
+            {
+                if (surface[i].mesh.size_edges() == 0)
+                    continue;
+
+                std::ofstream output;
+                std::string filename = mesh_file;
+                if (surface.size() > 1)
+                    filename += "_" + std::to_string(i) + ".ply";
+                output.open(filename, std::ios::binary);
+                serialize(surface[i].mesh, output);
+                output.close();
+            }
+        }
     }
 
     std::cout << "Complete!" << std::endl;
