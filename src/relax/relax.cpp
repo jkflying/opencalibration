@@ -68,6 +68,18 @@ std::vector<Backend> getBackends()
 
         return rp.getSurfaceModel();
     };
+
+    auto mesh_solver = [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                            std::unordered_map<size_t, CameraModel> &cam_models,
+                            const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options)
+    {
+        PerformanceMeasure p("Relax runner ground mesh");
+        RelaxProblem rp;
+        rp.setupGroundMeshProblem(graph, nodes, cam_models, edges_to_optimize, options);
+        rp.solve();
+
+        return rp.getSurfaceModel();
+    };
     backends.emplace_back(RelaxOptionSet{Option::LENS_DISTORTIONS_TANGENTIAL, Option::LENS_DISTORTIONS_RADIAL,
                                          Option::LENS_DISTORTIONS_RADIAL_BROWN2_PARAMETERIZATION,
                                          Option::LENS_DISTORTIONS_RADIAL_BROWN24_PARAMETERIZATION,
@@ -81,7 +93,9 @@ std::vector<Backend> getBackends()
                                          Option::FOCAL_LENGTH, Option::ORIENTATION, Option::POINTS_3D},
                           points_solver);
     backends.emplace_back(RelaxOptionSet{Option::FOCAL_LENGTH, Option::ORIENTATION, Option::POINTS_3D}, points_solver);
+    backends.emplace_back(RelaxOptionSet{Option::ORIENTATION, Option::GROUND_MESH}, mesh_solver);
     backends.emplace_back(RelaxOptionSet{Option::ORIENTATION, Option::POINTS_3D}, points_solver);
+
     backends.emplace_back(
         RelaxOptionSet{Option::ORIENTATION, Option::GROUND_PLANE},
         [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,

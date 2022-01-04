@@ -72,10 +72,18 @@ ceres::CostFunction *newAutoDiffPixelErrorCost_OrientationFocalRadialTangential(
     return new CostFunction(new Functor(camera_loc, camera_model, camera_pixel));
 }
 
-ceres::CostFunction *newAutoDiffPointsDownwardsPrior()
+ceres::CostFunction *newAutoDiffDifferenceCost(double weight)
+{
+    using Functor = DifferenceCost;
+    using CostFunction = ceres::AutoDiffCostFunction<Functor, Functor::NUM_RESIDUALS, Functor::NUM_PARAMETERS_1, Functor::NUM_PARAMETERS_2>;
+    return new CostFunction(new Functor(weight));
+
+}
+
+ceres::CostFunction *newAutoDiffPointsDownwardsPrior(double weight)
 {
     using Functor = PointsDownwardsPrior;
     using CostFunction = ceres::AutoDiffCostFunction<Functor, Functor::NUM_RESIDUALS, Functor::NUM_PARAMETERS_1>;
-    return new CostFunction(new Functor());
+    return new CostFunction(new Functor(weight));
 }
 } // namespace opencalibration

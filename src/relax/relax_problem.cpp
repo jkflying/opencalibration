@@ -2,6 +2,7 @@
 
 #include <opencalibration/relax/autodiff_cost_function.hpp>
 #include <opencalibration/surface/intersect.hpp>
+#include <opencalibration/surface/expand_mesh.hpp>
 
 #include "ceres_log_forwarding.cpp.inc"
 
@@ -63,11 +64,33 @@ void RelaxProblem::setupGroundPlaneProblem(const MeasurementGraph &graph, std::v
         const MeasurementGraph::Edge *edge = graph.getEdge(edge_id);
         if (edge != nullptr && shouldAddEdgeToOptimization(edges_to_optimize, edge_id))
         {
-            addGlobalPlaneMeasurementsCost(graph, edge_id, *edge, options);
+            addRayTriangleMeasurementCost(graph, edge_id, *edge, options);
         }
     }
 
     addDownwardsPrior();
+}
+
+void RelaxProblem::setupGroundMeshProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                                           std::unordered_map<size_t, CameraModel> &cam_models,
+                                           const std::unordered_set<size_t> &edges_to_optimize,
+                                           const RelaxOptionSet &options)
+{
+    initialize(nodes, cam_models);
+    initializeGroundMesh();
+    _loss.Reset(new ceres::HuberLoss(1 * M_PI / 180), ceres::TAKE_OWNERSHIP);
+    gridFilterMatchesPerImage(graph, edges_to_optimize, 0.1);
+
+    for (size_t edge_id : edges_to_optimize)
+    {
+        const MeasurementGraph::Edge *edge = graph.getEdge(edge_id);
+        if (edge != nullptr && shouldAddEdgeToOptimization(edges_to_optimize, edge_id))
+        {
+            addRayTriangleMeasurementCost(graph, edge_id, *edge, options);
+        }
+    }
+
+    addMeshFlatPrior();
 }
 
 void RelaxProblem::setup3dPointProblem(const MeasurementGraph &graph, std::vector<opencalibration::NodePose> &nodes,
@@ -268,7 +291,7 @@ void RelaxProblem::addRelationCost(const MeasurementGraph &graph, size_t edge_id
     _edges_used.emplace(edge_id);
 }
 
-void RelaxProblem::addGlobalPlaneMeasurementsCost(const MeasurementGraph &graph, size_t edge_id,
+void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, size_t edge_id,
                                                   const MeasurementGraph::Edge &edge, const RelaxOptionSet &options)
 {
     auto &points = _edge_tracks[edge_id];
@@ -622,6 +645,17 @@ void RelaxProblem::initializeGroundPlane()
     }
 }
 
+void RelaxProblem::initializeGroundMesh()
+{
+    point_cloud cameraLocations;
+    cameraLocations.reserve(_nodes_to_optimize.size());
+    for (const auto& node : _nodes_to_optimize)
+    {
+        cameraLocations.push_back(node.second->position);
+    }
+    _global_mesh = rebuildMesh(cameraLocations, _global_mesh);
+}
+
 void RelaxProblem::addDownwardsPrior()
 {
     for (auto &p : _nodes_to_optimize)
@@ -629,10 +663,31 @@ void RelaxProblem::addDownwardsPrior()
         if (!p.second->orientation.coeffs().hasNaN())
         {
             double *d = p.second->orientation.coeffs().data();
-            _problem->AddResidualBlock(newAutoDiffPointsDownwardsPrior(), nullptr, d);
+            _problem->AddResidualBlock(newAutoDiffPointsDownwardsPrior(1e-3), nullptr, d);
             _problem->SetParameterization(d, &_quat_parameterization);
         }
     }
+}
+
+void RelaxProblem::addMeshFlatPrior()
+{
+
+    // for each edge in the graph
+    // add a cost for the nodes on each side being different heights
+    for (auto iter = _global_mesh.edgebegin(); iter != _global_mesh.edgeend(); ++iter)
+    {
+        const size_t sourceId = iter->second.getSource();
+        const size_t destId = iter->second.getDest();
+
+        auto* sourceNode = _global_mesh.getNode(sourceId);
+        auto* destNode = _global_mesh.getNode(destId);
+
+        double *h1 = &sourceNode->payload.location.z();
+        double *h2 = &destNode->payload.location.z();
+
+        _problem->AddResidualBlock(newAutoDiffDifferenceCost(1e-4), nullptr, h1, h2);
+    }
+
 }
 
 void RelaxProblem::solve()

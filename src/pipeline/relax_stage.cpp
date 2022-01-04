@@ -44,10 +44,11 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
         }
     }
 
-    bool optimizing_internals = options.hasAny({Option::FOCAL_LENGTH, Option::PRINCIPAL_POINT,
+    const bool global_params = options.hasAny({Option::FOCAL_LENGTH, Option::PRINCIPAL_POINT,
                                                 Option::LENS_DISTORTIONS_RADIAL, Option::LENS_DISTORTIONS_TANGENTIAL});
+    const bool hard_to_split = options.hasAny({Option::GROUND_MESH});
 
-    const int optimal_cluster_size = optimizing_internals ? 150 : 50;
+    const int optimal_cluster_size = hard_to_split ? 9999999 : (global_params ? 150 : 50);
 
     const size_t num_groups =
         std::max<size_t>(1, static_cast<size_t>(std::floor(actual_node_ids.size() / optimal_cluster_size)));

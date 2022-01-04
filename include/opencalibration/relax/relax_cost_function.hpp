@@ -23,7 +23,8 @@ struct PointsDownwardsPrior
     static const int NUM_RESIDUALS = 1;
     static const int NUM_PARAMETERS_1 = 4;
 
-    static constexpr double weight = 1e-3;
+    PointsDownwardsPrior(double weight) : _weight(weight) {}
+
     template <typename T> bool operator()(const T *rotation1, T *residuals) const
     {
         using QuaterionT = Eigen::Quaternion<T>;
@@ -37,13 +38,33 @@ struct PointsDownwardsPrior
 
         Vector3T rotated_cam_center = rotation_em * cam_center;
 
-        residuals[0] = weight * angleBetweenUnitVectors<T>(rotated_cam_center, down);
+        residuals[0] = T(_weight) * angleBetweenUnitVectors<T>(rotated_cam_center, down);
         return true;
     }
+
+private:
+    double _weight;
+};
+
+struct DifferenceCost
+{
+    static const int NUM_RESIDUALS = 1;
+    static const int NUM_PARAMETERS_1 = 1;
+    static const int NUM_PARAMETERS_2 = 1;
+
+    DifferenceCost(double weight) : _weight(weight) {}
+
+    template <typename T> bool operator()(const T *val1, const T *val2, T *residual) const
+    {
+        residual[0] = T(_weight) * (val1[0] - val2[0]);
+        return true;
+    }
+
+private:
+    const double _weight;
 };
 
 // cost functions for rotations relative to positions
-
 struct DecomposedRotationCost
 {
     static const int NUM_RESIDUALS = 3;

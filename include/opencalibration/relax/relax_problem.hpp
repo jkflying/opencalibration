@@ -48,6 +48,10 @@ class RelaxProblem
                                  std::unordered_map<size_t, CameraModel> &cam_models,
                                  const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options);
 
+    void setupGroundMeshProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                                std::unordered_map<size_t, CameraModel> &cam_models,
+                                const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options);
+
     void setup3dPointProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                              std::unordered_map<size_t, CameraModel> &cam_models,
                              const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options);
@@ -72,12 +76,14 @@ class RelaxProblem
     void addPointMeasurementsCost(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge,
                                   const RelaxOptionSet &options);
 
-    void addGlobalPlaneMeasurementsCost(const MeasurementGraph &graph, size_t edge_id,
+    void addRayTriangleMeasurementCost(const MeasurementGraph &graph, size_t edge_id,
                                         const MeasurementGraph::Edge &edge, const RelaxOptionSet &options);
 
     void initializeGroundPlane();
+    void initializeGroundMesh();
 
     void addDownwardsPrior();
+    void addMeshFlatPrior();
 
     ceres::Solver::Options _solver_options;
     ceres::LossFunctionWrapper _loss;

@@ -148,7 +148,7 @@ Pipeline::Transition Pipeline::initial_processing()
 
 Pipeline::Transition Pipeline::global_relax()
 {
-    _relax_stage->init(_graph, {}, _imageGPSLocations, true, {Option::ORIENTATION, Option::POINTS_3D});
+    _relax_stage->init(_graph, {}, _imageGPSLocations, true, {Option::ORIENTATION, Option::GROUND_MESH});
 
     fvec relax_funcs = _relax_stage->get_runners(_graph);
     run_parallel(relax_funcs, _parallelism);
@@ -208,7 +208,7 @@ Pipeline::Transition Pipeline::camera_parameter_relax()
 
 Pipeline::Transition Pipeline::final_global_relax()
 {
-    _relax_stage->init(_graph, {}, _imageGPSLocations, true, {Option::ORIENTATION, Option::POINTS_3D});
+    _relax_stage->init(_graph, {}, _imageGPSLocations, true, {Option::ORIENTATION, Option::GROUND_MESH});
 
     fvec relax_funcs = _relax_stage->get_runners(_graph);
     run_parallel(relax_funcs, _parallelism);

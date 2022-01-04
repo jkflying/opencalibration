@@ -170,7 +170,7 @@ TEST_F(relax_, downwards_prior_cost_function)
     Eigen::Quaterniond q = Eigen::Quaterniond::Identity() * Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX());
 
     // WHEN: we get the cost of the downwards prior
-    PointsDownwardsPrior p;
+    PointsDownwardsPrior p(1e-3);
     double r = NAN;
     EXPECT_TRUE(p(q.coeffs().data(), &r));
 
@@ -182,7 +182,7 @@ TEST_F(relax_, downwards_prior_cost_function)
     EXPECT_TRUE(p(q.coeffs().data(), &r));
 
     // THEN: it should have a residual of 0.3 * weight
-    EXPECT_NEAR(r, 0.3 * p.weight, 1e-9);
+    EXPECT_NEAR(r, 0.3 * 1e-3, 1e-9);
 }
 
 TEST_F(relax_, rel_rot_cost_function)
