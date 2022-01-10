@@ -330,8 +330,8 @@ void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, 
         destRay.dir = image_to_3d(inlier.pixel_2, dest_model);
         destRay.offset = *pkg.dest.loc_ptr;
 
-        const auto sourceIntersection = intersectionSearcher.triangleIntersect(sourceRay);
-        const auto destIntersection = intersectionSearcher.triangleIntersect(destRay);
+        const auto sourceIntersection = intersectionSearcher.triangleIntersect(ray_d {*pkg.source.rot_ptr * sourceRay.dir, sourceRay.offset});
+        const auto destIntersection = intersectionSearcher.triangleIntersect(ray_d {*pkg.dest.rot_ptr * destRay.dir, destRay.offset});
 
         if (sourceIntersection.type != MeshIntersectionSearcher::IntersectionInfo::INTERSECTION ||
             destIntersection.type != MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
