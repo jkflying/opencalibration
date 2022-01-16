@@ -330,17 +330,15 @@ void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, 
         destRay.dir = image_to_3d(inlier.pixel_2, dest_model);
         destRay.offset = *pkg.dest.loc_ptr;
 
-        const auto sourceIntersection = intersectionSearcher.triangleIntersect(ray_d {*pkg.source.rot_ptr * sourceRay.dir, sourceRay.offset});
-        const auto destIntersection = intersectionSearcher.triangleIntersect(ray_d {*pkg.dest.rot_ptr * destRay.dir, destRay.offset});
+        auto sourceDestIntersection = rayIntersection(ray_d {*pkg.source.rot_ptr * sourceRay.dir, sourceRay.offset}, ray_d {*pkg.dest.rot_ptr * destRay.dir, destRay.offset});
 
-        if (sourceIntersection.type != MeshIntersectionSearcher::IntersectionInfo::INTERSECTION ||
-            destIntersection.type != MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
+        const auto intersectionTriangle = intersectionSearcher.triangleIntersect(ray_d{Eigen::Vector3d(0,0,1), sourceDestIntersection.first});
+        if (intersectionTriangle.type != MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
         {
             continue;
         }
 
-        // use source triangle. TODO: use triangle midway between intersection points
-        const auto &triangle = sourceIntersection.nodeLocations;
+        const auto &triangle = intersectionTriangle.nodeLocations;
 
         std::array<Eigen::Vector2d, 3> corner2d = {triangle[0]->topRows<2>(), triangle[1]->topRows<2>(),
                                                    triangle[2]->topRows<2>()};
@@ -397,9 +395,15 @@ void RelaxProblem::relaxObservedModelOnly()
         params_set.insert(p);
     }
     for (auto &et : _edge_tracks)
+    {
         for (auto &t : et.second)
+        {
             if (params_set.find(t.point.data()) != params_set.end())
+            {
                 _problem->SetParameterBlockVariable(t.point.data());
+            }
+        }
+    }
 
     for (auto iter = _global_mesh.nodebegin(); iter != _global_mesh.nodeend(); ++iter)
     {
@@ -408,7 +412,7 @@ void RelaxProblem::relaxObservedModelOnly()
             _problem->SetParameterBlockVariable(&p.z());
     }
 
-    spdlog::debug("optimizing 3d points only");
+    spdlog::debug("optimizing surface only");
     solve();
     for (size_t i = 0; i < params.size(); i++)
     {
