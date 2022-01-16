@@ -70,9 +70,8 @@ std::vector<Backend> getBackends()
     };
 
     auto mesh_solver = [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                            std::unordered_map<size_t, CameraModel> &cam_models,
-                            const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options)
-    {
+                          std::unordered_map<size_t, CameraModel> &cam_models,
+                          const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options) {
         PerformanceMeasure p("Relax runner ground mesh");
         RelaxProblem rp;
         rp.setupGroundMeshProblem(graph, nodes, cam_models, edges_to_optimize, options);

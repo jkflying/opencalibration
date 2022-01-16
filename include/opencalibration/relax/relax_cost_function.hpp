@@ -23,7 +23,9 @@ struct PointsDownwardsPrior
     static const int NUM_RESIDUALS = 1;
     static const int NUM_PARAMETERS_1 = 4;
 
-    PointsDownwardsPrior(double weight) : _weight(weight) {}
+    PointsDownwardsPrior(double weight) : _weight(weight)
+    {
+    }
 
     template <typename T> bool operator()(const T *rotation1, T *residuals) const
     {
@@ -42,7 +44,7 @@ struct PointsDownwardsPrior
         return true;
     }
 
-private:
+  private:
     double _weight;
 };
 
@@ -52,7 +54,9 @@ struct DifferenceCost
     static const int NUM_PARAMETERS_1 = 1;
     static const int NUM_PARAMETERS_2 = 1;
 
-    DifferenceCost(double weight) : _weight(weight) {}
+    DifferenceCost(double weight) : _weight(weight)
+    {
+    }
 
     template <typename T> bool operator()(const T *val1, const T *val2, T *residual) const
     {
@@ -60,7 +64,7 @@ struct DifferenceCost
         return true;
     }
 
-private:
+  private:
     const double _weight;
 };
 

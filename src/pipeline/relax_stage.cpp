@@ -25,7 +25,7 @@ RelaxStage::~RelaxStage()
 }
 
 void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &node_ids,
-                      const jk::tree::KDTree<size_t, 3> &imageGPSLocations, bool global_relax,
+                      const jk::tree::KDTree<size_t, 3> &imageGPSLocations, bool relax_all, bool disable_parallelism,
                       const RelaxOptionSet &options)
 {
     PerformanceMeasure p("Relax init");
@@ -34,7 +34,7 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
 
     std::vector<size_t> actual_node_ids = node_ids;
 
-    if (global_relax)
+    if (relax_all)
     {
         actual_node_ids.clear();
         actual_node_ids.reserve(graph.size_nodes());
@@ -45,13 +45,14 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
     }
 
     const bool global_params = options.hasAny({Option::FOCAL_LENGTH, Option::PRINCIPAL_POINT,
-                                                Option::LENS_DISTORTIONS_RADIAL, Option::LENS_DISTORTIONS_TANGENTIAL});
-    const bool hard_to_split = options.hasAny({Option::GROUND_MESH});
+                                               Option::LENS_DISTORTIONS_RADIAL, Option::LENS_DISTORTIONS_TANGENTIAL});
 
-    const int optimal_cluster_size = hard_to_split ? 9999999 : (global_params ? 150 : 50);
+    const int optimal_cluster_size = global_params ? 150 : 50;
 
     const size_t num_groups =
-        std::max<size_t>(1, static_cast<size_t>(std::floor(actual_node_ids.size() / optimal_cluster_size)));
+        disable_parallelism
+            ? 1
+            : std::max<size_t>(1, static_cast<size_t>(std::floor(actual_node_ids.size() / optimal_cluster_size)));
 
     _k_groups->reset(num_groups);
 

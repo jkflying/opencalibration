@@ -121,7 +121,7 @@ Pipeline::Transition Pipeline::initial_processing()
 
         _load_stage->init(_graph, paths);
         _link_stage->init(_graph, _imageGPSLocations, _previous_loaded_ids);
-        _relax_stage->init(_graph, _previous_linked_ids, _imageGPSLocations, false,
+        _relax_stage->init(_graph, _previous_linked_ids, _imageGPSLocations, false, true,
                            {Option::ORIENTATION, Option::GROUND_PLANE});
 
         fvec funcs;
@@ -148,7 +148,7 @@ Pipeline::Transition Pipeline::initial_processing()
 
 Pipeline::Transition Pipeline::global_relax()
 {
-    _relax_stage->init(_graph, {}, _imageGPSLocations, true, {Option::ORIENTATION, Option::GROUND_MESH});
+    _relax_stage->init(_graph, {}, _imageGPSLocations, true, false, {Option::ORIENTATION, Option::GROUND_MESH});
 
     fvec relax_funcs = _relax_stage->get_runners(_graph);
     run_parallel(relax_funcs, _parallelism);
@@ -192,7 +192,7 @@ Pipeline::Transition Pipeline::camera_parameter_relax()
         break;
     }
 
-    _relax_stage->init(_graph, {}, _imageGPSLocations, true, options);
+    _relax_stage->init(_graph, {}, _imageGPSLocations, true, false, options);
     _relax_stage->trim_groups(1); // do it only with the largest cluster group
 
     fvec relax_funcs = _relax_stage->get_runners(_graph);
@@ -208,17 +208,19 @@ Pipeline::Transition Pipeline::camera_parameter_relax()
 
 Pipeline::Transition Pipeline::final_global_relax()
 {
-    _relax_stage->init(_graph, {}, _imageGPSLocations, true, {Option::ORIENTATION, Option::GROUND_MESH});
+    const bool lastIteration = stateRunCount() >= 3;
+
+    _relax_stage->init(_graph, {}, _imageGPSLocations, true, lastIteration, {Option::ORIENTATION, Option::GROUND_MESH});
 
     fvec relax_funcs = _relax_stage->get_runners(_graph);
     run_parallel(relax_funcs, _parallelism);
     _next_relaxed_ids = _relax_stage->finalize(_graph);
     _surfaces = _relax_stage->getSurfaceModels();
 
-    if (stateRunCount() < 2)
-        return Transition::REPEAT;
-    else
+    if (lastIteration)
         return Transition::NEXT;
+    else
+        return Transition::REPEAT;
 }
 
 Pipeline::Transition Pipeline::complete()

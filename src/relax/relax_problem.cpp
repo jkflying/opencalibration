@@ -1,8 +1,8 @@
 #include <opencalibration/relax/relax_problem.hpp>
 
 #include <opencalibration/relax/autodiff_cost_function.hpp>
-#include <opencalibration/surface/intersect.hpp>
 #include <opencalibration/surface/expand_mesh.hpp>
+#include <opencalibration/surface/intersect.hpp>
 
 #include "ceres_log_forwarding.cpp.inc"
 
@@ -72,9 +72,9 @@ void RelaxProblem::setupGroundPlaneProblem(const MeasurementGraph &graph, std::v
 }
 
 void RelaxProblem::setupGroundMeshProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                                           std::unordered_map<size_t, CameraModel> &cam_models,
-                                           const std::unordered_set<size_t> &edges_to_optimize,
-                                           const RelaxOptionSet &options)
+                                          std::unordered_map<size_t, CameraModel> &cam_models,
+                                          const std::unordered_set<size_t> &edges_to_optimize,
+                                          const RelaxOptionSet &options)
 {
     initialize(nodes, cam_models);
     initializeGroundMesh();
@@ -292,7 +292,7 @@ void RelaxProblem::addRelationCost(const MeasurementGraph &graph, size_t edge_id
 }
 
 void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, size_t edge_id,
-                                                  const MeasurementGraph::Edge &edge, const RelaxOptionSet &options)
+                                                 const MeasurementGraph::Edge &edge, const RelaxOptionSet &options)
 {
     auto &points = _edge_tracks[edge_id];
     points.reserve(edge.payload.inlier_matches.size());
@@ -330,9 +330,11 @@ void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, 
         destRay.dir = image_to_3d(inlier.pixel_2, dest_model);
         destRay.offset = *pkg.dest.loc_ptr;
 
-        auto sourceDestIntersection = rayIntersection(ray_d {*pkg.source.rot_ptr * sourceRay.dir, sourceRay.offset}, ray_d {*pkg.dest.rot_ptr * destRay.dir, destRay.offset});
+        auto sourceDestIntersection = rayIntersection(ray_d{*pkg.source.rot_ptr * sourceRay.dir, sourceRay.offset},
+                                                      ray_d{*pkg.dest.rot_ptr * destRay.dir, destRay.offset});
 
-        const auto intersectionTriangle = intersectionSearcher.triangleIntersect(ray_d{Eigen::Vector3d(0,0,1), sourceDestIntersection.first});
+        const auto intersectionTriangle =
+            intersectionSearcher.triangleIntersect(ray_d{Eigen::Vector3d(0, 0, 1), sourceDestIntersection.first});
         if (intersectionTriangle.type != MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
         {
             continue;
@@ -653,7 +655,7 @@ void RelaxProblem::initializeGroundMesh()
 {
     point_cloud cameraLocations;
     cameraLocations.reserve(_nodes_to_optimize.size());
-    for (const auto& node : _nodes_to_optimize)
+    for (const auto &node : _nodes_to_optimize)
     {
         cameraLocations.push_back(node.second->position);
     }
@@ -683,15 +685,14 @@ void RelaxProblem::addMeshFlatPrior()
         const size_t sourceId = iter->second.getSource();
         const size_t destId = iter->second.getDest();
 
-        auto* sourceNode = _global_mesh.getNode(sourceId);
-        auto* destNode = _global_mesh.getNode(destId);
+        auto *sourceNode = _global_mesh.getNode(sourceId);
+        auto *destNode = _global_mesh.getNode(destId);
 
         double *h1 = &sourceNode->payload.location.z();
         double *h2 = &destNode->payload.location.z();
 
         _problem->AddResidualBlock(newAutoDiffDifferenceCost(1e-4), nullptr, h1, h2);
     }
-
 }
 
 void RelaxProblem::solve()

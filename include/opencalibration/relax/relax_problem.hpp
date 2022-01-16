@@ -77,7 +77,7 @@ class RelaxProblem
                                   const RelaxOptionSet &options);
 
     void addRayTriangleMeasurementCost(const MeasurementGraph &graph, size_t edge_id,
-                                        const MeasurementGraph::Edge &edge, const RelaxOptionSet &options);
+                                       const MeasurementGraph::Edge &edge, const RelaxOptionSet &options);
 
     void initializeGroundPlane();
     void initializeGroundMesh();
