@@ -68,7 +68,7 @@ TEST(serialize_meshgraph, simple_surface)
     // GIVEN: a mesh
     MeshGraph g;
     point_cloud p{Eigen::Vector3d(0, 0, 0), Eigen::Vector3d(1, 0, 0)};
-    g = rebuildMesh(p, g);
+    g = rebuildMesh(p, {surface_model{{}, g}});
 
     // WHEN: we write it to a string
     std::ostringstream osstream;
@@ -100,7 +100,7 @@ TEST(serialize_meshgraph, complex_uniform_surface)
     point_cloud p{Eigen::Vector3d(0, 0, 0), Eigen::Vector3d(1, 0, 0.5), Eigen::Vector3d(1, 1, 0.3),
                   Eigen::Vector3d(0, 1, -0.5)};
 
-    g = rebuildMesh(p, g);
+    g = rebuildMesh(p, {surface_model{{}, g}});
 
     // WHEN: we write it to a string
     std::ostringstream osstream;

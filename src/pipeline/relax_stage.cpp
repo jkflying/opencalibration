@@ -121,13 +121,17 @@ void RelaxStage::trim_groups(size_t max_size)
 std::vector<std::function<void()>> RelaxStage::get_runners(const MeasurementGraph &graph)
 {
     std::vector<std::function<void()>> funcs;
+
+    std::swap(_surface_models, _previous_surface_models);
+
     _surface_models.clear();
     _surface_models.resize(_groups.size());
     for (size_t i = 0; i < _groups.size(); i++)
     {
         auto &g = _groups[i];
         auto &s = _surface_models[i];
-        funcs.push_back([&s, &g, &graph]() { s = g.run(graph); });
+        auto &ps = _previous_surface_models;
+        funcs.push_back([&s, &g, &graph, &ps]() { s = g.run(graph, ps); });
     }
     return funcs;
 }

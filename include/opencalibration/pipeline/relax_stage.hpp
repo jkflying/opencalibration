@@ -35,7 +35,7 @@ class RelaxStage
 
   private:
     std::vector<RelaxGroup> _groups;
-    std::vector<surface_model> _surface_models;
+    std::vector<surface_model> _surface_models, _previous_surface_models;
 
     std::unique_ptr<SpectralClustering<size_t, 3>> _k_groups;
 };

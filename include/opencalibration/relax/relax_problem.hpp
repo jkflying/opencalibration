@@ -50,7 +50,8 @@ class RelaxProblem
 
     void setupGroundMeshProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                                 std::unordered_map<size_t, CameraModel> &cam_models,
-                                const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options);
+                                const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options,
+                                const std::vector<surface_model> &previousSurfaces);
 
     void setup3dPointProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                              std::unordered_map<size_t, CameraModel> &cam_models,
@@ -80,7 +81,7 @@ class RelaxProblem
                                        const MeasurementGraph::Edge &edge, const RelaxOptionSet &options);
 
     void initializeGroundPlane();
-    void initializeGroundMesh();
+    void initializeGroundMesh(const std::vector<surface_model> &previousSurfaces);
 
     void addDownwardsPrior();
     void addMeshFlatPrior();
@@ -109,7 +110,7 @@ class RelaxProblem
     // Surface models
     using track_vec = std::vector<FeatureTrack, Eigen::aligned_allocator<FeatureTrack>>;
     std::unordered_map<size_t, track_vec> _edge_tracks;
-    MeshGraph _global_mesh;
+    MeshGraph _mesh;
 };
 
 } // namespace opencalibration

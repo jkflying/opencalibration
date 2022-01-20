@@ -74,10 +74,11 @@ void RelaxProblem::setupGroundPlaneProblem(const MeasurementGraph &graph, std::v
 void RelaxProblem::setupGroundMeshProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                                           std::unordered_map<size_t, CameraModel> &cam_models,
                                           const std::unordered_set<size_t> &edges_to_optimize,
-                                          const RelaxOptionSet &options)
+                                          const RelaxOptionSet &options,
+                                          const std::vector<surface_model> &previousSurfaces)
 {
     initialize(nodes, cam_models);
-    initializeGroundMesh();
+    initializeGroundMesh(previousSurfaces);
     _loss.Reset(new ceres::HuberLoss(1 * M_PI / 180), ceres::TAKE_OWNERSHIP);
     gridFilterMatchesPerImage(graph, edges_to_optimize, 0.1);
 
@@ -314,7 +315,7 @@ void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, 
     const std::array<double *, 2> datas = {pkg.source.rot_ptr->coeffs().data(), pkg.dest.rot_ptr->coeffs().data()};
 
     MeshIntersectionSearcher intersectionSearcher;
-    intersectionSearcher.init(_global_mesh);
+    intersectionSearcher.init(_mesh);
 
     bool points_added = false;
     for (const auto &inlier : edge.payload.inlier_matches)
@@ -407,7 +408,7 @@ void RelaxProblem::relaxObservedModelOnly()
         }
     }
 
-    for (auto iter = _global_mesh.nodebegin(); iter != _global_mesh.nodeend(); ++iter)
+    for (auto iter = _mesh.nodebegin(); iter != _mesh.nodeend(); ++iter)
     {
         auto &p = iter->second.payload.location;
         if (params_set.find(&p.z()) != params_set.end())
@@ -602,9 +603,9 @@ void RelaxProblem::initializeGroundPlane()
     Eigen::Vector2d xy_min(1e12, 1e12), xy_max(-1e12, -1e12);
     double height = 0;
 
-    for (const auto &p : _nodes_to_optimize)
+    for (const auto &[key, value] : _nodes_to_optimize)
     {
-        Eigen::Vector3d &loc = p.second->position;
+        const Eigen::Vector3d &loc = value->position;
         xy_min = xy_min.cwiseMin(loc.topRows<2>());
         xy_max = xy_max.cwiseMax(loc.topRows<2>());
         height += loc.z();
@@ -639,27 +640,27 @@ void RelaxProblem::initializeGroundPlane()
     plane.corner[1] << Eigen::Vector2d(spacing, -spacing) + center, height;
     plane.corner[2] << Eigen::Vector2d(0, spacing) + center, height;
 
-    _global_mesh = MeshGraph();
+    _mesh = MeshGraph();
     std::array<size_t, 3> nodeIds;
     for (size_t i = 0; i < 3; i++)
     {
-        nodeIds[i] = _global_mesh.addNode(MeshNode{plane.corner[i]});
+        nodeIds[i] = _mesh.addNode(MeshNode{plane.corner[i]});
     }
     for (size_t i = 0; i < 3; i++)
     {
-        _global_mesh.addEdge(MeshEdge{true, {nodeIds[(i + 2) % 3], 0}}, nodeIds[i], nodeIds[(i + 1) % 3]);
+        _mesh.addEdge(MeshEdge{true, {nodeIds[(i + 2) % 3], 0}}, nodeIds[i], nodeIds[(i + 1) % 3]);
     }
 }
 
-void RelaxProblem::initializeGroundMesh()
+void RelaxProblem::initializeGroundMesh(const std::vector<surface_model> &previousSurfaces)
 {
     point_cloud cameraLocations;
     cameraLocations.reserve(_nodes_to_optimize.size());
-    for (const auto &node : _nodes_to_optimize)
+    for (const auto &[key, value] : _nodes_to_optimize)
     {
-        cameraLocations.push_back(node.second->position);
+        cameraLocations.push_back(value->position);
     }
-    _global_mesh = rebuildMesh(cameraLocations, _global_mesh);
+    _mesh = rebuildMesh(cameraLocations, previousSurfaces);
 }
 
 void RelaxProblem::addDownwardsPrior()
@@ -680,13 +681,13 @@ void RelaxProblem::addMeshFlatPrior()
 
     // for each edge in the graph
     // add a cost for the nodes on each side being different heights
-    for (auto iter = _global_mesh.edgebegin(); iter != _global_mesh.edgeend(); ++iter)
+    for (auto iter = _mesh.edgebegin(); iter != _mesh.edgeend(); ++iter)
     {
         const size_t sourceId = iter->second.getSource();
         const size_t destId = iter->second.getDest();
 
-        auto *sourceNode = _global_mesh.getNode(sourceId);
-        auto *destNode = _global_mesh.getNode(destId);
+        auto *sourceNode = _mesh.getNode(sourceId);
+        auto *destNode = _mesh.getNode(destId);
 
         double *h1 = &sourceNode->payload.location.z();
         double *h2 = &destNode->payload.location.z();
@@ -723,7 +724,7 @@ surface_model RelaxProblem::getSurfaceModel()
         }
     }
 
-    s.mesh = _global_mesh;
+    s.mesh = _mesh;
 
     return s;
 }
