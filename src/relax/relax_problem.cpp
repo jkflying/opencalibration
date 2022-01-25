@@ -80,7 +80,7 @@ void RelaxProblem::setupGroundMeshProblem(const MeasurementGraph &graph, std::ve
     initialize(nodes, cam_models);
     initializeGroundMesh(previousSurfaces);
     _loss.Reset(new ceres::HuberLoss(1 * M_PI / 180), ceres::TAKE_OWNERSHIP);
-    gridFilterMatchesPerImage(graph, edges_to_optimize, 0.1);
+    gridFilterMatchesPerImage(graph, edges_to_optimize, 0.05);
 
     for (size_t edge_id : edges_to_optimize)
     {

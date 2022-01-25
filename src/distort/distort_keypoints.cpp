@@ -90,7 +90,7 @@ Eigen::Vector3d image_to_3d(const Eigen::Vector2d &keypoint, const CameraModel &
     // TODO: make better initial guesses depending on the structure of the distortion parameters
     // eg. use a quadratic solver if only 2/4 or 1/2 nonzero, and benchmark to see if it is faster
 
-    if (model.radial_distortion.squaredNorm() + model.tangential_distortion.squaredNorm() > 0)
+    if ((model.radial_distortion.array() > 0).any() || (model.tangential_distortion.array() > 0).any())
     {
         ceres::TinySolver<DistortionFunctor> solver;
         DistortionFunctor func(unprojected_point, model);
