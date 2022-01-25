@@ -49,7 +49,7 @@ bool toXYZ(const std::vector<surface_model> &surfaces, std::ostream &out,
 
 std::array<std::pair<int64_t, int64_t>, 3> filterOutliers(const std::vector<surface_model> &surfaces)
 {
-    std::array<std::unordered_map<int64_t, size_t>, 3> count_map;
+    std::array<std::unordered_map<int64_t, size_t>, 3> count_map{};
 
     size_t total = 0;
     for (const auto &s : surfaces)
@@ -87,7 +87,8 @@ std::array<std::pair<int64_t, int64_t>, 3> filterOutliers(const std::vector<surf
             highSum += counts[highIndex--].second;
         }
 
-        int64_t lowBound = counts[lowIndex].first, highBound = counts[highIndex].first;
+        int64_t lowBound = counts.empty() ? 0 : counts[lowIndex].first,
+                highBound = counts.empty() ? 0 : counts[highIndex].first;
         int64_t width = (highBound - lowBound) * 2;
         int64_t mid = lowBound + width / 2;
 
