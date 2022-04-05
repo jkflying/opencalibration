@@ -44,7 +44,7 @@ using namespace usm;
  */
 
 namespace test {
-    
+
 enum TestStates {
   START,
   PATH_A_1,
@@ -56,9 +56,13 @@ enum TestStates {
   CLEANUP
 };
 
-class TestStateMachine final : public StateMachine<TestStates> {
+
+enum class TestTransition { REPEAT, CONTINUE, OUT_OF_DATA, ERROR };
+
+
+class TestStateMachine final : public StateMachine<TestStates, TestTransition> {
  public:
-  TestStateMachine() : StateMachine<TestStates>(START) {}
+  TestStateMachine() : StateMachine<TestStates, TestTransition>(START) {}
 
   bool path_a = true;
   bool trigger_error_once = false;
@@ -91,21 +95,22 @@ class TestStateMachine final : public StateMachine<TestStates> {
         case CLEANUP: return cleanup();
     }
     // clang-format on
+    return Transition::ERROR;
   }
 
   TestStates chooseNextState(TestStates currentState,
                              Transition transition) override {
     // clang-format off
     USM_TABLE(currentState, CLEANUP,
-      USM_STATE(transition, START,    USM_MAP(NEXT1, PATH_A_1);
-                                      USM_MAP(NEXT2, PATH_B_1));
-      USM_STATE(transition, PATH_A_1, USM_MAP(NEXT1, PATH_A_2);
-                                      USM_MAP(ERROR, PATH_B_3));
-      USM_STATE(transition, PATH_A_2, USM_MAP(NEXT1, END));
-      USM_STATE(transition, PATH_B_1, USM_MAP(NEXT1, PATH_B_2));
-      USM_STATE(transition, PATH_B_2, USM_MAP(NEXT1, PATH_B_3));
-      USM_STATE(transition, PATH_B_3, USM_MAP(NEXT1, END));
-      USM_STATE(transition, CLEANUP,  USM_MAP(NEXT1, END))
+      USM_STATE(transition, START,    USM_MAP(Transition::CONTINUE, PATH_A_1);
+                                      USM_MAP(Transition::OUT_OF_DATA, PATH_B_1));
+      USM_STATE(transition, PATH_A_1, USM_MAP(Transition::CONTINUE, PATH_A_2);
+                                      USM_MAP(Transition::ERROR, PATH_B_3));
+      USM_STATE(transition, PATH_A_2, USM_MAP(Transition::CONTINUE, END));
+      USM_STATE(transition, PATH_B_1, USM_MAP(Transition::CONTINUE, PATH_B_2));
+      USM_STATE(transition, PATH_B_2, USM_MAP(Transition::CONTINUE, PATH_B_3));
+      USM_STATE(transition, PATH_B_3, USM_MAP(Transition::CONTINUE, END));
+      USM_STATE(transition, CLEANUP,  USM_MAP(Transition::CONTINUE, END))
     );
     // clang-format on
   }
@@ -113,27 +118,27 @@ class TestStateMachine final : public StateMachine<TestStates> {
  private:
   Transition start() {
     start_called = true;
-    return path_a ? Transition::NEXT1 : NEXT2;
+    return path_a ? Transition::CONTINUE : Transition::OUT_OF_DATA;
   }
   Transition a1() {
     a1_called = true;
-    return Transition::NEXT1;
+    return Transition::CONTINUE;
   }
   Transition a2() {
     a2_called = true;
-    return Transition::NEXT1;
+    return Transition::CONTINUE;
   }
   Transition b1() {
     b1_called = true;
-    return Transition::NEXT1;
+    return Transition::CONTINUE;
   }
   Transition b2() {
     b2_called = true;
-    return Transition::NEXT1;
+    return Transition::CONTINUE;
   }
   Transition b3() {
     b3_called = true;
-    return Transition::NEXT1;
+    return Transition::CONTINUE;
   }
   Transition end() {
     end_called = true;
@@ -141,7 +146,7 @@ class TestStateMachine final : public StateMachine<TestStates> {
   }
   Transition cleanup() {
     cleanup_called = true;
-    return Transition::NEXT1;
+    return Transition::CONTINUE;
   }
 };
 
