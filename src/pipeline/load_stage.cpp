@@ -1,7 +1,6 @@
 #include <opencalibration/pipeline/load_stage.hpp>
 
-#include <opencalibration/extract/extract_features.hpp>
-#include <opencalibration/extract/extract_metadata.hpp>
+#include <opencalibration/extract/extract_image.hpp>
 #include <opencalibration/performance/performance.hpp>
 
 #include <spdlog/spdlog.h>
@@ -48,26 +47,8 @@ std::vector<std::function<void()>> LoadStage::get_runners()
     for (size_t i = 0; i < _paths_to_load.size(); i++)
     {
         auto run_func = [&, i]() {
-            PerformanceMeasure p("Load runner features");
-            const std::string &path = _paths_to_load[i];
-            image img;
-            img.path = path;
-            img.features = extract_features(img.path);
-            if (img.features.size() == 0)
-            {
-                return;
-            }
-            p.reset("Load runner metadata");
-            img.metadata = extract_metadata(img.path);
 
-            img.model = std::make_shared<CameraModel>();
-
-            img.model->focal_length_pixels = img.metadata.camera_info.focal_length_px;
-            img.model->pixels_cols = img.metadata.camera_info.width_px;
-            img.model->pixels_rows = img.metadata.camera_info.height_px;
-            img.model->principle_point = Eigen::Vector2d(img.model->pixels_cols, img.model->pixels_rows) / 2;
-            img.model->id = 0;
-
+            image img = extract_image(_paths_to_load[i]);
             std::lock_guard<std::mutex> lock(_images_mutex);
             _images.emplace_back(i, std::move(img));
         };

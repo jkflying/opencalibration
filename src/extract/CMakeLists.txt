@@ -1,4 +1,5 @@
 add_library(oc_extract extract_features.cpp
+                       extract_image.cpp
                        extract_metadata.cpp
                        ${PROJECT_SOURCE_DIR}/external/TinyEXIF-master/TinyEXIF.cpp)
 

@@ -1,37 +1,29 @@
 #include <opencalibration/extract/extract_features.hpp>
 
 #include <opencv2/features2d.hpp>
-#include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
 
 #include <jk/KDTree.h>
 
-#include <iostream>
-#include <mutex>
-
 namespace opencalibration
 {
 
-std::vector<feature_2d> extract_features(const std::string &path)
+std::vector<feature_2d> extract_features(const cv::Mat &image)
 {
-    if (cv::getNumThreads() != 1)
-    {
-        cv::setNumThreads(1);
-    }
+
     int max_length_pixels = 800;
     double nms_pixel_radius = 8;
     std::vector<feature_2d> results;
 
-    cv::Mat image = cv::imread(path);
-    if (image.size().width == 0 && image.size().height == 0)
+    if (image.empty())
     {
         return results;
     }
 
-    cv::cvtColor(image, image, cv::COLOR_BGR2GRAY);
-    double scale = std::min(1.f, float(max_length_pixels) / std::max(image.size().width, image.size().height));
     cv::Mat image_scaled;
-    cv::resize(image, image_scaled, cv::Size(0, 0), scale, scale);
+    cv::cvtColor(image, image_scaled, cv::COLOR_BGR2GRAY);
+    double scale = std::min(1.f, float(max_length_pixels) / std::max(image.size().width, image.size().height));
+    cv::resize(image_scaled, image_scaled, cv::Size(0, 0), scale, scale, cv::INTER_AREA);
 
     cv::Mat descriptors;
 
@@ -59,8 +51,8 @@ std::vector<feature_2d> extract_features(const std::string &path)
     std::sort(oc_keypoints.begin(), oc_keypoints.end(),
               [](const feature_2d &a, const feature_2d &b) -> bool { return a.strength > b.strength; });
 
-    results.reserve(std::min(keypoints.size(), static_cast<size_t>(image.size().width / nms_pixel_radius *
-                                                                   image.size().height / nms_pixel_radius)));
+    results.reserve(std::min(keypoints.size(), static_cast<size_t>(image_scaled.size().width / nms_pixel_radius *
+                                                                   image_scaled.size().height / nms_pixel_radius)));
 
     auto toArray = [](const Eigen::Vector2d &v) -> std::array<double, 2> { return {v.x(), v.y()}; };
     jk::tree::KDTree<size_t, 2, 8> tree;
