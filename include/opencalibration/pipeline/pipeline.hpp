@@ -27,6 +27,7 @@ enum class PipelineState
     GLOBAL_RELAX,
     CAMERA_PARAMETER_RELAX,
     FINAL_GLOBAL_RELAX,
+    GENERATE_THUMBNAIL,
     COMPLETE
 };
 
@@ -88,6 +89,7 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
     PipelineTransition global_relax();
     PipelineTransition camera_parameter_relax();
     PipelineTransition final_global_relax();
+    PipelineTransition generate_thumbnail();
     PipelineTransition complete();
 
     std::vector<size_t> _previous_loaded_ids, _previous_linked_ids, _next_loaded_ids, _next_linked_ids;

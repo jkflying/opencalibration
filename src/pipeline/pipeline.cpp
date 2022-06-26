@@ -5,6 +5,10 @@
 #include <opencalibration/pipeline/load_stage.hpp>
 #include <opencalibration/pipeline/relax_stage.hpp>
 
+#include <opencalibration/distort/distort_keypoints.hpp>
+#include <opencalibration/surface/intersect.hpp>
+#include <opencv2/highgui.hpp>
+
 #include <spdlog/spdlog.h>
 
 #include <chrono>
@@ -59,6 +63,8 @@ PipelineState Pipeline::chooseNextState(PipelineState currentState, Transition t
         USM_STATE(transition, State::CAMERA_PARAMETER_RELAX,
                   USM_MAP(Transition::NEXT, State::FINAL_GLOBAL_RELAX));
         USM_STATE(transition, State::FINAL_GLOBAL_RELAX,
+                  USM_MAP(Transition::NEXT, State::GENERATE_THUMBNAIL));
+        USM_STATE(transition, State::GENERATE_THUMBNAIL,
                   USM_MAP(Transition::NEXT, State::COMPLETE));
     );
     // clang-format on
@@ -85,6 +91,9 @@ Pipeline::Transition Pipeline::runCurrentState(PipelineState currentState)
         break;
     case State::COMPLETE:
         t = complete();
+        break;
+    case State::GENERATE_THUMBNAIL:
+        t = generate_thumbnail();
         break;
     default:
         t = Transition::ERROR;
@@ -223,6 +232,151 @@ Pipeline::Transition Pipeline::final_global_relax()
         return Transition::REPEAT;
 }
 
+Pipeline::Transition Pipeline::generate_thumbnail()
+{
+    // calculate min/max x/y, and average z
+    const double inf = std::numeric_limits<double>::infinity();
+    double min_x = inf, min_y = inf, max_x = -inf, max_y = -inf;
+    double mean_surface_z = 0;
+    size_t count_z = 0;
+
+    for (const auto &surface : _surfaces)
+    {
+        for (auto iter = surface.mesh.cnodebegin(); iter != surface.mesh.cnodeend(); ++iter)
+        {
+            const auto &loc = iter->second.payload.location;
+
+
+            mean_surface_z = (loc.z() + mean_surface_z * count_z) / (count_z + 1);
+            count_z++;
+        }
+    }
+
+    // calculate gsd size based on thumbnail resolution at average mesh/keypoint height
+    double thumb_arc_pixel = 0;
+    double mean_camera_z = 0;
+    size_t thumb_count = 0;
+    for (auto iter = _graph.cnodebegin(); iter != _graph.cnodeend(); ++iter)
+    {
+        const auto &payload = iter->second.payload;
+
+        const auto& loc = payload.position;
+        min_x = std::min(min_x, loc.x());
+        max_x = std::max(max_x, loc.x());
+        min_y = std::min(min_y, loc.y());
+        max_y = std::max(max_y, loc.y());
+
+
+        const double h = 0.001;
+        Eigen::Vector2d pixel = image_from_3d({0, 0, 1}, *payload.model);
+        Eigen::Vector2d pixelShift = image_from_3d({h, 0, 1}, *payload.model);
+        double arc_pixel = h / (pixel - pixelShift).norm();
+        double thumb_scale =
+            static_cast<double>(payload.thumbnail.size().height) / payload.metadata.camera_info.height_px;
+        thumb_arc_pixel = (thumb_arc_pixel * thumb_count + arc_pixel / thumb_scale) / (thumb_count + 1);
+        mean_camera_z = (mean_camera_z * thumb_count + payload.position.z()) / (thumb_count + 1);
+        thumb_count++;
+    }
+    spdlog::info("x range [{}; {}]  y range [{}; {}]  mean surface {}", min_x, max_x, min_y, max_y, mean_surface_z);
+
+    const double average_camera_elevation = mean_camera_z - mean_surface_z;
+    const double mean_gsd = average_camera_elevation * thumb_arc_pixel;
+
+    // from bounds and gsd, calculate image resolution
+    const double image_width = (max_x - min_x) / mean_gsd;
+    const double image_height = (max_y - min_y) / mean_gsd;
+
+    cv::Size image_dimensions(static_cast<int>(image_height), static_cast<int>(image_width));
+
+    spdlog::info("gsd {}  img dims {}x{}", mean_gsd, image_dimensions.width, image_dimensions.height);
+
+    cv::Mat image(image_dimensions, CV_8UC3, cv::Scalar(0, 0, 0));
+    cv::Mat source(image_dimensions, CV_32S, -1);
+
+    std::vector<MeshIntersectionSearcher> searchers;
+    for (const auto &surface : _surfaces)
+    {
+        searchers.emplace_back();
+        searchers.back().init(surface.mesh);
+    }
+    std::unordered_map<size_t, int> cameraLookups;
+
+    // iterate over each pixel
+    for (int row = 0; row < image_dimensions.height; row++)
+    {
+        spdlog::debug("processing row {}", row);
+
+        for (int col = 0; col < image_dimensions.width; col++)
+        {
+            spdlog::debug("processing col {}", col);
+
+            const double x = col * mean_gsd + min_x;
+            const double y = row * mean_gsd + min_y;
+
+            // get image vertically closest
+            auto closest = _imageGPSLocations.search({x, y, average_camera_elevation});
+            const auto *closestNode = _graph.getNode(closest.payload);
+            const auto &payload = closestNode->payload;
+
+
+            spdlog::debug("closest node {} filename {}", closest.payload, payload.path);
+
+
+            // get height of pixel from mesh or nearest keypoint
+            const ray_d intersectinoRay{{x, y, average_camera_elevation}, {0, 0, -1}};
+            double z = NAN;
+            for (auto &searcher : searchers)
+            {
+                auto result = searcher.triangleIntersect(intersectinoRay);
+                if (result.type == MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
+                {
+                    z = result.intersectionLocation.z();
+                    break;
+                }
+            }
+
+            Eigen::Vector3d sample_point(x, y, z);
+
+            spdlog::debug("intersection point {}, {}, {}", sample_point.x(), sample_point.y(), sample_point.z());
+
+            // backproject 3D point onto thumbnail image, get color
+
+            Eigen::Vector2d pixel = image_from_3d(sample_point, *payload.model, payload.position, payload.orientation);
+
+            spdlog::debug("thumbnail pixel point {}, {}", pixel.x(), pixel.y());
+
+
+            const double thumb_scale =
+                static_cast<double>(payload.thumbnail.size().height) / payload.metadata.camera_info.height_px;
+            Eigen::Vector2d thumb_pixel = pixel * thumb_scale;
+            cv::Point2i cvPixel(thumb_pixel.x(), thumb_pixel.y());
+            cv::Vec3b color = payload.thumbnail.at<cv::Vec3b>(cvPixel);
+
+            // assign color to thumbnail pixel
+            image.at<cv::Vec3b>(row, col) = color;
+
+            auto cameraIndexIter = cameraLookups.find(closest.payload);
+            if (cameraIndexIter == cameraLookups.end())
+            {
+                cameraIndexIter =
+                    cameraLookups
+                        .insert(std::pair<size_t, int>(closest.payload, static_cast<int>(cameraLookups.size())))
+                        .first;
+            }
+
+            source.at<int>(row, col) = cameraLookups[closest.payload];
+        }
+    }
+
+    cv::imshow("thumb", image);
+    cv::waitKey();
+
+    // TODO: some kind of color balancing of the different patches - maybe in LAB space?
+    // TODO: laplacian or gradient domain blending of the differrent patches
+
+    return Transition::NEXT;
+}
+
 Pipeline::Transition Pipeline::complete()
 {
     return Transition::REPEAT;
@@ -240,6 +394,8 @@ std::string Pipeline::toString(PipelineState state)
         return "Camera Parameter Relax";
     case State::FINAL_GLOBAL_RELAX:
         return "Final Global Relax";
+    case State::GENERATE_THUMBNAIL:
+        return "Generate Thumbnail";
     case State::COMPLETE:
         return "Complete";
     };

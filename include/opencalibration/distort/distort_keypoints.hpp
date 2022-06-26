@@ -4,6 +4,7 @@
 #include <opencalibration/types/correspondence.hpp>
 #include <opencalibration/types/feature_2d.hpp>
 #include <opencalibration/types/feature_match.hpp>
+#include <opencalibration/types/ray.hpp>
 
 #include <eigen3/Eigen/Geometry>
 
@@ -56,6 +57,16 @@ Eigen::Matrix<T, 2, 1> image_from_3d(const Eigen::Matrix<T, 3, 1> &ray, const Di
 
     Eigen::Matrix<T, 2, 1> pixel_location = ray_distorted * model.focal_length_pixels + model.principle_point;
     return pixel_location;
+}
+
+template <typename T = double>
+Eigen::Matrix<T, 2, 1> image_from_3d(const Eigen::Matrix<T, 3, 1> &point, const DifferentiableCameraModel<T> &model,
+                                     const Eigen::Matrix<T, 3, 1> &camera_location,
+                                     const Eigen::Quaternion<T> &camera_orientation)
+{
+    auto ray = camera_location - point;
+    auto rotated_ray = camera_orientation * ray;
+    return image_from_3d(rotated_ray, model);
 }
 
 } // namespace opencalibration
