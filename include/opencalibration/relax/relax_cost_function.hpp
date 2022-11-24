@@ -215,11 +215,7 @@ struct PixelErrorCost_Orientation
         const QuaterionTCM rotation_em(rotation);
         const Vector3TCM point_em(point);
 
-        Vector3T ray = rotation_em.inverse() * (loc.cast<T>() - point_em);
-
-        DifferentiableCameraModel<T> model_t = model.cast<T>();
-
-        Vector2T projected_pixel = image_from_3d<T>(ray, model_t);
+        const Vector2T projected_pixel = image_from_3d<T>(point_em, model.cast<T>(), loc.cast<T>(), rotation_em);
 
         Vector2TM residuals_m(residuals);
         residuals_m = projected_pixel - pixel.cast<T>();

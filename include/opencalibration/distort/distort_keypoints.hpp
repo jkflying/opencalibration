@@ -64,8 +64,7 @@ Eigen::Matrix<T, 2, 1> image_from_3d(const Eigen::Matrix<T, 3, 1> &point, const 
                                      const Eigen::Matrix<T, 3, 1> &camera_location,
                                      const Eigen::Quaternion<T> &camera_orientation)
 {
-    auto ray = camera_location - point;
-    auto rotated_ray = camera_orientation * ray;
+    auto rotated_ray = camera_orientation.inverse() * (camera_location - point);
     return image_from_3d(rotated_ray, model);
 }
 
