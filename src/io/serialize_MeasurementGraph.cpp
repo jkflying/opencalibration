@@ -256,7 +256,6 @@ template <> class Serializer<MeasurementGraph>
                 }
                 writer.EndArray();
 
-
                 std::vector<uchar> thumbPng;
                 cv::imencode(".png", node.payload.thumbnail, thumbPng);
                 std::string b64Thumb;

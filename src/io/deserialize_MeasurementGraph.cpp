@@ -72,7 +72,7 @@ template <> class Deserializer<MeasurementGraph>
                     const char *base64_thumbnail = niter->value.GetObject()["thumbnail"].GetString();
                     std::vector<uchar> thumbnail;
                     thumbnail.resize(Base64decode_len(base64_thumbnail), '\0');
-                    int actual_size = Base64decode(reinterpret_cast<char*>(thumbnail.data()), base64_thumbnail);
+                    int actual_size = Base64decode(reinterpret_cast<char *>(thumbnail.data()), base64_thumbnail);
                     thumbnail.resize(actual_size);
                     cv::imdecode(thumbnail, cv::IMREAD_COLOR, &img.thumbnail);
 

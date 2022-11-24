@@ -157,7 +157,6 @@ const MeshIntersectionSearcher::IntersectionInfo &MeshIntersectionSearcher::tria
     return _info;
 }
 
-
 const MeshIntersectionSearcher::IntersectionInfo &MeshIntersectionSearcher::lastResult()
 {
     return _info;

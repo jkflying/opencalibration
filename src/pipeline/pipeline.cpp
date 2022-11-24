@@ -234,6 +234,7 @@ Pipeline::Transition Pipeline::final_global_relax()
 
 Pipeline::Transition Pipeline::generate_thumbnail()
 {
+
     // calculate min/max x/y, and average z
     const double inf = std::numeric_limits<double>::infinity();
     double min_x = inf, min_y = inf, max_x = -inf, max_y = -inf;
@@ -296,7 +297,7 @@ Pipeline::Transition Pipeline::generate_thumbnail()
     for (const auto &surface : _surfaces)
     {
         searchers.emplace_back();
-        if(!searchers.back().init(surface.mesh))
+        if (!searchers.back().init(surface.mesh))
         {
             spdlog::error("Could not initialize searcher on mesh surface");
         }
@@ -314,7 +315,6 @@ Pipeline::Transition Pipeline::generate_thumbnail()
 
             const double x = col * mean_gsd + min_x;
             const double y = row * mean_gsd + min_y;
-
 
             // get height of pixel from mesh or nearest keypoint
             const ray_d intersectinoRay{{x, y, average_camera_elevation}, {0, 0, -1}};
@@ -338,13 +338,11 @@ Pipeline::Transition Pipeline::generate_thumbnail()
 
             spdlog::debug("intersection point {}, {}, {}", sample_point.x(), sample_point.y(), sample_point.z());
 
-
             // get image vertically closest
             auto closest = _imageGPSLocations.search({x, y, average_camera_elevation});
             const auto *closestNode = _graph.getNode(closest.payload);
             const auto &payload = closestNode->payload;
             spdlog::debug("closest node {} filename {}", closest.payload, payload.path);
-
 
             // backproject 3D point onto thumbnail image, get color
             Eigen::Vector2d pixel = image_from_3d(sample_point, *payload.model, payload.position, payload.orientation);
@@ -385,11 +383,11 @@ Pipeline::Transition Pipeline::generate_thumbnail()
 
     cv::imwrite("thumbnail.png", image);
     cv::imwrite("source.tiff", source);
-//     cv::imshow("thumb", image);
-//     cv::waitKey();
-//
-//     cv::imshow("source", source);
-//     cv::waitKey();
+    //     cv::imshow("thumb", image);
+    //     cv::waitKey();
+    //
+    //     cv::imshow("source", source);
+    //     cv::waitKey();
 
     // TODO: some kind of color balancing of the different patches - maybe in LAB space?
     // TODO: laplacian or gradient domain blending of the differrent patches

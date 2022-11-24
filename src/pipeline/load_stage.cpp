@@ -47,7 +47,6 @@ std::vector<std::function<void()>> LoadStage::get_runners()
     for (size_t i = 0; i < _paths_to_load.size(); i++)
     {
         auto run_func = [&, i]() {
-
             image img = extract_image(_paths_to_load[i]);
             std::lock_guard<std::mutex> lock(_images_mutex);
             _images.emplace_back(i, std::move(img));
