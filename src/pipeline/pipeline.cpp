@@ -1,14 +1,15 @@
 #include <opencalibration/pipeline/pipeline.hpp>
 
-#include <opencalibration/combinatorics/interleave.hpp>
 #include <opencalibration/pipeline/link_stage.hpp>
 #include <opencalibration/pipeline/load_stage.hpp>
 #include <opencalibration/pipeline/relax_stage.hpp>
 
+#include <opencalibration/combinatorics/interleave.hpp>
 #include <opencalibration/distort/distort_keypoints.hpp>
 #include <opencalibration/surface/intersect.hpp>
-#include <opencv2/highgui.hpp>
+#include <opencalibration/performance/performance.hpp>
 
+#include <opencv2/imgcodecs.hpp>
 #include <spdlog/spdlog.h>
 
 #include <chrono>
@@ -235,6 +236,8 @@ Pipeline::Transition Pipeline::final_global_relax()
 Pipeline::Transition Pipeline::generate_thumbnail()
 {
 
+    PerformanceMeasure p("Generate thumbnail");
+
     // calculate min/max x/y, and average z
     const double inf = std::numeric_limits<double>::infinity();
     double min_x = inf, min_y = inf, max_x = -inf, max_y = -inf;
@@ -286,7 +289,7 @@ Pipeline::Transition Pipeline::generate_thumbnail()
     const double image_width = (max_x - min_x) / mean_gsd;
     const double image_height = (max_y - min_y) / mean_gsd;
 
-    cv::Size image_dimensions(static_cast<int>(image_height), static_cast<int>(image_width));
+    cv::Size image_dimensions(static_cast<int>(image_width), static_cast<int>(image_height));
 
     spdlog::info("gsd {}  img dims {}x{}", mean_gsd, image_dimensions.width, image_dimensions.height);
 
@@ -317,8 +320,8 @@ Pipeline::Transition Pipeline::generate_thumbnail()
             const double y = row * mean_gsd + min_y;
 
             // get height of pixel from mesh or nearest keypoint
-            const ray_d intersectinoRay{{x, y, average_camera_elevation}, {0, 0, -1}};
-            double z = mean_surface_z; // TODO: change back to NaN!!!!
+            const ray_d intersectinoRay{{0, 0, -1}, {x, y, average_camera_elevation}};
+            double z = NAN;
             for (auto &searcher : searchers)
             {
                 if (searcher.lastResult().type != MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
@@ -336,32 +339,28 @@ Pipeline::Transition Pipeline::generate_thumbnail()
 
             Eigen::Vector3d sample_point(x, y, z);
 
-            spdlog::debug("intersection point {}, {}, {}", sample_point.x(), sample_point.y(), sample_point.z());
 
             // get image vertically closest
             auto closest = _imageGPSLocations.search({x, y, average_camera_elevation});
             const auto *closestNode = _graph.getNode(closest.payload);
             const auto &payload = closestNode->payload;
-            spdlog::debug("closest node {} filename {}", closest.payload, payload.path);
 
             // backproject 3D point onto thumbnail image, get color
             Eigen::Vector2d pixel = image_from_3d(sample_point, *payload.model, payload.position, payload.orientation);
 
-            spdlog::debug("pixel point {}, {}", pixel.x(), pixel.y());
 
             const double thumb_scale =
                 static_cast<double>(payload.thumbnail.size().height) / payload.metadata.camera_info.height_px;
             Eigen::Vector2d thumb_pixel = pixel * thumb_scale;
             cv::Point2i cvPixel(thumb_pixel.x(), thumb_pixel.y());
-            spdlog::debug("thumbnail pixel point {}, {}", cvPixel.x, cvPixel.y);
 
-            cv::Vec3b color{};
-            int pixelSource = 255;
+            cv::Vec3b color = cv::Vec3b(1,1,1) * ((row + col) % 2 == 0 ? 0 : 255);
+            int pixelSource = (row + col) % 2 == 0 ? -1 : static_cast<int>(_graph.size_nodes()); // give a checkerboard pattern of illegal values for background color
 
             if (0 < cvPixel.x && cvPixel.x < payload.thumbnail.size().width && 0 < cvPixel.y &&
                 cvPixel.y < payload.thumbnail.size().height)
             {
-                color = payload.thumbnail.at<cv::Vec3b>(cvPixel);
+                color = payload.thumbnail.at<cv::Vec3b>(cvPixel); // TODO: use a kernel to get subpixel accuracy
 
                 auto cameraIndexIter = cameraLookups.find(closest.payload);
                 if (cameraIndexIter == cameraLookups.end())
@@ -374,6 +373,10 @@ Pipeline::Transition Pipeline::generate_thumbnail()
 
                 pixelSource = cameraLookups[closest.payload];
             }
+            else
+            {
+                // TODO: look up alternative pixels from different cameras
+            }
 
             // assign color to thumbnail pixel
             image.at<cv::Vec3b>(row, col) = color;
@@ -383,11 +386,6 @@ Pipeline::Transition Pipeline::generate_thumbnail()
 
     cv::imwrite("thumbnail.png", image);
     cv::imwrite("source.tiff", source);
-    //     cv::imshow("thumb", image);
-    //     cv::waitKey();
-    //
-    //     cv::imshow("source", source);
-    //     cv::waitKey();
 
     // TODO: some kind of color balancing of the different patches - maybe in LAB space?
     // TODO: laplacian or gradient domain blending of the differrent patches

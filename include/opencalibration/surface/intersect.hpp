@@ -38,7 +38,7 @@ class MeshIntersectionSearcher
     // Faster if called consecutively with rays that intersect the mesh near to each other
     // Note: not threadsafe, use one instance of MeshIntersectionSearcher per thread
     const IntersectionInfo &triangleIntersect(const ray_d &r);
-    const IntersectionInfo& lastResult();
+    const IntersectionInfo &lastResult();
 
     bool initialized() const
     {
