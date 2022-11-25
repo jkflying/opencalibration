@@ -6,8 +6,8 @@
 
 #include <opencalibration/combinatorics/interleave.hpp>
 #include <opencalibration/distort/distort_keypoints.hpp>
-#include <opencalibration/surface/intersect.hpp>
 #include <opencalibration/performance/performance.hpp>
+#include <opencalibration/surface/intersect.hpp>
 
 #include <opencv2/imgcodecs.hpp>
 #include <spdlog/spdlog.h>
@@ -236,8 +236,6 @@ Pipeline::Transition Pipeline::final_global_relax()
 Pipeline::Transition Pipeline::generate_thumbnail()
 {
 
-    PerformanceMeasure p("Generate thumbnail");
-
     // calculate min/max x/y, and average z
     const double inf = std::numeric_limits<double>::infinity();
     double min_x = inf, min_y = inf, max_x = -inf, max_y = -inf;
@@ -293,23 +291,23 @@ Pipeline::Transition Pipeline::generate_thumbnail()
 
     spdlog::info("gsd {}  img dims {}x{}", mean_gsd, image_dimensions.width, image_dimensions.height);
 
-    cv::Mat image(image_dimensions, CV_8UC3, cv::Scalar(0, 0, 0));
+    cv::Mat image(image_dimensions, CV_8UC4, cv::Scalar(0, 0, 0, 0));
     cv::Mat source(image_dimensions, CV_32S, -1);
 
-    std::vector<MeshIntersectionSearcher> searchers;
-    for (const auto &surface : _surfaces)
-    {
-        searchers.emplace_back();
-        if (!searchers.back().init(surface.mesh))
-        {
-            spdlog::error("Could not initialize searcher on mesh surface");
-        }
-    }
-    std::unordered_map<size_t, int> cameraLookups;
-
     // iterate over each pixel
+#pragma omp parallel for
     for (int row = 0; row < image_dimensions.height; row++)
     {
+        PerformanceMeasure p("Generate thumbnail");
+        std::vector<MeshIntersectionSearcher> searchers;
+        for (const auto &surface : _surfaces)
+        {
+            searchers.emplace_back();
+            if (!searchers.back().init(surface.mesh))
+            {
+                spdlog::error("Could not initialize searcher on mesh surface");
+            }
+        }
         spdlog::debug("processing row {}", row);
 
         for (int col = 0; col < image_dimensions.width; col++)
@@ -339,47 +337,42 @@ Pipeline::Transition Pipeline::generate_thumbnail()
 
             Eigen::Vector3d sample_point(x, y, z);
 
+            cv::Vec4b color(0, 0, 0, 0);
+            int pixelSource =
+                (row + col) % 2 == 0
+                    ? -1
+                    : static_cast<int>(
+                          _graph.size_nodes()); // give a checkerboard pattern of illegal values for background color
+
+            auto closest5 = _imageGPSLocations.searchKnn({x, y, average_camera_elevation}, 5);
 
             // get image vertically closest
-            auto closest = _imageGPSLocations.search({x, y, average_camera_elevation});
-            const auto *closestNode = _graph.getNode(closest.payload);
-            const auto &payload = closestNode->payload;
-
-            // backproject 3D point onto thumbnail image, get color
-            Eigen::Vector2d pixel = image_from_3d(sample_point, *payload.model, payload.position, payload.orientation);
-
-
-            const double thumb_scale =
-                static_cast<double>(payload.thumbnail.size().height) / payload.metadata.camera_info.height_px;
-            Eigen::Vector2d thumb_pixel = pixel * thumb_scale;
-            cv::Point2i cvPixel(thumb_pixel.x(), thumb_pixel.y());
-
-            cv::Vec3b color = cv::Vec3b(1,1,1) * ((row + col) % 2 == 0 ? 0 : 255);
-            int pixelSource = (row + col) % 2 == 0 ? -1 : static_cast<int>(_graph.size_nodes()); // give a checkerboard pattern of illegal values for background color
-
-            if (0 < cvPixel.x && cvPixel.x < payload.thumbnail.size().width && 0 < cvPixel.y &&
-                cvPixel.y < payload.thumbnail.size().height)
+            for (const auto &closest : closest5)
             {
-                color = payload.thumbnail.at<cv::Vec3b>(cvPixel); // TODO: use a kernel to get subpixel accuracy
+                const auto *closestNode = _graph.getNode(closest.payload);
+                const auto &payload = closestNode->payload;
 
-                auto cameraIndexIter = cameraLookups.find(closest.payload);
-                if (cameraIndexIter == cameraLookups.end())
+                // backproject 3D point onto thumbnail image, get color
+                Eigen::Vector2d pixel =
+                    image_from_3d(sample_point, *payload.model, payload.position, payload.orientation);
+
+                const double thumb_scale =
+                    static_cast<double>(payload.thumbnail.size().height) / payload.metadata.camera_info.height_px;
+                Eigen::Vector2d thumb_pixel = pixel * thumb_scale;
+                cv::Point2i cvPixel(thumb_pixel.x(), thumb_pixel.y());
+
+                if (0 < cvPixel.x && cvPixel.x < payload.thumbnail.size().width && 0 < cvPixel.y &&
+                    cvPixel.y < payload.thumbnail.size().height)
                 {
-                    cameraIndexIter =
-                        cameraLookups
-                            .insert(std::pair<size_t, int>(closest.payload, static_cast<int>(cameraLookups.size())))
-                            .first;
+                    auto pixel = payload.thumbnail.at<cv::Vec3b>(cvPixel); // TODO: use a kernel to get subpixel accuracy
+                    color = cv::Vec4b(pixel[0], pixel[1], pixel[2], 255);
+                    pixelSource = closest.payload & 0xFF;
+                    break;
                 }
-
-                pixelSource = cameraLookups[closest.payload];
-            }
-            else
-            {
-                // TODO: look up alternative pixels from different cameras
             }
 
             // assign color to thumbnail pixel
-            image.at<cv::Vec3b>(row, col) = color;
+            image.at<cv::Vec4b>(row, col) = color;
             source.at<int>(row, col) = pixelSource;
         }
     }
