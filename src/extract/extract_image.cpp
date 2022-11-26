@@ -25,7 +25,7 @@ cv::Mat load_image(const std::string &path)
 namespace opencalibration
 {
 
-image extract_image(const std::string &path)
+std::optional<image> extract_image(const std::string &path)
 {
 
     image img;
@@ -37,7 +37,7 @@ image extract_image(const std::string &path)
 
         if (image.empty())
         {
-            return img;
+            return std::nullopt;
         }
 
         const double scale = 50 / std::sqrt(image.size().area());

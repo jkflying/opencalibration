@@ -2,10 +2,11 @@
 
 #include <opencalibration/types/image.hpp>
 
+#include <optional>
 #include <vector>
 
 namespace opencalibration
 {
 
-image extract_image(const std::string &path);
+std::optional<image> extract_image(const std::string &path);
 }
