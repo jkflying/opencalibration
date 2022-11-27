@@ -680,7 +680,6 @@ void RelaxProblem::addDownwardsPrior()
 
 void RelaxProblem::addMeshFlatPrior()
 {
-
     // for each edge in the graph
     // add a cost for the nodes on each side being different heights
     for (auto iter = _mesh.edgebegin(); iter != _mesh.edgeend(); ++iter)
@@ -702,12 +701,12 @@ void RelaxProblem::solve()
 {
     std::ostringstream thread_stream;
     thread_stream << std::this_thread::get_id();
-    spdlog::info("Thread {} start relax: {} active nodes, {} edges, {} residuals", thread_stream.str(), _nodes_to_optimize.size(), _edges_used.size(), _problem->NumResiduals());
+    spdlog::info("Thread {} start relax: {} parameter blocks, {} residual blocks", thread_stream.str(), _problem->NumParameterBlocks(), _problem->NumResidualBlocks());
 
     _solver.Solve(_solver_options, _problem.get(), &_summary);
-    spdlog::info("Thread {}  end relax iterations {}, cost ratio {}, time {}ms", thread_stream.str(), _summary.iterations.size(),
+    spdlog::info("Thread {} end relax: iterations {}, cost ratio {}, time {}s", thread_stream.str(), _summary.iterations.size(),
                  static_cast<float>(_summary.final_cost / _summary.initial_cost),
-                 static_cast<float>(_summary.total_time_in_seconds*1000));
+                 static_cast<float>(_summary.total_time_in_seconds));
     spdlog::debug(_summary.FullReport());
 
     for (auto &p : _nodes_to_optimize)
@@ -722,12 +721,13 @@ surface_model RelaxProblem::getSurfaceModel()
     s.cloud.reserve(_edge_tracks.size());
     for (const auto &tv : _edge_tracks)
     {
-        s.cloud.emplace_back();
-        s.cloud.back().reserve(tv.second.size());
+        point_cloud points;
+        points.reserve(tv.second.size());
         for (const auto &t : tv.second)
         {
-            s.cloud.back().push_back(t.point);
+            points.push_back(t.point);
         }
+        s.cloud.emplace_back(std::move(points));
     }
 
     s.mesh = _mesh;
