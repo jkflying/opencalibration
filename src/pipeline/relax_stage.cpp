@@ -79,6 +79,7 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
         }
         if (!_k_groups->spectralize())
         {
+            spdlog::info("Spectralize failed");
             _k_groups->fallback();
         }
         for (int i = 0; i < 10; i++) // 10 iterations should be enough for anybody
@@ -92,23 +93,22 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
     }
 
     size_t graph_connection_depth = num_groups > 1 ? 0 : 2;
-
-    for (const auto &group : _k_groups->getClusters())
+    const auto& cluster = _k_groups->getClusters();
+    // k-means were smallest to biggest, but we want to process the big ones first to improve load balancing on really
+    // large problem
+    for (auto it = cluster.rbegin(); it != cluster.rend(); ++it)
     {
+        const auto &group = *it;
         std::vector<size_t> group_ids;
         group_ids.reserve(group.points.size());
         for (const auto &p : group.points)
         {
             group_ids.push_back(p.second);
         }
-        spdlog::info("Group added with {} nodes", group_ids.size());
         _groups.emplace_back();
         _groups.back().init(graph, group_ids, imageGPSLocations, graph_connection_depth, options);
     }
-    // k-means were smallest to biggest, but we want to process the big ones first to improve load balancing on really
-    // large problem
-    std::reverse(_groups.begin(), _groups.end());
-}
+ }
 
 void RelaxStage::trim_groups(size_t max_size)
 {

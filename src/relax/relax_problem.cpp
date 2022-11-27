@@ -6,6 +6,8 @@
 
 #include "ceres_log_forwarding.cpp.inc"
 
+#include <thread>
+
 namespace opencalibration
 {
 
@@ -698,10 +700,14 @@ void RelaxProblem::addMeshFlatPrior()
 
 void RelaxProblem::solve()
 {
-    spdlog::debug("Start rotation relax: {} active nodes, {} edges", _nodes_to_optimize.size(), _edges_used.size());
+    std::ostringstream thread_stream;
+    thread_stream << std::this_thread::get_id();
+    spdlog::info("Thread {} start relax: {} active nodes, {} edges, {} residuals", thread_stream.str(), _nodes_to_optimize.size(), _edges_used.size(), _problem->NumResiduals());
 
     _solver.Solve(_solver_options, _problem.get(), &_summary);
-    spdlog::info(_summary.BriefReport());
+    spdlog::info("Thread {}  end relax iterations {}, cost ratio {}, time {}ms", thread_stream.str(), _summary.iterations.size(),
+                 static_cast<float>(_summary.final_cost / _summary.initial_cost),
+                 static_cast<float>(_summary.total_time_in_seconds*1000));
     spdlog::debug(_summary.FullReport());
 
     for (auto &p : _nodes_to_optimize)

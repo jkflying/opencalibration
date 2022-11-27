@@ -40,8 +40,8 @@ std::optional<image> extract_image(const std::string &path)
             return std::nullopt;
         }
 
-        const double scale = 50 / std::sqrt(image.size().area());
-        cv::resize(image, img.thumbnail, cv::Size(0, 0), scale, scale, cv::INTER_AREA);
+//         const double scale = 50 / std::sqrt(image.size().area());
+//         cv::resize(image, img.thumbnail, cv::Size(0, 0), scale, scale, cv::INTER_AREA);
 
         p.reset("Load features");
         img.features = extract_features(image);

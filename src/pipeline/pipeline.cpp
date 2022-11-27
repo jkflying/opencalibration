@@ -236,6 +236,8 @@ Pipeline::Transition Pipeline::final_global_relax()
 Pipeline::Transition Pipeline::generate_thumbnail()
 {
 
+    return Transition::NEXT;
+
     // calculate min/max x/y, and average z
     const double inf = std::numeric_limits<double>::infinity();
     double min_x = inf, min_y = inf, max_x = -inf, max_y = -inf;
