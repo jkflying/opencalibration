@@ -701,11 +701,12 @@ void RelaxProblem::solve()
 {
     std::ostringstream thread_stream;
     thread_stream << std::this_thread::get_id();
-    spdlog::info("Thread {} start relax: {} parameter blocks, {} residual blocks", thread_stream.str(), _problem->NumParameterBlocks(), _problem->NumResidualBlocks());
+    spdlog::info("Thread {} start relax: {} parameter blocks, {} residual blocks", thread_stream.str(),
+                 _problem->NumParameterBlocks(), _problem->NumResidualBlocks());
 
     _solver.Solve(_solver_options, _problem.get(), &_summary);
-    spdlog::info("Thread {} end relax: iterations {}, cost ratio {}, time {}s", thread_stream.str(), _summary.iterations.size(),
-                 static_cast<float>(_summary.final_cost / _summary.initial_cost),
+    spdlog::info("Thread {} end relax: iterations {}, cost ratio {}, time {}s", thread_stream.str(),
+                 _summary.iterations.size(), static_cast<float>(_summary.final_cost / _summary.initial_cost),
                  static_cast<float>(_summary.total_time_in_seconds));
     spdlog::debug(_summary.FullReport());
 

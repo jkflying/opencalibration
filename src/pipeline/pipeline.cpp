@@ -367,7 +367,8 @@ Pipeline::Transition Pipeline::generate_thumbnail()
                 if (0 < cvPixel.x && cvPixel.x < payload.thumbnail.size().width && 0 < cvPixel.y &&
                     cvPixel.y < payload.thumbnail.size().height)
                 {
-                    auto pixel = payload.thumbnail.at<cv::Vec3b>(cvPixel); // TODO: use a kernel to get subpixel accuracy
+                    auto pixel =
+                        payload.thumbnail.at<cv::Vec3b>(cvPixel); // TODO: use a kernel to get subpixel accuracy
                     color = cv::Vec4b(pixel[0], pixel[1], pixel[2], 255);
                     pixelSource = closest.payload & 0xFF;
                     break;
