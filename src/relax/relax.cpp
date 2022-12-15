@@ -13,10 +13,10 @@ static const Eigen::Quaterniond DOWN_ORIENTED_NORTH(Eigen::AngleAxisd(M_PI, Eige
 
 struct Backend
 {
-    using run_f = std::function<surface_model(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                                              std::unordered_map<size_t, CameraModel> &cam_models,
-                                              const std::unordered_set<size_t> &edges_to_optimize,
-                                              const RelaxOptionSet &options)>;
+    using run_f = std::function<surface_model(
+        const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+        std::unordered_map<size_t, CameraModel> &cam_models, const std::unordered_set<size_t> &edges_to_optimize,
+        const RelaxOptionSet &options, const std::vector<surface_model> &previousSurfaces)>;
     Backend(const RelaxOptionSet &caps, run_f &&func) : capabilities(caps), runner(func)
     {
     }
@@ -30,7 +30,8 @@ std::vector<Backend> getBackends()
     backends.emplace_back(RelaxOptionSet{Option::ORIENTATION},
                           [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                              std::unordered_map<size_t, CameraModel> &cam_models,
-                             const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &) {
+                             const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &,
+                             const std::vector<surface_model> &) {
                               // doesn't use the camera model at all, just decomposed relative orientations
                               (void)cam_models;
 
@@ -60,10 +61,23 @@ std::vector<Backend> getBackends()
                           });
     auto points_solver = [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                             std::unordered_map<size_t, CameraModel> &cam_models,
-                            const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options) {
+                            const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options,
+                            const std::vector<surface_model> &) {
         PerformanceMeasure p("Relax runner 3d points");
         RelaxProblem rp;
         rp.setup3dPointProblem(graph, nodes, cam_models, edges_to_optimize, options);
+        rp.solve();
+
+        return rp.getSurfaceModel();
+    };
+
+    auto mesh_solver = [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                          std::unordered_map<size_t, CameraModel> &cam_models,
+                          const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options,
+                          const std::vector<surface_model> &previousSurfaces) {
+        PerformanceMeasure p("Relax runner ground mesh");
+        RelaxProblem rp;
+        rp.setupGroundMeshProblem(graph, nodes, cam_models, edges_to_optimize, options, previousSurfaces);
         rp.solve();
 
         return rp.getSurfaceModel();
@@ -81,12 +95,14 @@ std::vector<Backend> getBackends()
                                          Option::FOCAL_LENGTH, Option::ORIENTATION, Option::POINTS_3D},
                           points_solver);
     backends.emplace_back(RelaxOptionSet{Option::FOCAL_LENGTH, Option::ORIENTATION, Option::POINTS_3D}, points_solver);
+    backends.emplace_back(RelaxOptionSet{Option::ORIENTATION, Option::GROUND_MESH}, mesh_solver);
     backends.emplace_back(RelaxOptionSet{Option::ORIENTATION, Option::POINTS_3D}, points_solver);
+
     backends.emplace_back(
         RelaxOptionSet{Option::ORIENTATION, Option::GROUND_PLANE},
         [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
            std::unordered_map<size_t, CameraModel> &cam_models, const std::unordered_set<size_t> &edges_to_optimize,
-           const RelaxOptionSet &options) {
+           const RelaxOptionSet &options, const std::vector<surface_model> &) {
             PerformanceMeasure p("Relax runner ground plane");
 
             Eigen::Quaterniond previous_node_orientation = DOWN_ORIENTED_NORTH;
@@ -138,7 +154,8 @@ namespace opencalibration
 
 surface_model relax(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                     std::unordered_map<size_t, CameraModel> &cam_models,
-                    const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options)
+                    const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options,
+                    const std::vector<surface_model> &previousSurfaces)
 {
 
     size_t best_index = std::numeric_limits<size_t>::max();
@@ -161,7 +178,7 @@ surface_model relax(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
 
     if (best_index != std::numeric_limits<size_t>::max())
     {
-        return backends[best_index].runner(graph, nodes, cam_models, edges_to_optimize, options);
+        return backends[best_index].runner(graph, nodes, cam_models, edges_to_optimize, options, previousSurfaces);
     }
 
     return surface_model();

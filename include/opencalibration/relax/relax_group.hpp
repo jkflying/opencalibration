@@ -18,7 +18,7 @@ class RelaxGroup
               const jk::tree::KDTree<size_t, 3> &imageGPSLocations, size_t graph_connection_depth,
               const RelaxOptionSet &options);
 
-    surface_model run(const MeasurementGraph &graph);
+    surface_model run(const MeasurementGraph &graph, const std::vector<surface_model> &previousSurfaces);
 
     std::vector<size_t> finalize(MeasurementGraph &graph);
 

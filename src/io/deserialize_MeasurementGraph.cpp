@@ -2,6 +2,8 @@
 
 #include "base64.h"
 
+#include <opencv2/imgcodecs.hpp>
+
 #define RAPIDJSON_HAS_STDSTRING 1
 #define RAPIDJSON_PARSE_DEFAULT_FLAGS (kParseFullPrecisionFlag | kParseNanAndInfFlag)
 
@@ -66,6 +68,13 @@ template <> class Deserializer<MeasurementGraph>
                     {
                         img.orientation.coeffs()[i] = orientation[i].GetDouble();
                     }
+
+                    const char *base64_thumbnail = niter->value.GetObject()["thumbnail"].GetString();
+                    std::vector<uchar> thumbnail;
+                    thumbnail.resize(Base64decode_len(base64_thumbnail), '\0');
+                    int actual_size = Base64decode(reinterpret_cast<char *>(thumbnail.data()), base64_thumbnail);
+                    thumbnail.resize(actual_size);
+                    cv::imdecode(thumbnail, cv::IMREAD_COLOR, &img.thumbnail);
 
                     const auto &model = niter->value.GetObject()["model"].GetObject();
 

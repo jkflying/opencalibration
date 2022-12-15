@@ -25,7 +25,7 @@ RelaxStage::~RelaxStage()
 }
 
 void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &node_ids,
-                      const jk::tree::KDTree<size_t, 3> &imageGPSLocations, bool global_relax,
+                      const jk::tree::KDTree<size_t, 3> &imageGPSLocations, bool relax_all, bool disable_parallelism,
                       const RelaxOptionSet &options)
 {
     PerformanceMeasure p("Relax init");
@@ -34,7 +34,7 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
 
     std::vector<size_t> actual_node_ids = node_ids;
 
-    if (global_relax)
+    if (relax_all)
     {
         actual_node_ids.clear();
         actual_node_ids.reserve(graph.size_nodes());
@@ -44,13 +44,15 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
         }
     }
 
-    bool optimizing_internals = options.hasAny({Option::FOCAL_LENGTH, Option::PRINCIPAL_POINT,
-                                                Option::LENS_DISTORTIONS_RADIAL, Option::LENS_DISTORTIONS_TANGENTIAL});
+    const bool global_params = options.hasAny({Option::FOCAL_LENGTH, Option::PRINCIPAL_POINT,
+                                               Option::LENS_DISTORTIONS_RADIAL, Option::LENS_DISTORTIONS_TANGENTIAL});
 
-    const int optimal_cluster_size = optimizing_internals ? 150 : 50;
+    const int optimal_cluster_size = global_params ? 150 : 50;
 
     const size_t num_groups =
-        std::max<size_t>(1, static_cast<size_t>(std::floor(actual_node_ids.size() / optimal_cluster_size)));
+        disable_parallelism
+            ? 1
+            : std::max<size_t>(1, static_cast<size_t>(std::floor(actual_node_ids.size() / optimal_cluster_size)));
 
     _k_groups->reset(num_groups);
 
@@ -67,6 +69,7 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
         for (size_t i = 0; i < actual_node_ids.size(); i++)
         {
             size_t node_id = actual_node_ids[i];
+            _k_groups->addLink(node_id, node_id, 0.1);
             for (size_t edge_id : graph.getNode(node_id)->getEdges())
             {
                 const auto *edge = graph.getEdge(edge_id);
@@ -77,6 +80,7 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
         }
         if (!_k_groups->spectralize())
         {
+            spdlog::info("Spectralize failed");
             _k_groups->fallback();
         }
         for (int i = 0; i < 10; i++) // 10 iterations should be enough for anybody
@@ -90,23 +94,22 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
     }
 
     size_t graph_connection_depth = num_groups > 1 ? 0 : 2;
-
-    for (const auto &group : _k_groups->getClusters())
+    const auto& cluster = _k_groups->getClusters();
+    // k-means were smallest to biggest, but we want to process the big ones first to improve load balancing on really
+    // large problem
+    for (auto it = cluster.rbegin(); it != cluster.rend(); ++it)
     {
+        const auto &group = *it;
         std::vector<size_t> group_ids;
         group_ids.reserve(group.points.size());
         for (const auto &p : group.points)
         {
             group_ids.push_back(p.second);
         }
-        spdlog::info("Group added with {} nodes", group_ids.size());
         _groups.emplace_back();
         _groups.back().init(graph, group_ids, imageGPSLocations, graph_connection_depth, options);
     }
-    // k-means were smallest to biggest, but we want to process the big ones first to improve load balancing on really
-    // large problem
-    std::reverse(_groups.begin(), _groups.end());
-}
+ }
 
 void RelaxStage::trim_groups(size_t max_size)
 {
@@ -119,13 +122,17 @@ void RelaxStage::trim_groups(size_t max_size)
 std::vector<std::function<void()>> RelaxStage::get_runners(const MeasurementGraph &graph)
 {
     std::vector<std::function<void()>> funcs;
+
+    std::swap(_surface_models, _previous_surface_models);
+
     _surface_models.clear();
     _surface_models.resize(_groups.size());
     for (size_t i = 0; i < _groups.size(); i++)
     {
         auto &g = _groups[i];
         auto &s = _surface_models[i];
-        funcs.push_back([&s, &g, &graph]() { s = g.run(graph); });
+        auto &ps = _previous_surface_models;
+        funcs.push_back([&s, &g, &graph, &ps]() { s = g.run(graph, ps); });
     }
     return funcs;
 }

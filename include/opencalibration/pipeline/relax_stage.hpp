@@ -22,7 +22,8 @@ class RelaxStage
     RelaxStage();
     ~RelaxStage();
     void init(const MeasurementGraph &graph, const std::vector<size_t> &node_ids,
-              const jk::tree::KDTree<size_t, 3> &imageGPSLocations, bool global_relax, const RelaxOptionSet &options);
+              const jk::tree::KDTree<size_t, 3> &imageGPSLocations, bool relax_all, bool disable_parallelism,
+              const RelaxOptionSet &options);
 
     void trim_groups(size_t max_size);
 
@@ -34,7 +35,7 @@ class RelaxStage
 
   private:
     std::vector<RelaxGroup> _groups;
-    std::vector<surface_model> _surface_models;
+    std::vector<surface_model> _surface_models, _previous_surface_models;
 
     std::unique_ptr<SpectralClustering<size_t, 3>> _k_groups;
 };

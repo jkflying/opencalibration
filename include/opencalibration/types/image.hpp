@@ -6,16 +6,14 @@
 
 #include <eigen3/Eigen/Geometry>
 
+#include <opencv2/core/mat.hpp>
+#include <opencv4/opencv2/core.hpp>
+
 #include <memory>
 #include <vector>
 
 namespace opencalibration
 {
-
-struct image_pixeldata
-{
-    std::unique_ptr<unsigned char> data;
-};
 
 struct image
 {
@@ -24,6 +22,7 @@ struct image
     // Loaded / processed from image data
     image_metadata metadata;
     std::vector<feature_2d> features;
+    cv::Mat thumbnail;
 
     // Things to discover and optimize
     std::shared_ptr<CameraModel> model;
@@ -33,6 +32,9 @@ struct image
     bool operator==(const image &other) const
     {
         bool pat = path == other.path;
+        bool thu = thumbnail.data == other.thumbnail.data ||
+                   (thumbnail.size() == other.thumbnail.size() &&
+                    std::equal(thumbnail.begin<uchar>(), thumbnail.end<uchar>(), other.thumbnail.begin<uchar>()));
         bool met = metadata == other.metadata;
         bool feat = features == other.features;
         bool mod = (model == other.model) || (model != nullptr && other.model != nullptr && *model == *other.model);
@@ -41,7 +43,7 @@ struct image
         bool ori = (orientation.coeffs().array().isNaN().all() && other.orientation.coeffs().array().isNaN().all()) ||
                    orientation.coeffs() == other.orientation.coeffs();
 
-        return pat && met && feat && mod && pos && ori;
+        return pat && met && thu && feat && mod && pos && ori;
     }
 };
 } // namespace opencalibration

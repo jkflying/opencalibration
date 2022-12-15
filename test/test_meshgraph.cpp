@@ -16,7 +16,7 @@ TEST(meshgraph, expands_empty)
     MeshGraph g;
     point_cloud p;
 
-    auto expanded = rebuildMesh(p, g);
+    auto expanded = rebuildMesh(p, {surface_model{{}, g}});
 
     EXPECT_EQ(expanded.size_nodes(), 0);
     EXPECT_EQ(expanded.size_edges(), 0);
@@ -27,7 +27,7 @@ TEST(meshgraph, expands_single_point)
     MeshGraph g;
     point_cloud p{Eigen::Vector3d(0, 0, 0)};
 
-    auto expanded = rebuildMesh(p, g);
+    auto expanded = rebuildMesh(p, {surface_model{{}, g}});
 
     EXPECT_EQ(expanded.size_nodes(), 0);
     EXPECT_EQ(expanded.size_edges(), 0);
@@ -38,7 +38,7 @@ TEST(meshgraph, expands_2_points)
     MeshGraph g;
     point_cloud p{Eigen::Vector3d(0, 0, 0), Eigen::Vector3d(1, 0, 0)};
 
-    auto expanded = rebuildMesh(p, g);
+    auto expanded = rebuildMesh(p, {surface_model{{}, g}});
 
     EXPECT_EQ(expanded.size_nodes(), 30);
     EXPECT_EQ(expanded.size_edges(), 69);
@@ -48,7 +48,7 @@ TEST(meshgraph, intersects_rays)
 {
     MeshGraph g;
     point_cloud p{Eigen::Vector3d(0, 0, 0), Eigen::Vector3d(1, 0, 0)};
-    g = rebuildMesh(p, g);
+    g = rebuildMesh(p, {surface_model{{}, g}});
 
     MeshIntersectionSearcher s;
     s.init(g);
@@ -75,7 +75,7 @@ TEST(meshgraph, doesnt_intersect_outside)
 {
     MeshGraph g;
     point_cloud p{Eigen::Vector3d(0, 0, 0), Eigen::Vector3d(1, 0, 0)};
-    g = rebuildMesh(p, g);
+    g = rebuildMesh(p, {surface_model{{}, g}});
 
     MeshIntersectionSearcher s;
     s.init(g);

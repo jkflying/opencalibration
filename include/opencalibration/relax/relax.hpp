@@ -11,6 +11,7 @@ namespace opencalibration
 {
 surface_model relax(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                     std::unordered_map<size_t, CameraModel> &cam_models,
-                    const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options);
+                    const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options,
+                    const std::vector<surface_model> &previousSurfaces);
 
 } // namespace opencalibration

@@ -3,6 +3,8 @@
 #include <opencalibration/geometry/intersection.hpp>
 #include <opencalibration/geometry/utils.hpp>
 
+#include <spdlog/spdlog.h>
+
 namespace opencalibration
 {
 bool MeshIntersectionSearcher::init(const MeshGraph &meshGraph, const IntersectionInfo &info)
@@ -40,6 +42,11 @@ bool MeshIntersectionSearcher::init(const MeshGraph &meshGraph, const Intersecti
     }
 
     return true;
+}
+
+bool MeshIntersectionSearcher::reinit()
+{
+    return init(*_meshGraph);
 }
 
 const MeshIntersectionSearcher::IntersectionInfo &MeshIntersectionSearcher::triangleIntersect(const ray_d &r)
@@ -138,8 +145,20 @@ const MeshIntersectionSearcher::IntersectionInfo &MeshIntersectionSearcher::tria
         plane.corner[replacedNode] = node->payload.location;
         _info.nodeLocations[replacedNode] = &node->payload.location;
         _info.steps++;
+
+        if (_info.steps > _meshGraph->size_edges())
+        {
+            spdlog::error("Graph intersection search failed after {} steps!", _info.steps);
+            _info.type = IntersectionInfo::GRAPH_STRUCTURE_INCONSISTENT;
+            break;
+        }
     }
 
+    return _info;
+}
+
+const MeshIntersectionSearcher::IntersectionInfo &MeshIntersectionSearcher::lastResult()
+{
     return _info;
 }
 

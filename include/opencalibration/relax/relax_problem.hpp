@@ -48,6 +48,11 @@ class RelaxProblem
                                  std::unordered_map<size_t, CameraModel> &cam_models,
                                  const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options);
 
+    void setupGroundMeshProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                                std::unordered_map<size_t, CameraModel> &cam_models,
+                                const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options,
+                                const std::vector<surface_model> &previousSurfaces);
+
     void setup3dPointProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                              std::unordered_map<size_t, CameraModel> &cam_models,
                              const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options);
@@ -72,12 +77,14 @@ class RelaxProblem
     void addPointMeasurementsCost(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge,
                                   const RelaxOptionSet &options);
 
-    void addGlobalPlaneMeasurementsCost(const MeasurementGraph &graph, size_t edge_id,
-                                        const MeasurementGraph::Edge &edge, const RelaxOptionSet &options);
+    void addRayTriangleMeasurementCost(const MeasurementGraph &graph, size_t edge_id,
+                                       const MeasurementGraph::Edge &edge, const RelaxOptionSet &options);
 
     void initializeGroundPlane();
+    void initializeGroundMesh(const std::vector<surface_model> &previousSurfaces);
 
     void addDownwardsPrior();
+    void addMeshFlatPrior();
 
     ceres::Solver::Options _solver_options;
     ceres::LossFunctionWrapper _loss;
@@ -103,7 +110,7 @@ class RelaxProblem
     // Surface models
     using track_vec = std::vector<FeatureTrack, Eigen::aligned_allocator<FeatureTrack>>;
     std::unordered_map<size_t, track_vec> _edge_tracks;
-    MeshGraph _global_mesh;
+    MeshGraph _mesh;
 };
 
 } // namespace opencalibration

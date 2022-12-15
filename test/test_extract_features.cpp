@@ -11,7 +11,7 @@ TEST(extract_features, gives_points)
     std::string path = TEST_DATA_DIR "P2530253.JPG";
 
     // WHEN: we extract the features
-    std::vector<feature_2d> res = opencalibration::extract_features(path);
+    std::vector<feature_2d> res = opencalibration::extract_features(cv::imread(path));
 
     // THEN: there should be at least 100
     EXPECT_GT(res.size(), 100);

@@ -1,6 +1,7 @@
 #include <opencalibration/io/serialize.hpp>
 
 #include "base64.h"
+#include <opencv2/imgcodecs.hpp>
 
 #define RAPIDJSON_HAS_STDSTRING 1
 #define RAPIDJSON_WRITE_DEFAULT_FLAGS kWriteNanAndInfFlag
@@ -9,6 +10,8 @@
 #include <rapidjson/stringbuffer.h>
 
 #include <unordered_set>
+
+#include <iostream>
 
 namespace
 {
@@ -253,6 +256,15 @@ template <> class Serializer<MeasurementGraph>
                 }
                 writer.EndArray();
 
+                std::vector<uchar> thumbPng;
+                cv::imencode(".png", node.payload.thumbnail, thumbPng);
+                std::string b64Thumb;
+                b64Thumb.resize(Base64encode_len(thumbPng.size()));
+                const int actual_size =
+                    Base64encode(b64Thumb.data(), reinterpret_cast<char *>(thumbPng.data()), thumbPng.size());
+                writer.Key("thumbnail");
+                writer.String(b64Thumb.c_str(), actual_size - 1);
+
                 writer.Key("model");
                 writer.StartObject();
                 {
@@ -429,8 +441,7 @@ template <> class Serializer<MeasurementGraph>
                     std::string descriptor = bitset_to_bytes(feature.descriptor);
                     std::string base64_descriptor;
                     base64_descriptor.resize(Base64encode_len(descriptor.size()));
-                    int actual_size = Base64encode(const_cast<char *>(base64_descriptor.c_str()), descriptor.c_str(),
-                                                   descriptor.size());
+                    int actual_size = Base64encode(base64_descriptor.data(), descriptor.c_str(), descriptor.size());
                     writer.String(base64_descriptor.c_str(), actual_size - 1);
 
                     writer.EndObject();

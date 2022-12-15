@@ -1,9 +1,12 @@
 #include <opencalibration/relax/relax_problem.hpp>
 
 #include <opencalibration/relax/autodiff_cost_function.hpp>
+#include <opencalibration/surface/expand_mesh.hpp>
 #include <opencalibration/surface/intersect.hpp>
 
 #include "ceres_log_forwarding.cpp.inc"
+
+#include <thread>
 
 namespace opencalibration
 {
@@ -19,8 +22,8 @@ RelaxProblem::RelaxProblem()
 
     _solver_options.num_threads = 1;
     _solver_options.linear_solver_type = ceres::SPARSE_NORMAL_CHOLESKY;
-    _solver_options.max_num_iterations = 500;
-    _solver_options.use_nonmonotonic_steps = true;
+    _solver_options.max_num_iterations = 100;
+    _solver_options.use_nonmonotonic_steps = false;
     _solver_options.sparse_linear_algebra_library_type = ceres::EIGEN_SPARSE;
     _solver_options.dense_linear_algebra_library_type = ceres::EIGEN;
     _solver_options.initial_trust_region_radius = 1;
@@ -63,11 +66,34 @@ void RelaxProblem::setupGroundPlaneProblem(const MeasurementGraph &graph, std::v
         const MeasurementGraph::Edge *edge = graph.getEdge(edge_id);
         if (edge != nullptr && shouldAddEdgeToOptimization(edges_to_optimize, edge_id))
         {
-            addGlobalPlaneMeasurementsCost(graph, edge_id, *edge, options);
+            addRayTriangleMeasurementCost(graph, edge_id, *edge, options);
         }
     }
 
     addDownwardsPrior();
+}
+
+void RelaxProblem::setupGroundMeshProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                                          std::unordered_map<size_t, CameraModel> &cam_models,
+                                          const std::unordered_set<size_t> &edges_to_optimize,
+                                          const RelaxOptionSet &options,
+                                          const std::vector<surface_model> &previousSurfaces)
+{
+    initialize(nodes, cam_models);
+    initializeGroundMesh(previousSurfaces);
+    _loss.Reset(new ceres::HuberLoss(1 * M_PI / 180), ceres::TAKE_OWNERSHIP);
+    gridFilterMatchesPerImage(graph, edges_to_optimize, 0.05);
+
+    for (size_t edge_id : edges_to_optimize)
+    {
+        const MeasurementGraph::Edge *edge = graph.getEdge(edge_id);
+        if (edge != nullptr && shouldAddEdgeToOptimization(edges_to_optimize, edge_id))
+        {
+            addRayTriangleMeasurementCost(graph, edge_id, *edge, options);
+        }
+    }
+
+    addMeshFlatPrior();
 }
 
 void RelaxProblem::setup3dPointProblem(const MeasurementGraph &graph, std::vector<opencalibration::NodePose> &nodes,
@@ -268,8 +294,8 @@ void RelaxProblem::addRelationCost(const MeasurementGraph &graph, size_t edge_id
     _edges_used.emplace(edge_id);
 }
 
-void RelaxProblem::addGlobalPlaneMeasurementsCost(const MeasurementGraph &graph, size_t edge_id,
-                                                  const MeasurementGraph::Edge &edge, const RelaxOptionSet &options)
+void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, size_t edge_id,
+                                                 const MeasurementGraph::Edge &edge, const RelaxOptionSet &options)
 {
     auto &points = _edge_tracks[edge_id];
     points.reserve(edge.payload.inlier_matches.size());
@@ -291,7 +317,7 @@ void RelaxProblem::addGlobalPlaneMeasurementsCost(const MeasurementGraph &graph,
     const std::array<double *, 2> datas = {pkg.source.rot_ptr->coeffs().data(), pkg.dest.rot_ptr->coeffs().data()};
 
     MeshIntersectionSearcher intersectionSearcher;
-    intersectionSearcher.init(_global_mesh);
+    intersectionSearcher.init(_mesh);
 
     bool points_added = false;
     for (const auto &inlier : edge.payload.inlier_matches)
@@ -307,17 +333,17 @@ void RelaxProblem::addGlobalPlaneMeasurementsCost(const MeasurementGraph &graph,
         destRay.dir = image_to_3d(inlier.pixel_2, dest_model);
         destRay.offset = *pkg.dest.loc_ptr;
 
-        const auto sourceIntersection = intersectionSearcher.triangleIntersect(sourceRay);
-        const auto destIntersection = intersectionSearcher.triangleIntersect(destRay);
+        auto sourceDestIntersection = rayIntersection(ray_d{*pkg.source.rot_ptr * sourceRay.dir, sourceRay.offset},
+                                                      ray_d{*pkg.dest.rot_ptr * destRay.dir, destRay.offset});
 
-        if (sourceIntersection.type != MeshIntersectionSearcher::IntersectionInfo::INTERSECTION ||
-            destIntersection.type != MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
+        const auto intersectionTriangle =
+            intersectionSearcher.triangleIntersect(ray_d{Eigen::Vector3d(0, 0, 1), sourceDestIntersection.first});
+        if (intersectionTriangle.type != MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
         {
             continue;
         }
 
-        // use source triangle. TODO: use triangle midway between intersection points
-        const auto &triangle = sourceIntersection.nodeLocations;
+        const auto &triangle = intersectionTriangle.nodeLocations;
 
         std::array<Eigen::Vector2d, 3> corner2d = {triangle[0]->topRows<2>(), triangle[1]->topRows<2>(),
                                                    triangle[2]->topRows<2>()};
@@ -374,18 +400,24 @@ void RelaxProblem::relaxObservedModelOnly()
         params_set.insert(p);
     }
     for (auto &et : _edge_tracks)
+    {
         for (auto &t : et.second)
+        {
             if (params_set.find(t.point.data()) != params_set.end())
+            {
                 _problem->SetParameterBlockVariable(t.point.data());
+            }
+        }
+    }
 
-    for (auto iter = _global_mesh.nodebegin(); iter != _global_mesh.nodeend(); ++iter)
+    for (auto iter = _mesh.nodebegin(); iter != _mesh.nodeend(); ++iter)
     {
         auto &p = iter->second.payload.location;
         if (params_set.find(&p.z()) != params_set.end())
             _problem->SetParameterBlockVariable(&p.z());
     }
 
-    spdlog::debug("optimizing 3d points only");
+    spdlog::debug("optimizing surface only");
     solve();
     for (size_t i = 0; i < params.size(); i++)
     {
@@ -573,9 +605,9 @@ void RelaxProblem::initializeGroundPlane()
     Eigen::Vector2d xy_min(1e12, 1e12), xy_max(-1e12, -1e12);
     double height = 0;
 
-    for (const auto &p : _nodes_to_optimize)
+    for (const auto &[key, value] : _nodes_to_optimize)
     {
-        Eigen::Vector3d &loc = p.second->position;
+        const Eigen::Vector3d &loc = value->position;
         xy_min = xy_min.cwiseMin(loc.topRows<2>());
         xy_max = xy_max.cwiseMax(loc.topRows<2>());
         height += loc.z();
@@ -610,16 +642,27 @@ void RelaxProblem::initializeGroundPlane()
     plane.corner[1] << Eigen::Vector2d(spacing, -spacing) + center, height;
     plane.corner[2] << Eigen::Vector2d(0, spacing) + center, height;
 
-    _global_mesh = MeshGraph();
+    _mesh = MeshGraph();
     std::array<size_t, 3> nodeIds;
     for (size_t i = 0; i < 3; i++)
     {
-        nodeIds[i] = _global_mesh.addNode(MeshNode{plane.corner[i]});
+        nodeIds[i] = _mesh.addNode(MeshNode{plane.corner[i]});
     }
     for (size_t i = 0; i < 3; i++)
     {
-        _global_mesh.addEdge(MeshEdge{true, {nodeIds[(i + 2) % 3], 0}}, nodeIds[i], nodeIds[(i + 1) % 3]);
+        _mesh.addEdge(MeshEdge{true, {nodeIds[(i + 2) % 3], 0}}, nodeIds[i], nodeIds[(i + 1) % 3]);
     }
+}
+
+void RelaxProblem::initializeGroundMesh(const std::vector<surface_model> &previousSurfaces)
+{
+    point_cloud cameraLocations;
+    cameraLocations.reserve(_nodes_to_optimize.size());
+    for (const auto &[key, value] : _nodes_to_optimize)
+    {
+        cameraLocations.push_back(value->position);
+    }
+    _mesh = rebuildMesh(cameraLocations, previousSurfaces);
 }
 
 void RelaxProblem::addDownwardsPrior()
@@ -629,18 +672,41 @@ void RelaxProblem::addDownwardsPrior()
         if (!p.second->orientation.coeffs().hasNaN())
         {
             double *d = p.second->orientation.coeffs().data();
-            _problem->AddResidualBlock(newAutoDiffPointsDownwardsPrior(), nullptr, d);
+            _problem->AddResidualBlock(newAutoDiffPointsDownwardsPrior(1e-3), nullptr, d);
             _problem->SetParameterization(d, &_quat_parameterization);
         }
     }
 }
 
+void RelaxProblem::addMeshFlatPrior()
+{
+    // for each edge in the graph
+    // add a cost for the nodes on each side being different heights
+    for (auto iter = _mesh.edgebegin(); iter != _mesh.edgeend(); ++iter)
+    {
+        const size_t sourceId = iter->second.getSource();
+        const size_t destId = iter->second.getDest();
+
+        auto *sourceNode = _mesh.getNode(sourceId);
+        auto *destNode = _mesh.getNode(destId);
+
+        double *h1 = &sourceNode->payload.location.z();
+        double *h2 = &destNode->payload.location.z();
+
+        _problem->AddResidualBlock(newAutoDiffDifferenceCost(1e-4), nullptr, h1, h2);
+    }
+}
+
 void RelaxProblem::solve()
 {
-    spdlog::debug("Start rotation relax: {} active nodes, {} edges", _nodes_to_optimize.size(), _edges_used.size());
+    std::ostringstream thread_stream;
+    thread_stream << std::this_thread::get_id();
+    spdlog::info("Thread {} start relax: {} parameter blocks, {} residual blocks", thread_stream.str(), _problem->NumParameterBlocks(), _problem->NumResidualBlocks());
 
     _solver.Solve(_solver_options, _problem.get(), &_summary);
-    spdlog::info(_summary.BriefReport());
+    spdlog::info("Thread {} end relax: iterations {}, cost ratio {}, time {}s", thread_stream.str(), _summary.iterations.size(),
+                 static_cast<float>(_summary.final_cost / _summary.initial_cost),
+                 static_cast<float>(_summary.total_time_in_seconds));
     spdlog::debug(_summary.FullReport());
 
     for (auto &p : _nodes_to_optimize)
@@ -655,15 +721,16 @@ surface_model RelaxProblem::getSurfaceModel()
     s.cloud.reserve(_edge_tracks.size());
     for (const auto &tv : _edge_tracks)
     {
-        s.cloud.emplace_back();
-        s.cloud.back().reserve(tv.second.size());
+        point_cloud points;
+        points.reserve(tv.second.size());
         for (const auto &t : tv.second)
         {
-            s.cloud.back().push_back(t.point);
+            points.push_back(t.point);
         }
+        s.cloud.emplace_back(std::move(points));
     }
 
-    s.mesh = _global_mesh;
+    s.mesh = _mesh;
 
     return s;
 }

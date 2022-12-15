@@ -13,7 +13,7 @@ std::array<double, 2> toArray(const Eigen::Vector2d &vec)
 namespace opencalibration
 {
 
-MeshGraph rebuildMesh(const point_cloud &cameraLocations, const MeshGraph &meshGraph)
+MeshGraph rebuildMesh(const point_cloud &cameraLocations, const std::vector<surface_model> &previousSurfaces)
 {
 
     constexpr double HEIGHT_MARGIN =
@@ -22,17 +22,23 @@ MeshGraph rebuildMesh(const point_cloud &cameraLocations, const MeshGraph &meshG
     Eigen::Vector2d cameraMin = Eigen::Vector2d::Constant(std::numeric_limits<double>::max());
     Eigen::Vector2d cameraMax = -cameraMin;
 
-    Eigen::Vector2d meshMin = cameraMin;
-    Eigen::Vector2d meshMax = cameraMax;
-
     jk::tree::KDTree<double, 2> vertexTree, cameraTree;
 
-    for (auto nodeIter = meshGraph.cnodebegin(); nodeIter != meshGraph.cnodeend(); ++nodeIter)
+    for (const auto &surface : previousSurfaces)
     {
-        const Eigen::Vector3d p = nodeIter->second.payload.location;
-        meshMin = meshMin.cwiseMin(p.topRows<2>());
-        meshMax = meshMax.cwiseMax(p.topRows<2>());
-        vertexTree.addPoint(toArray(p.topRows<2>()), p.z(), false);
+
+        for (auto nodeIter = surface.mesh.cnodebegin(); nodeIter != surface.mesh.cnodeend(); ++nodeIter)
+        {
+            const Eigen::Vector3d p = nodeIter->second.payload.location;
+            vertexTree.addPoint(toArray(p.topRows<2>()), p.z(), false);
+        }
+        for (const auto &cloud : surface.cloud)
+        {
+            for (const auto &p : cloud)
+            {
+                vertexTree.addPoint(toArray(p.topRows<2>()), p.z(), false);
+            }
+        }
     }
     vertexTree.splitOutstanding();
 
@@ -90,9 +96,9 @@ MeshGraph rebuildMesh(const point_cloud &cameraLocations, const MeshGraph &meshG
         {
             const double y = cameraMin.y() - minBorderWidth + gridDistance * row;
 
-            Eigen::Vector2d loc(x, y);
-            double z = vertexTree.size() > 0 ? vertexTree.search(toArray(loc)).payload
-                                             : cameraTree.search(toArray(loc)).payload - medianHeight;
+            const Eigen::Vector2d loc(x, y);
+            const double z = vertexTree.size() > 0 ? vertexTree.search(toArray(loc)).payload
+                                                   : cameraTree.search(toArray(loc)).payload - medianHeight;
             size_t nodeId = newGraph.addNode(MeshNode{Eigen::Vector3d(loc.x(), loc.y(), z)});
             nodeIdGrid(row, col) = nodeId;
 

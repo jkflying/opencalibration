@@ -39,9 +39,9 @@
 
 namespace usm {
 
-enum class Transition { REPEAT, NEXT1, NEXT2, NEXT3, NEXT4, ERROR };
+enum class DefaultTransition { REPEAT, NEXT, ERROR };
 
-template <typename StateEnum, typename TransitionEnum = Transition>
+template <typename StateEnum, typename TransitionEnum = DefaultTransition>
 class StateMachine {
  public:
   using State = StateEnum;

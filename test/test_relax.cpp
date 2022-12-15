@@ -170,7 +170,7 @@ TEST_F(relax_, downwards_prior_cost_function)
     Eigen::Quaterniond q = Eigen::Quaterniond::Identity() * Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX());
 
     // WHEN: we get the cost of the downwards prior
-    PointsDownwardsPrior p;
+    PointsDownwardsPrior p(1e-3);
     double r = NAN;
     EXPECT_TRUE(p(q.coeffs().data(), &r));
 
@@ -182,7 +182,7 @@ TEST_F(relax_, downwards_prior_cost_function)
     EXPECT_TRUE(p(q.coeffs().data(), &r));
 
     // THEN: it should have a residual of 0.3 * weight
-    EXPECT_NEAR(r, 0.3 * p.weight, 1e-9);
+    EXPECT_NEAR(r, 0.3 * 1e-3, 1e-9);
 }
 
 TEST_F(relax_, rel_rot_cost_function)
@@ -241,7 +241,7 @@ TEST(relax, no_images)
     std::unordered_map<size_t, CameraModel> cam_models;
 
     // WHEN: we relax the relative orientations
-    relax(graph, np, cam_models, {}, {Option::ORIENTATION});
+    relax(graph, np, cam_models, {}, {Option::ORIENTATION}, {});
 
     // THEN: it shouldn't crash
 }
@@ -263,7 +263,7 @@ TEST(relax, prior_1_image)
     np.emplace_back(NodePose{id, ori, pos});
 
     // WHEN: we relax the relative orientations
-    relax(graph, np, cam_models, {}, {Option::ORIENTATION});
+    relax(graph, np, cam_models, {}, {Option::ORIENTATION}, {});
 
     // THEN: it should be pointing downwards, with other axes close to the original
     EXPECT_LT((np[0].orientation.coeffs() - Eigen::Vector4d(1, 0, 0, 0)).norm(), 1e-3)
@@ -306,7 +306,7 @@ TEST(relax, prior_2_images)
     size_t edge_id = graph.addEdge(std::move(relation), id, id2);
 
     // WHEN: we relax the relative orientations
-    relax(graph, np, cam_models, {edge_id}, {Option::ORIENTATION});
+    relax(graph, np, cam_models, {edge_id}, {Option::ORIENTATION}, {});
 
     // THEN: it should be pointing downwards, with other axes close to the original
     EXPECT_LT(Eigen::AngleAxisd(np[0].orientation).angle(), 1e-5) << np[0].orientation.coeffs().transpose();
@@ -323,7 +323,7 @@ TEST_F(relax_, relative_orientation_3_images)
 
     // WHEN: we relax them with relative orientation
     std::unordered_set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
-    relax(graph, np, cam_models, edges, {Option::ORIENTATION});
+    relax(graph, np, cam_models, edges, {Option::ORIENTATION}, {});
 
     // THEN: it should put them back into the original orientation
     for (int i = 0; i < 3; i++)
@@ -340,7 +340,7 @@ TEST_F(relax_, measurement_3_images_points)
 
     // WHEN: we relax them with relative orientation
     std::unordered_set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
-    relax(graph, np, cam_models, edges, {Option::ORIENTATION, Option::POINTS_3D});
+    relax(graph, np, cam_models, edges, {Option::ORIENTATION, Option::POINTS_3D}, {});
 
     // THEN: it should put them back into the original orientation
     for (int i = 0; i < 3; i++)
@@ -358,9 +358,9 @@ TEST_F(relax_, measurement_3_images_plane)
 
     // WHEN: we relax them with relative orientation
     std::unordered_set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
-    relax(graph, np, cam_models, edges, {Option::ORIENTATION, Option::GROUND_PLANE});
+    relax(graph, np, cam_models, edges, {Option::ORIENTATION, Option::GROUND_PLANE}, {});
     // and again to re-init the inliers
-    relax(graph, np, cam_models, edges, {Option::ORIENTATION, Option::GROUND_PLANE});
+    relax(graph, np, cam_models, edges, {Option::ORIENTATION, Option::GROUND_PLANE}, {});
 
     // THEN: it should put them back into the original orientation
     for (int i = 0; i < 3; i++)

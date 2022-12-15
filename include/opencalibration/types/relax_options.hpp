@@ -10,8 +10,11 @@ enum class Option : int32_t
 {
     ORIENTATION = 0,
     POSITION,
-    GROUND_PLANE,
+
+    GROUND_PLANE, // choose just one of these
+    GROUND_MESH,
     POINTS_3D,
+
     FOCAL_LENGTH,
     PRINCIPAL_POINT,
     LENS_DISTORTIONS_RADIAL,
@@ -89,6 +92,8 @@ inline std::string toString(Option o)
         return "POSITION";
     case Option::GROUND_PLANE:
         return "GROUND_PLANE";
+    case Option::GROUND_MESH:
+        return "GROUND_MESH";
     case Option::POINTS_3D:
         return "POINTS_3D";
     case Option::FOCAL_LENGTH:
