@@ -162,6 +162,7 @@ Pipeline::Transition Pipeline::global_relax()
 
     fvec relax_funcs = _relax_stage->get_runners(_graph);
     run_parallel(relax_funcs, _parallelism);
+    spdlog::info("global relaxed all");
     _next_relaxed_ids = _relax_stage->finalize(_graph);
     _surfaces = _relax_stage->getSurfaceModels();
 

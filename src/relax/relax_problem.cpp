@@ -22,8 +22,8 @@ RelaxProblem::RelaxProblem()
 
     _solver_options.num_threads = 1;
     _solver_options.linear_solver_type = ceres::SPARSE_NORMAL_CHOLESKY;
-    _solver_options.max_num_iterations = 500;
-    _solver_options.use_nonmonotonic_steps = true;
+    _solver_options.max_num_iterations = 100;
+    _solver_options.use_nonmonotonic_steps = false;
     _solver_options.sparse_linear_algebra_library_type = ceres::EIGEN_SPARSE;
     _solver_options.dense_linear_algebra_library_type = ceres::EIGEN;
     _solver_options.initial_trust_region_radius = 1;
