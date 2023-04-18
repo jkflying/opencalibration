@@ -1,7 +1,7 @@
 #include <opencalibration/model_inliers/homography_model.hpp>
 
-#include <eigen3/Eigen/Dense>
-#include <eigen3/Eigen/Geometry>
+#include <Eigen/Dense>
+#include <Eigen/Geometry>
 
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core/eigen.hpp>

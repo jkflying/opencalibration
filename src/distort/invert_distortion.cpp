@@ -3,19 +3,23 @@
 namespace opencalibration
 {
 
-DifferentiableCameraModel<double> standard2InvertedModel(const DifferentiableCameraModel<double> &standardModel)
+InverseDistortionCameraModel<double> convertModel(const DifferentiableCameraModel<double> &standardModel)
 {
-    DifferentiableCameraModel<double> inverted = standardModel;
+    InverseDistortionCameraModel<double> inverted = standardModel;
+    inverted.radial_distortion = {};
+    inverted.tangential_distortion = {};
 
     // TODO: invert the distortion variables so that the model can be used in inverse projections differentiably
 
     return inverted;
 }
 
-DifferentiableCameraModel<double> inverted2StandardModel(const DifferentiableCameraModel<double> &invertedModel)
+DifferentiableCameraModel<double> convertModel(const InverseDistortionCameraModel<double> &invertedModel)
 {
     DifferentiableCameraModel<double> standard = invertedModel;
 
+    standard.radial_distortion = {};
+    standard.tangential_distortion = {};
     // TODO: invert the distortion variables so that the model can be used in standard projections differentiably
 
     return standard;

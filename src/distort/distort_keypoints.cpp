@@ -29,7 +29,8 @@ struct DistortionFunctor
         Eigen::Map<Eigen::Matrix<Scalar, NUM_RESIDUALS, 1>> res_map(residuals);
         if (jacobian == nullptr)
         {
-            res_map = projected_point - distortProjectedRay<Scalar>(param_map, model);
+            res_map = projected_point -
+                      distortProjectedRay<Scalar>(param_map, model.radial_distortion, model.tangential_distortion);
         }
         else
         {
@@ -41,7 +42,8 @@ struct DistortionFunctor
             }
 
             Eigen::Matrix<T, NUM_RESIDUALS, 1> res_t =
-                projected_point.cast<T>() - distortProjectedRay<T>(param_t, model.cast<T>());
+                projected_point.cast<T>() - distortProjectedRay<T>(param_t, model.radial_distortion.cast<T>(),
+                                                                   model.tangential_distortion.cast<T>());
 
             Eigen::Map<Eigen::Matrix<Scalar, NUM_PARAMETERS, NUM_RESIDUALS>> jac_map(jacobian);
             for (Eigen::Index i = 0; i < NUM_RESIDUALS; i++)
@@ -90,7 +92,7 @@ Eigen::Vector3d image_to_3d(const Eigen::Vector2d &keypoint, const CameraModel &
     // TODO: make better initial guesses depending on the structure of the distortion parameters
     // eg. use a quadratic solver if only 2/4 or 1/2 nonzero, and benchmark to see if it is faster
 
-    if ((model.radial_distortion.array() > 0).any() || (model.tangential_distortion.array() > 0).any())
+    if ((model.radial_distortion.array() != 0).any() || (model.tangential_distortion.array() != 0).any())
     {
         ceres::TinySolver<DistortionFunctor> solver;
         DistortionFunctor func(unprojected_point, model);
