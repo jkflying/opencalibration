@@ -1,3 +1,6 @@
 [submodule "test/test_data"]
 	path = test/test_data
 	url = git@github.com:jkflying/opencalibration_testdata.git
+[submodule "external/opencv"]
+	path = external/opencv
+	url = https://github.com/opencv/opencv.git

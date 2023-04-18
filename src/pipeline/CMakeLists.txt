@@ -10,7 +10,6 @@ target_link_libraries(oc_pipeline PUBLIC oc_extract
                                           oc_relax
                                           oc_performance
                                           OpenMP::OpenMP_CXX
-                                          spdlog::spdlog
-                                          opencv_highgui)
+                                          spdlog::spdlog)
 target_include_directories(oc_pipeline PUBLIC ${PROJECT_SOURCE_DIR}/external/jk-tree/include
                                               ${PROJECT_SOURCE_DIR}/external/usm/include)
