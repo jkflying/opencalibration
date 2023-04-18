@@ -97,9 +97,8 @@ ray<T> image_to_3d(const Eigen::Matrix<T, 2, 1> &keypoint, const InverseDistorti
     return ray<T>{camera_orientation * image_to_3d(keypoint, model), camera_location};
 }
 
-
 inline ray_d image_to_3d(const Eigen::Vector2d &keypoint, const CameraModel &model,
-                   const Eigen::Vector3d &camera_location, const Eigen::Quaterniond &camera_orientation)
+                         const Eigen::Vector3d &camera_location, const Eigen::Quaterniond &camera_orientation)
 {
     return ray_d{camera_orientation * image_to_3d(keypoint, model), camera_location};
 }

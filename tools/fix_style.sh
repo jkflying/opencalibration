@@ -11,9 +11,9 @@ fi
 for arg in "$@"
 do
     if [ -f $arg ]; then
-        clang-format-10 -i -style='{BasedOnStyle: Microsoft}' $arg
+        clang-format-11 -i -style='{BasedOnStyle: Microsoft}' $arg
     elif [ -d $arg ]; then
-        find $arg -iname '*.h' -o -iname '*.cpp' -o -iname '*.hpp' | xargs clang-format-10 -i -style='{BasedOnStyle: Microsoft}'
+        find $arg -iname '*.h' -o -iname '*.cpp' -o -iname '*.hpp' | xargs clang-format-11 -i -style='{BasedOnStyle: Microsoft}'
         find $arg -iname '*.h' -o -iname '*.cpp' -o -iname '*.hpp' | xargs chmod 644
     fi
 done

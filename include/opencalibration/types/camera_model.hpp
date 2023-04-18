@@ -51,12 +51,12 @@ template <typename T> struct DifferentiableCameraModel
     }
 };
 
-template <typename T>
-struct InverseDistortionCameraModel : public DifferentiableCameraModel<T>
+template <typename T> struct InverseDistortionCameraModel : public DifferentiableCameraModel<T>
 {
     InverseDistortionCameraModel() = default;
-    InverseDistortionCameraModel(const DifferentiableCameraModel<T>& model) : DifferentiableCameraModel<T>(model) {}
-
+    InverseDistortionCameraModel(const DifferentiableCameraModel<T> &model) : DifferentiableCameraModel<T>(model)
+    {
+    }
 };
 
 class CameraModel final : public DifferentiableCameraModel<double>
