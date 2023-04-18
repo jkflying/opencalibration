@@ -24,7 +24,7 @@ find_package(Ceres 2.0 REQUIRED )
 add_compile_definitions(CERES_USE_CXX11 TRUE)
 include_directories(${CERES_INCLUDE_DIRS})
 
-find_package(OpenCV REQUIRED)
+find_package(OpenCV REQUIRED opencv_imgcodecs)
 include_directories( ${OpenCV_INCLUDE_DIRS} )
 
 find_package(GDAL 2.4 REQUIRED)
