@@ -14,7 +14,7 @@ jobs:
       with:
         submodules: 'true'
     - name: install dependencies
-      run: sudo apt-get update && sudo apt-get install ccache ninja-build libeigen3-dev libopencv-dev libgdal-dev libceres-dev libgtest-dev rapidjson-dev libspdlog-dev libtinyxml2-dev clang-format-10 lcov
+      run: tools/install_dependencies.sh
     - name: check formatting
       run: tools/check_style.sh
     - name: ccache
