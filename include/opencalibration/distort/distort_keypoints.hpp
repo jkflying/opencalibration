@@ -15,12 +15,14 @@ namespace opencalibration
 
 std::vector<correspondence> distort_keypoints(const std::vector<feature_2d> &features1,
                                               const std::vector<feature_2d> &features2,
-                                              const std::vector<feature_match> &matches, const CameraModel &model1,
-                                              const CameraModel &model2);
+                                              const std::vector<feature_match> &matches,
+                                              const DifferentiableCameraModel<double> &model1,
+                                              const DifferentiableCameraModel<double> &model2);
 
-Eigen::Vector3d image_to_3d(const Eigen::Vector2d &keypoint, const CameraModel &model);
+Eigen::Vector3d image_to_3d(const Eigen::Vector2d &keypoint, const DifferentiableCameraModel<double> &model);
+Eigen::Vector2d image_from_3d(const Eigen::Vector3d &ray, const InverseDifferentiableCameraModel<double> &model);
 
-template <typename T = double>
+template <typename T>
 Eigen::Matrix<T, 2, 1> distortProjectedRay(const Eigen::Matrix<T, 2, 1> &ray_projected,
                                            const Eigen::Matrix<T, 3, 1> &radial_distortion,
                                            const Eigen::Matrix<T, 2, 1> &tangential_distortion)
@@ -39,7 +41,7 @@ Eigen::Matrix<T, 2, 1> distortProjectedRay(const Eigen::Matrix<T, 2, 1> &ray_pro
     return ray_distorted;
 }
 
-template <typename T = double>
+template <typename T>
 Eigen::Matrix<T, 2, 1> image_from_3d(const Eigen::Matrix<T, 3, 1> &ray, const DifferentiableCameraModel<T> &model)
 {
     Eigen::Matrix<T, 2, 1> ray_projected;
@@ -70,13 +72,23 @@ Eigen::Matrix<T, 2, 1> image_from_3d(const Eigen::Matrix<T, 3, 1> &point, const 
     return image_from_3d(rotated_ray, model);
 }
 
+inline Eigen::Vector2d image_from_3d(const Eigen::Vector3d &point,
+                                     const InverseDifferentiableCameraModel<double> &model,
+                                     const Eigen::Vector3d &camera_location,
+                                     const Eigen::Quaterniond &camera_orientation)
+{
+    const Eigen::Vector3d rotated_ray = camera_orientation.inverse() * (camera_location - point);
+    return image_from_3d(rotated_ray, model);
+}
+
 template <typename T = double>
-Eigen::Matrix<T, 3, 1> image_to_3d(const Eigen::Matrix<T, 2, 1> &keypoint, const InverseDistortionCameraModel<T> &model)
+Eigen::Matrix<T, 3, 1> image_to_3d(const Eigen::Matrix<T, 2, 1> &keypoint,
+                                   const InverseDifferentiableCameraModel<T> &model)
 {
     const Eigen::Matrix<T, 2, 1> unprojected_point = (keypoint - model.principle_point) / model.focal_length_pixels;
 
     const Eigen::Matrix<T, 2, 1> undistorted_point =
-        distortProjectedRay<T>(undistorted_point, model.radial_distortion, model.tangential_distortion);
+        distortProjectedRay<T>(unprojected_point, model.radial_distortion, model.tangential_distortion);
 
     Eigen::Vector3d ray;
     switch (model.projection_type)
@@ -91,13 +103,13 @@ Eigen::Matrix<T, 3, 1> image_to_3d(const Eigen::Matrix<T, 2, 1> &keypoint, const
 }
 
 template <typename T = double>
-ray<T> image_to_3d(const Eigen::Matrix<T, 2, 1> &keypoint, const InverseDistortionCameraModel<T> &model,
+ray<T> image_to_3d(const Eigen::Matrix<T, 2, 1> &keypoint, const InverseDifferentiableCameraModel<T> &model,
                    const Eigen::Matrix<T, 3, 1> &camera_location, const Eigen::Quaternion<T> &camera_orientation)
 {
     return ray<T>{camera_orientation * image_to_3d(keypoint, model), camera_location};
 }
 
-inline ray_d image_to_3d(const Eigen::Vector2d &keypoint, const CameraModel &model,
+inline ray_d image_to_3d(const Eigen::Vector2d &keypoint, const DifferentiableCameraModel<double> &model,
                          const Eigen::Vector3d &camera_location, const Eigen::Quaterniond &camera_orientation)
 {
     return ray_d{camera_orientation * image_to_3d(keypoint, model), camera_location};

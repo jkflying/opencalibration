@@ -66,8 +66,9 @@ namespace opencalibration
 {
 std::vector<correspondence> distort_keypoints(const std::vector<feature_2d> &features1,
                                               const std::vector<feature_2d> &features2,
-                                              const std::vector<feature_match> &matches, const CameraModel &model1,
-                                              const CameraModel &model2)
+                                              const std::vector<feature_match> &matches,
+                                              const DifferentiableCameraModel<double> &model1,
+                                              const DifferentiableCameraModel<double> &model2)
 {
     std::vector<correspondence> distorted;
     distorted.reserve(matches.size());
@@ -82,7 +83,7 @@ std::vector<correspondence> distort_keypoints(const std::vector<feature_2d> &fea
     return distorted;
 }
 
-Eigen::Vector3d image_to_3d(const Eigen::Vector2d &keypoint, const CameraModel &model)
+Eigen::Vector3d image_to_3d(const Eigen::Vector2d &keypoint, const DifferentiableCameraModel<double> &model)
 {
 
     Eigen::Vector2d unprojected_point = (keypoint - model.principle_point) / model.focal_length_pixels;
@@ -113,5 +114,36 @@ Eigen::Vector3d image_to_3d(const Eigen::Vector2d &keypoint, const CameraModel &
         break;
     }
     return ray;
+}
+
+Eigen::Vector2d image_from_3d(const Eigen::Vector3d &ray, const InverseDifferentiableCameraModel<double> &model)
+{
+    Eigen::Vector2d ray_projected;
+    switch (model.projection_type)
+    {
+    case ProjectionType::PLANAR: {
+        ray_projected = ray.hnormalized();
+        break;
+    }
+    case ProjectionType::UNKNOWN:
+        ray_projected.fill(NAN);
+        break;
+    }
+
+    Eigen::Vector2d ray_distorted = ray_projected;
+
+    if ((model.radial_distortion.array() != 0).any() || (model.tangential_distortion.array() != 0).any())
+    {
+        ceres::TinySolver<DistortionFunctor> solver;
+        DistortionFunctor func(ray_projected, model.cast<double, CameraModelTag::FORWARD>());
+        solver.options.parameter_tolerance = 1e-2 / (model.principle_point.norm() + model.focal_length_pixels);
+        solver.options.gradient_tolerance = solver.options.parameter_tolerance * 1e-2;
+        solver.options.max_num_iterations = 10;
+        solver.options.cost_threshold = 1e-16;
+        solver.Solve(func, &ray_distorted);
+    }
+
+    const Eigen::Vector2d pixel_location = ray_distorted * model.focal_length_pixels + model.principle_point;
+    return pixel_location;
 }
 } // namespace opencalibration

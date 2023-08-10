@@ -12,6 +12,6 @@
 
 namespace opencalibration
 {
-InverseDistortionCameraModel<double> convertModel(const DifferentiableCameraModel<double> &standardModel);
-DifferentiableCameraModel<double> convertModel(const InverseDistortionCameraModel<double> &invertedModel);
+InverseDifferentiableCameraModel<double> convertModel(const DifferentiableCameraModel<double> &standardModel);
+DifferentiableCameraModel<double> convertModel(const InverseDifferentiableCameraModel<double> &invertedModel);
 } // namespace opencalibration

@@ -3,9 +3,9 @@
 namespace opencalibration
 {
 
-InverseDistortionCameraModel<double> convertModel(const DifferentiableCameraModel<double> &standardModel)
+InverseDifferentiableCameraModel<double> convertModel(const DifferentiableCameraModel<double> &standardModel)
 {
-    InverseDistortionCameraModel<double> inverted = standardModel;
+    InverseDifferentiableCameraModel<double> inverted = standardModel.cast<double, CameraModelTag::INVERSE>();
     inverted.radial_distortion = {};
     inverted.tangential_distortion = {};
 
@@ -14,9 +14,9 @@ InverseDistortionCameraModel<double> convertModel(const DifferentiableCameraMode
     return inverted;
 }
 
-DifferentiableCameraModel<double> convertModel(const InverseDistortionCameraModel<double> &invertedModel)
+DifferentiableCameraModel<double> convertModel(const InverseDifferentiableCameraModel<double> &invertedModel)
 {
-    DifferentiableCameraModel<double> standard = invertedModel;
+    DifferentiableCameraModel<double> standard = invertedModel.cast<double, CameraModelTag::FORWARD>();
 
     standard.radial_distortion = {};
     standard.tangential_distortion = {};

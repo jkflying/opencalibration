@@ -13,8 +13,16 @@ enum class ProjectionType
     UNKNOWN
 };
 
-template <typename T> struct DifferentiableCameraModel
+enum class CameraModelTag
 {
+    FORWARD,
+    INVERSE
+};
+
+template <typename T, CameraModelTag tag> struct DifferentiableCameraModelBase
+{
+    static const CameraModelTag tagValue = tag;
+
     size_t pixels_rows = 0;
     size_t pixels_cols = 0;
 
@@ -27,7 +35,7 @@ template <typename T> struct DifferentiableCameraModel
 
     ProjectionType projection_type = ProjectionType::PLANAR;
 
-    bool operator==(const DifferentiableCameraModel &other) const
+    bool operator==(const DifferentiableCameraModelBase &other) const
     {
         return pixels_rows == other.pixels_rows && pixels_cols == other.pixels_cols &&
                focal_length_pixels == other.focal_length_pixels && principle_point == other.principle_point &&
@@ -35,9 +43,9 @@ template <typename T> struct DifferentiableCameraModel
                projection_type == other.projection_type;
     }
 
-    template <typename K> DifferentiableCameraModel<K> cast() const
+    template <typename K, CameraModelTag result_tag = tag> DifferentiableCameraModelBase<K, result_tag> cast() const
     {
-        DifferentiableCameraModel<K> model;
+        DifferentiableCameraModelBase<K, result_tag> model;
 
         model.pixels_rows = pixels_rows;
         model.pixels_cols = pixels_cols;
@@ -51,22 +59,31 @@ template <typename T> struct DifferentiableCameraModel
     }
 };
 
-template <typename T> struct InverseDistortionCameraModel : public DifferentiableCameraModel<T>
-{
-    InverseDistortionCameraModel() = default;
-    InverseDistortionCameraModel(const DifferentiableCameraModel<T> &model) : DifferentiableCameraModel<T>(model)
-    {
-    }
-};
+template <typename T> using DifferentiableCameraModel = DifferentiableCameraModelBase<T, CameraModelTag::FORWARD>;
 
-class CameraModel final : public DifferentiableCameraModel<double>
+template <typename T>
+using InverseDifferentiableCameraModel = DifferentiableCameraModelBase<T, CameraModelTag::INVERSE>;
+
+struct CameraModel final : public DifferentiableCameraModel<double>
 {
   public:
     size_t id = 0;
 
-    bool operator==(const CameraModel &other)
+    bool operator==(const CameraModel &other) const
     {
         return id == other.id && DifferentiableCameraModel<double>::operator==(other);
     }
 };
+
+struct InverseCameraModel final : public InverseDifferentiableCameraModel<double>
+{
+  public:
+    size_t id = 0;
+
+    bool operator==(const InverseCameraModel &other) const
+    {
+        return id == other.id && InverseDifferentiableCameraModel<double>::operator==(other);
+    }
+};
+
 } // namespace opencalibration
