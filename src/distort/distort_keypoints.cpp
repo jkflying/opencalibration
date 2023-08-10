@@ -57,7 +57,7 @@ struct DistortionFunctor
 
   private:
     const Eigen::Matrix<Scalar, NUM_PARAMETERS, 1> &projected_point;
-    const DifferentiableCameraModel<Scalar> &model;
+    const DifferentiableCameraModel<Scalar> model;
 };
 
 } // namespace
