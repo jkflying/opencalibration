@@ -18,8 +18,9 @@ struct DistortionFunctor
     };
 
     DistortionFunctor(const Eigen::Matrix<Scalar, NUM_PARAMETERS, 1> &projected_point,
-                      const DifferentiableCameraModel<Scalar> &model)
-        : projected_point(projected_point), model(model)
+                      const Eigen::Vector3d &radial_distortion, const Eigen::Vector2d &tangential_distortion)
+        : projected_point(projected_point), radial_distortion(radial_distortion),
+          tangential_distortion(tangential_distortion)
     {
     }
 
@@ -29,8 +30,8 @@ struct DistortionFunctor
         Eigen::Map<Eigen::Matrix<Scalar, NUM_RESIDUALS, 1>> res_map(residuals);
         if (jacobian == nullptr)
         {
-            res_map = projected_point -
-                      distortProjectedRay<Scalar>(param_map, model.radial_distortion, model.tangential_distortion);
+            res_map =
+                projected_point - distortProjectedRay<Scalar>(param_map, radial_distortion, tangential_distortion);
         }
         else
         {
@@ -42,10 +43,10 @@ struct DistortionFunctor
             }
 
             Eigen::Matrix<T, NUM_RESIDUALS, 1> res_t =
-                projected_point.cast<T>() - distortProjectedRay<T>(param_t, model.radial_distortion.cast<T>(),
-                                                                   model.tangential_distortion.cast<T>());
+                projected_point.cast<T>() -
+                distortProjectedRay<T>(param_t, radial_distortion.cast<T>(), tangential_distortion.cast<T>());
 
-            Eigen::Map<Eigen::Matrix<Scalar, NUM_PARAMETERS, NUM_RESIDUALS>> jac_map(jacobian);
+            Eigen::Map<Eigen::Matrix<Scalar, NUM_RESIDUALS, NUM_PARAMETERS>> jac_map(jacobian);
             for (Eigen::Index i = 0; i < NUM_RESIDUALS; i++)
             {
                 res_map[i] = res_t[i].a;
@@ -57,7 +58,8 @@ struct DistortionFunctor
 
   private:
     const Eigen::Matrix<Scalar, NUM_PARAMETERS, 1> &projected_point;
-    const DifferentiableCameraModel<Scalar> model;
+    const Eigen::Vector3d &radial_distortion;
+    const Eigen::Vector2d &tangential_distortion;
 };
 
 } // namespace
@@ -96,7 +98,7 @@ Eigen::Vector3d image_to_3d(const Eigen::Vector2d &keypoint, const Differentiabl
     if ((model.radial_distortion.array() != 0).any() || (model.tangential_distortion.array() != 0).any())
     {
         ceres::TinySolver<DistortionFunctor> solver;
-        DistortionFunctor func(unprojected_point, model);
+        DistortionFunctor func(unprojected_point, model.radial_distortion, model.tangential_distortion);
         solver.options.parameter_tolerance = 1e-2 / (model.principle_point.norm() + model.focal_length_pixels);
         solver.options.gradient_tolerance = solver.options.parameter_tolerance * 1e-2;
         solver.options.max_num_iterations = 10;
@@ -135,7 +137,7 @@ Eigen::Vector2d image_from_3d(const Eigen::Vector3d &ray, const InverseDifferent
     if ((model.radial_distortion.array() != 0).any() || (model.tangential_distortion.array() != 0).any())
     {
         ceres::TinySolver<DistortionFunctor> solver;
-        DistortionFunctor func(ray_projected, model.cast<double, CameraModelTag::FORWARD>());
+        DistortionFunctor func(ray_projected, model.radial_distortion, model.tangential_distortion);
         solver.options.parameter_tolerance = 1e-2 / (model.principle_point.norm() + model.focal_length_pixels);
         solver.options.gradient_tolerance = solver.options.parameter_tolerance * 1e-2;
         solver.options.max_num_iterations = 10;

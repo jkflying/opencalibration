@@ -90,7 +90,7 @@ Eigen::Matrix<T, 3, 1> image_to_3d(const Eigen::Matrix<T, 2, 1> &keypoint,
     const Eigen::Matrix<T, 2, 1> undistorted_point =
         distortProjectedRay<T>(unprojected_point, model.radial_distortion, model.tangential_distortion);
 
-    Eigen::Vector3d ray;
+    Eigen::Matrix<T, 3, 1> ray;
     switch (model.projection_type)
     {
     case ProjectionType::PLANAR:
