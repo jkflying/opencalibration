@@ -1,7 +1,8 @@
 #include <opencalibration/distort/distort_keypoints.hpp>
 
-#include <ceres/jet.h>
 #include <ceres/tiny_solver.h>
+#include <ceres/tiny_solver_autodiff_function.h>
+
 #include <eigen3/Eigen/Geometry>
 
 namespace
@@ -10,54 +11,32 @@ using namespace opencalibration;
 
 struct DistortionFunctor
 {
-    using Scalar = double;
     enum
     {
         NUM_PARAMETERS = 2,
         NUM_RESIDUALS = 2
     };
 
-    DistortionFunctor(const Eigen::Matrix<Scalar, NUM_PARAMETERS, 1> &projected_point,
+    DistortionFunctor(const Eigen::Matrix<double, NUM_PARAMETERS, 1> &projected_point,
                       const Eigen::Vector3d &radial_distortion, const Eigen::Vector2d &tangential_distortion)
         : projected_point(projected_point), radial_distortion(radial_distortion),
           tangential_distortion(tangential_distortion)
     {
     }
 
-    bool operator()(const Scalar *parameters, Scalar *residuals, Scalar *jacobian) const
+    template <typename Scalar> bool operator()(const Scalar *parameters, Scalar *residuals) const
     {
         Eigen::Map<const Eigen::Matrix<Scalar, NUM_PARAMETERS, 1>> param_map(parameters);
         Eigen::Map<Eigen::Matrix<Scalar, NUM_RESIDUALS, 1>> res_map(residuals);
-        if (jacobian == nullptr)
-        {
-            res_map =
-                projected_point - distortProjectedRay<Scalar>(param_map, radial_distortion, tangential_distortion);
-        }
-        else
-        {
-            using T = ceres::Jet<Scalar, NUM_PARAMETERS>;
-            Eigen::Matrix<T, NUM_PARAMETERS, 1> param_t = param_map.cast<T>();
-            for (Eigen::Index i = 0; i < NUM_PARAMETERS; i++)
-            {
-                param_t[i].v[i] = 1;
-            }
 
-            Eigen::Matrix<T, NUM_RESIDUALS, 1> res_t =
-                projected_point.cast<T>() -
-                distortProjectedRay<T>(param_t, radial_distortion.cast<T>(), tangential_distortion.cast<T>());
+        res_map = projected_point - distortProjectedRay<Scalar>(param_map, radial_distortion.cast<Scalar>(),
+                                                                tangential_distortion.cast<Scalar>());
 
-            Eigen::Map<Eigen::Matrix<Scalar, NUM_RESIDUALS, NUM_PARAMETERS>> jac_map(jacobian);
-            for (Eigen::Index i = 0; i < NUM_RESIDUALS; i++)
-            {
-                res_map[i] = res_t[i].a;
-                jac_map.row(i) = res_t[i].v;
-            }
-        }
         return true;
     }
 
   private:
-    const Eigen::Matrix<Scalar, NUM_PARAMETERS, 1> &projected_point;
+    const Eigen::Matrix<double, NUM_PARAMETERS, 1> &projected_point;
     const Eigen::Vector3d &radial_distortion;
     const Eigen::Vector2d &tangential_distortion;
 };
@@ -97,13 +76,17 @@ Eigen::Vector3d image_to_3d(const Eigen::Vector2d &keypoint, const Differentiabl
 
     if ((model.radial_distortion.array() != 0).any() || (model.tangential_distortion.array() != 0).any())
     {
-        ceres::TinySolver<DistortionFunctor> solver;
+        using ADFunctor = ceres::TinySolverAutoDiffFunction<DistortionFunctor, 2, 2>;
+
         DistortionFunctor func(unprojected_point, model.radial_distortion, model.tangential_distortion);
+        ADFunctor adfunc(func);
+
+        ceres::TinySolver<ADFunctor> solver;
         solver.options.parameter_tolerance = 1e-2 / (model.principle_point.norm() + model.focal_length_pixels);
         solver.options.gradient_tolerance = solver.options.parameter_tolerance * 1e-2;
         solver.options.max_num_iterations = 10;
         solver.options.cost_threshold = 1e-16;
-        solver.Solve(func, &undistorted_point);
+        solver.Solve(adfunc, &undistorted_point);
     }
 
     Eigen::Vector3d ray;
@@ -136,13 +119,17 @@ Eigen::Vector2d image_from_3d(const Eigen::Vector3d &ray, const InverseDifferent
 
     if ((model.radial_distortion.array() != 0).any() || (model.tangential_distortion.array() != 0).any())
     {
-        ceres::TinySolver<DistortionFunctor> solver;
+        using ADFunctor = ceres::TinySolverAutoDiffFunction<DistortionFunctor, 2, 2>;
+
         DistortionFunctor func(ray_projected, model.radial_distortion, model.tangential_distortion);
+        ADFunctor adfunc(func);
+        ceres::TinySolver<ADFunctor> solver;
+
         solver.options.parameter_tolerance = 1e-2 / (model.principle_point.norm() + model.focal_length_pixels);
         solver.options.gradient_tolerance = solver.options.parameter_tolerance * 1e-2;
         solver.options.max_num_iterations = 10;
         solver.options.cost_threshold = 1e-16;
-        solver.Solve(func, &ray_distorted);
+        solver.Solve(adfunc, &ray_distorted);
     }
 
     const Eigen::Vector2d pixel_location = ray_distorted * model.focal_length_pixels + model.principle_point;

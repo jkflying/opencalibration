@@ -2,66 +2,38 @@
 
 #include <opencalibration/distort/distort_keypoints.hpp>
 
-#include <ceres/jet.h>
 #include <ceres/tiny_solver.h>
+#include <ceres/tiny_solver_autodiff_function.h>
 
 namespace
 {
 
 struct InverseDistortionFunctor
 {
-    using Scalar = double;
     enum
     {
         NUM_PARAMETERS = 5,
         NUM_RESIDUALS = Eigen::Dynamic
     };
 
-    bool operator()(const Scalar *parameters, Scalar *residuals, Scalar *jacobian) const
+    template <typename Scalar> bool operator()(const Scalar *parameters, Scalar *residuals) const
     {
 
         Eigen::Map<const Eigen::Matrix<Scalar, NUM_PARAMETERS, 1>> param_map(parameters);
-        Eigen::Map<Eigen::VectorXd> res_map(residuals, NumResiduals());
+        Eigen::Map<Eigen::Matrix<Scalar, Eigen::Dynamic, 1>> res_map(residuals, NumResiduals());
 
-        if (jacobian == nullptr)
+        opencalibration::InverseDifferentiableCameraModel<Scalar> invertedWithDistortion =
+            invertedNoDistortion.cast<Scalar>();
+        invertedWithDistortion.radial_distortion = param_map.template topRows<3>();
+        invertedWithDistortion.tangential_distortion = param_map.template bottomRows<2>();
+        for (size_t i = 0; i < correspondences.size(); i++)
         {
-            opencalibration::InverseDifferentiableCameraModel<double> invertedWithDistortion = invertedNoDistortion;
-            invertedWithDistortion.radial_distortion = param_map.topRows<3>();
-            invertedWithDistortion.tangential_distortion = param_map.bottomRows<2>();
-            for (size_t i = 0; i < correspondences.size(); i++)
-            {
-                const Eigen::Vector3d error_3d =
-                    image_to_3d(correspondences[i].second, invertedWithDistortion) - correspondences[i].first;
-                res_map.block<3, 1>(i * 3, 0) = error_3d;
-            }
+            const Eigen::Matrix<Scalar, 3, 1> error_3d =
+                opencalibration::image_to_3d<Scalar>(correspondences[i].second.cast<Scalar>(), invertedWithDistortion) -
+                correspondences[i].first.cast<Scalar>();
+            res_map.template block<3, 1>(i * 3, 0) = error_3d;
         }
-        else
-        {
-            using T = ceres::Jet<Scalar, NUM_PARAMETERS>;
-            opencalibration::InverseDifferentiableCameraModel<T> invertedWithDistortion =
-                invertedNoDistortion.cast<T>();
-            invertedWithDistortion.radial_distortion = param_map.topRows<3>().cast<T>();
-            invertedWithDistortion.tangential_distortion = param_map.bottomRows<2>().cast<T>();
-            for (int i = 0; i < 3; i++)
-                invertedWithDistortion.radial_distortion(i).v(i) = 1;
-            for (int i = 1; i < 2; i++)
-                invertedWithDistortion.tangential_distortion(i).v(i + 3) = 1;
 
-            for (size_t i = 0; i < correspondences.size(); i++)
-            {
-                const Eigen::Matrix<T, 2, 1> source = correspondences[i].second.cast<T>();
-                const Eigen::Matrix<T, 3, 1> value_3d = image_to_3d(source, invertedWithDistortion);
-                const Eigen::Matrix<T, 3, 1> error_3d = value_3d - correspondences[i].first.cast<T>();
-
-                Eigen::Map<Eigen::Matrix<Scalar, NUM_RESIDUALS, NUM_PARAMETERS>> jac_map(jacobian, NumResiduals(),
-                                                                                         NUM_PARAMETERS);
-                for (size_t j = 0; i < 3; i++)
-                {
-                    res_map(i * 3 + j, 0) = error_3d(j).a;
-                    jac_map.row(i * 3 + j) = error_3d(j).v;
-                }
-            }
-        }
         return true;
     }
 
@@ -89,8 +61,8 @@ namespace opencalibration
 InverseDifferentiableCameraModel<double> convertModel(const DifferentiableCameraModel<double> &standardModel)
 {
     InverseDifferentiableCameraModel<double> inverted = standardModel.cast<double, CameraModelTag::INVERSE>();
-    inverted.radial_distortion = {};
-    inverted.tangential_distortion = {};
+    inverted.radial_distortion.fill(0);
+    inverted.tangential_distortion.fill(0);
 
     std::vector<std::pair<Eigen::Vector3d, Eigen::Vector2d>> correspondences;
 
@@ -118,12 +90,14 @@ InverseDifferentiableCameraModel<double> convertModel(const DifferentiableCamera
         }
     }
 
-    ceres::TinySolver<InverseDistortionFunctor> solver;
+    using ADFunctor = ceres::TinySolverAutoDiffFunction<InverseDistortionFunctor, Eigen::Dynamic, 5>;
+    ceres::TinySolver<ADFunctor> solver;
     InverseDistortionFunctor functor(correspondences, inverted);
+    ADFunctor autoDiffFunctor(functor);
 
     Eigen::Matrix<double, 5, 1> parameters;
     parameters.fill(0);
-    solver.Solve(functor, &parameters);
+    solver.Solve(autoDiffFunctor, &parameters);
 
     inverted.radial_distortion = parameters.topRows<3>();
     inverted.tangential_distortion = parameters.bottomRows<2>();
@@ -135,8 +109,8 @@ DifferentiableCameraModel<double> convertModel(const InverseDifferentiableCamera
 {
     DifferentiableCameraModel<double> standard = invertedModel.cast<double, CameraModelTag::FORWARD>();
 
-    standard.radial_distortion = {};
-    standard.tangential_distortion = {};
+    standard.radial_distortion.fill(0);
+    standard.tangential_distortion.fill(0);
     // TODO: invert the distortion variables so that the model can be used in standard projections differentiably
 
     return standard;

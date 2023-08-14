@@ -30,8 +30,8 @@ template <typename T, CameraModelTag tag> struct DifferentiableCameraModelBase
 
     Eigen::Matrix<T, 2, 1> principle_point{T(0), T(0)};
 
-    Eigen::Matrix<T, 3, 1> radial_distortion{};
-    Eigen::Matrix<T, 2, 1> tangential_distortion{};
+    Eigen::Matrix<T, 3, 1> radial_distortion = Eigen::Matrix<T, 3, 1>::Zero();
+    Eigen::Matrix<T, 2, 1> tangential_distortion = Eigen::Matrix<T, 2, 1>::Zero();
 
     ProjectionType projection_type = ProjectionType::PLANAR;
 
