@@ -91,7 +91,7 @@ TEST(distort, inversemodel_image_to_3d_to_image_radial_tangential_distortion)
     EXPECT_NO_FATAL_FAILURE(verify(model, 1e-2)); // only solve to 1/100 of a pixel error
 }
 
-TEST(distort, inversemodel_conversion_to_model_no_distortion)
+TEST(distort, model_conversion_to_inversemodel_no_distortion)
 {
     DifferentiableCameraModel<double> model;
     model.focal_length_pixels = 6000;
@@ -105,6 +105,37 @@ TEST(distort, inversemodel_conversion_to_model_no_distortion)
     EXPECT_NO_FATAL_FAILURE(verifyIsSame(inverse_model, model, 1e-12)); // simple model inverts perfectly
 }
 
+TEST(distort, model_conversion_to_inversemodel_radial_distortion)
+{
+    DifferentiableCameraModel<double> model;
+    model.focal_length_pixels = 6000;
+    model.pixels_cols = 4000;
+    model.pixels_rows = 3000;
+    model.principle_point = Eigen::Vector2d(model.pixels_cols, model.pixels_rows) / 2;
+    model.radial_distortion << 0.02, -0.07, 0.1;
+
+    const InverseDifferentiableCameraModel<double> inverse_model = convertModel(model);
+
+    EXPECT_NO_FATAL_FAILURE(verifyIsSame(model, inverse_model, 1e-2)); // only solve to 1/100 of a pixel error
+    EXPECT_NO_FATAL_FAILURE(verifyIsSame(inverse_model, model, 1e-2)); // only solve to 1/100 of a pixel error
+}
+
+TEST(distort, inversemodel_conversion_to_model_radial_distortion)
+{
+    InverseDifferentiableCameraModel<double> inverse_model;
+    inverse_model.focal_length_pixels = 6000;
+    inverse_model.pixels_cols = 4000;
+    inverse_model.pixels_rows = 3000;
+    inverse_model.principle_point = Eigen::Vector2d(inverse_model.pixels_cols, inverse_model.pixels_rows) / 2;
+    inverse_model.radial_distortion << 0.02, -0.07, 0.1;
+
+    const DifferentiableCameraModel<double> model = convertModel(inverse_model);
+
+    EXPECT_NO_FATAL_FAILURE(verifyIsSame(inverse_model, model, 1e-2)); // only solve to 1/100 of a pixel error
+    EXPECT_NO_FATAL_FAILURE(verifyIsSame(model, inverse_model, 1e-2)); // only solve to 1/100 of a pixel error
+}
+
+// There is no way to correctly model the inverse of the tangential distortion, and some doubt if it is even necessary
 TEST(distort, DISABLED_inversemodel_conversion_to_model_radial_tangential_distortion)
 {
     DifferentiableCameraModel<double> model;
