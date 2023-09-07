@@ -370,6 +370,79 @@ struct PixelErrorCost_OrientationFocalRadialTangential
     const Eigen::Vector2d pixel; // unique to this measurement, keep a local copy to avoid cache thrashing
 };
 
+struct PlaneIntersectionAngleCost_OrientationFocalRadial_SharedModel
+{
+    static const int NUM_RESIDUALS = 3;
+    static const int NUM_PARAMETERS_1 = 4; // rotation 0
+    static const int NUM_PARAMETERS_2 = 4; // rotation 1
+    static const int NUM_PARAMETERS_3 = 1; // z 0
+    static const int NUM_PARAMETERS_4 = 1; // z 1
+    static const int NUM_PARAMETERS_5 = 1; // z 2
+    static const int NUM_PARAMETERS_6 = 1; // focal
+    static const int NUM_PARAMETERS_7 = 3; // radial
+
+    PlaneIntersectionAngleCost_OrientationFocalRadial_SharedModel(
+        const Eigen::Vector3d &camera_loc1, const Eigen::Vector3d &camera_loc2, const Eigen::Vector2d &camera_pixel1,
+        const Eigen::Vector2d &camera_pixel2, const Eigen::Vector2d &plane_point1, const Eigen::Vector2d &plane_point2,
+        const Eigen::Vector2d &plane_point3, const InverseDifferentiableCameraModel<double> &sharedModel)
+        : camera_loc{camera_loc1, camera_loc2}, camera_pixel{camera_pixel1, camera_pixel2}, plane_point{plane_point1,
+                                                                                                        plane_point2,
+                                                                                                        plane_point3},
+          sharedModel(sharedModel)
+    {
+    }
+
+    template <typename T>
+    bool operator()(const T *rotation0, const T *rotation1, const T *z0, const T *z1, const T *z2, const T *focal,
+                    const T *radial, T *residuals) const
+    {
+        using QuaterionT = Eigen::Quaternion<T>;
+        using Vector3T = Eigen::Matrix<T, 3, 1>;
+        using QuaternionTCM = Eigen::Map<const QuaterionT>;
+        using Vector3TM = Eigen::Map<Vector3T>;
+        using Vector3TCM = Eigen::Map<const Vector3T>;
+
+
+        const QuaternionTCM rotation_em[2]{QuaternionTCM(rotation0), QuaternionTCM(rotation1)};
+        InverseDifferentiableCameraModel<T> model = sharedModel.cast<T>();
+        model.focal_length_pixels = T(*focal);
+        model.radial_distortion = Vector3TCM(radial);
+        ray<T> rays[2];
+        for (int i = 0; i < 2; i++)
+        {
+            rays[i].dir = rotation_em[i] * image_to_3d<T>(camera_pixel[i].cast<T>(), model);
+            rays[i].offset = camera_loc[i].cast<T>();
+        }
+
+        const T plane_z[3]{*z0, *z1, *z2};
+        plane_3_corners<T> plane3;
+        for (int i = 0; i < 3; i++)
+            plane3.corner[i] << T(plane_point[i].x()), T(plane_point[i].y()), plane_z[i];
+
+        plane_norm_offset<T> pno = cornerPlane2normOffsetPlane(plane3);
+
+        Vector3T intersection[2];
+        bool intersections = true;
+        for (int i = 0; i < 2; i++)
+            intersections &= rayPlaneIntersection(rays[i], pno, intersection[i]);
+
+        Vector3T distance_error = intersection[0] - intersection[1];
+        T avg_dist = ((intersection[0] - camera_loc[0]).norm() + (intersection[1] - camera_loc[1]).norm()) * T(0.5);
+        Vector3T angle_error = distance_error / avg_dist;
+
+        Vector3TM final_error(residuals);
+        final_error = angle_error;
+
+        return intersections;
+    }
+
+  private:
+    const std::array<Eigen::Vector3d, 2> camera_loc;
+    const std::array<Eigen::Vector2d, 2> camera_pixel;
+    const std::array<Eigen::Vector2d, 3> plane_point;
+    const InverseDifferentiableCameraModel<double> sharedModel;
+};
+
 struct PlaneIntersectionAngleCost
 {
     static const int NUM_RESIDUALS = 3;
