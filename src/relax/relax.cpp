@@ -30,10 +30,11 @@ std::vector<Backend> getBackends()
     auto points_solver = [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                             std::unordered_map<size_t, CameraModel> &cam_models,
                             const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options,
-                            const std::vector<surface_model> &) {
+                            const std::vector<surface_model> &) -> surface_model {
         PerformanceMeasure p("Relax runner 3d points");
         RelaxProblem rp;
         rp.setup3dPointProblem(graph, nodes, cam_models, edges_to_optimize, options);
+        rp.relaxObservedModelOnly();
         rp.solve();
 
         return rp.getSurfaceModel();
@@ -42,18 +43,20 @@ std::vector<Backend> getBackends()
     auto mesh_solver = [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                           std::unordered_map<size_t, CameraModel> &cam_models,
                           const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options,
-                          const std::vector<surface_model> &previousSurfaces) {
+                          const std::vector<surface_model> &previousSurfaces) -> surface_model {
         PerformanceMeasure p("Relax runner ground mesh");
         RelaxProblem rp;
         rp.setupGroundMeshProblem(graph, nodes, cam_models, edges_to_optimize, options, previousSurfaces);
+        rp.relaxObservedModelOnly();
         rp.solve();
 
         return rp.getSurfaceModel();
     };
+
     auto ground_plane_solver = [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                                   std::unordered_map<size_t, CameraModel> &cam_models,
                                   const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options,
-                                  const std::vector<surface_model> &) {
+                                  const std::vector<surface_model> &) -> surface_model {
         PerformanceMeasure p("Relax runner ground plane");
 
         Eigen::Quaterniond previous_node_orientation = DOWN_ORIENTED_NORTH;
@@ -94,10 +97,11 @@ std::vector<Backend> getBackends()
 
         return rp.getSurfaceModel();
     };
+
     auto relative_orientation_solver = [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                                           std::unordered_map<size_t, CameraModel> &cam_models,
                                           const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &,
-                                          const std::vector<surface_model> &) {
+                                          const std::vector<surface_model> &) -> surface_model {
         // doesn't use the camera model at all, just decomposed relative orientations
         (void)cam_models;
 
@@ -136,6 +140,7 @@ std::vector<Backend> getBackends()
                                          Option::LENS_DISTORTIONS_RADIAL_BROWN246_PARAMETERIZATION,
                                          Option::FOCAL_LENGTH, Option::ORIENTATION, Option::GROUND_MESH},
                           mesh_solver);
+
     backends.emplace_back(RelaxOptionSet{Option::LENS_DISTORTIONS_TANGENTIAL, Option::LENS_DISTORTIONS_RADIAL,
                                          Option::LENS_DISTORTIONS_RADIAL_BROWN2_PARAMETERIZATION,
                                          Option::LENS_DISTORTIONS_RADIAL_BROWN24_PARAMETERIZATION,

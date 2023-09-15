@@ -28,8 +28,7 @@ template <typename T, CameraModelTag tag> struct DifferentiableCameraModelBase
 
     T focal_length_pixels = T(0);
 
-    Eigen::Matrix<T, 2, 1> principle_point{T(0), T(0)};
-
+    Eigen::Matrix<T, 2, 1> principle_point = Eigen::Matrix<T, 2, 1>::Zero();
     Eigen::Matrix<T, 3, 1> radial_distortion = Eigen::Matrix<T, 3, 1>::Zero();
     Eigen::Matrix<T, 2, 1> tangential_distortion = Eigen::Matrix<T, 2, 1>::Zero();
 
@@ -67,6 +66,12 @@ using InverseDifferentiableCameraModel = DifferentiableCameraModelBase<T, Camera
 struct CameraModel final : public DifferentiableCameraModel<double>
 {
   public:
+    CameraModel() = default;
+    CameraModel(const DifferentiableCameraModel<double> &model, size_t id)
+        : DifferentiableCameraModel<double>(model), id(id)
+    {
+    }
+
     size_t id = 0;
 
     bool operator==(const CameraModel &other) const
@@ -78,6 +83,12 @@ struct CameraModel final : public DifferentiableCameraModel<double>
 struct InverseCameraModel final : public InverseDifferentiableCameraModel<double>
 {
   public:
+    InverseCameraModel() = default;
+    InverseCameraModel(const InverseDifferentiableCameraModel<double> &model, size_t id)
+        : InverseDifferentiableCameraModel<double>(model), id(id)
+    {
+    }
+
     size_t id = 0;
 
     bool operator==(const InverseCameraModel &other) const

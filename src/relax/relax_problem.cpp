@@ -6,6 +6,7 @@
 
 #include "ceres_log_forwarding.cpp.inc"
 
+#include <opencalibration/distort/invert_distortion.hpp>
 #include <thread>
 
 namespace opencalibration
@@ -311,6 +312,14 @@ void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, 
     const auto &source_model = *pkg.source.model_ptr;
     const auto &dest_model = *pkg.dest.model_ptr;
 
+    // hackity hackity hack
+    auto inverse_iter = _inverse_cam_model_to_optimize.find(source_model.id);
+    if (inverse_iter == _inverse_cam_model_to_optimize.end())
+    {
+        _inverse_cam_model_to_optimize[source_model.id] = convertModel(source_model);
+        inverse_iter = _inverse_cam_model_to_optimize.find(source_model.id);
+    }
+
     const auto &source_whitelist = _grid_filter[edge.getSource()][edge_id].getBestMeasurementsPerCell();
     const auto &dest_whitelist = _grid_filter[edge.getDest()][edge_id].getBestMeasurementsPerCell();
 
@@ -355,15 +364,28 @@ void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, 
             zValues[i] = const_cast<double *>(constZValues[i]);
         }
 
-        // TODO: select correct cost function based on options
-        (void)options;
+        // select correct cost function based on options
+        if (options.hasAny(RelaxOptionSet{Option::FOCAL_LENGTH, Option::LENS_DISTORTIONS_RADIAL}) &&
+            source_model == dest_model)
+        {
 
-        // add cost functions for this 3D point from both the source and dest camera
-        std::unique_ptr<ceres::CostFunction> func(newAutoDiffPlaneIntersectionAngleCost(
-            sourceRay.offset, destRay.offset, sourceRay.dir, destRay.dir, corner2d[0], corner2d[1], corner2d[2]));
+            std::unique_ptr<ceres::CostFunction> func(newAutoDiffPlaneIntersectionAngleCost_FocalRadial(
+                sourceRay.offset, destRay.offset, inlier.pixel_1, inlier.pixel_2, corner2d[0], corner2d[1], corner2d[2],
+                inverse_iter->second));
 
-        _problem->AddResidualBlock(func.release(), &_loss, datas[0], datas[1], zValues[0], zValues[1], zValues[2]);
-        points_added = true;
+            _problem->AddResidualBlock(func.release(), &_loss, datas[0], datas[1], zValues[0], zValues[1], zValues[2],
+                                       &inverse_iter->second.focal_length_pixels,
+                                       inverse_iter->second.radial_distortion.data());
+            points_added = true;
+        }
+        else
+        {
+            std::unique_ptr<ceres::CostFunction> func(newAutoDiffPlaneIntersectionAngleCost(
+                sourceRay.offset, destRay.offset, sourceRay.dir, destRay.dir, corner2d[0], corner2d[1], corner2d[2]));
+
+            _problem->AddResidualBlock(func.release(), &_loss, datas[0], datas[1], zValues[0], zValues[1], zValues[2]);
+            points_added = true;
+        }
     }
     if (points_added)
     {
@@ -377,6 +399,28 @@ void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, 
         if (!pkg.dest.optimize)
         {
             _problem->SetParameterBlockConstant(datas[1]);
+        }
+
+        if (options.hasAny({Option::FOCAL_LENGTH, Option::LENS_DISTORTIONS_RADIAL}))
+        {
+            if (options.hasAll({Option::LENS_DISTORTIONS_RADIAL_BROWN246_PARAMETERIZATION}))
+            {
+                _problem->SetParameterization(inverse_iter->second.radial_distortion.data(),
+                                              &_brown246_parameterization);
+            }
+            else if (options.hasAll({Option::LENS_DISTORTIONS_RADIAL_BROWN24_PARAMETERIZATION}))
+            {
+                _problem->SetParameterization(inverse_iter->second.radial_distortion.data(),
+                                              &_brown24_parameterization);
+            }
+            else if (options.hasAll({Option::LENS_DISTORTIONS_RADIAL_BROWN2_PARAMETERIZATION}))
+            {
+                _problem->SetParameterization(inverse_iter->second.radial_distortion.data(), &_brown2_parameterization);
+            }
+            else
+            {
+                spdlog::warn("No parameterization chosen for radial distortion");
+            }
         }
     }
 
@@ -713,6 +757,12 @@ void RelaxProblem::solve()
     for (auto &p : _nodes_to_optimize)
     {
         p.second->orientation.normalize();
+    }
+
+    // hackity hackity hack - copy back camera models
+    for (const auto &[id, inverse_model] : _inverse_cam_model_to_optimize)
+    {
+        *_cam_models_to_optimize[id] = CameraModel(convertModel(inverse_model), id);
     }
 }
 

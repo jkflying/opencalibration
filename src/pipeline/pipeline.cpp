@@ -14,6 +14,7 @@
 
 #include <chrono>
 #include <iostream>
+#include <omp.h>
 
 using namespace std::chrono_literals;
 using fvec = std::vector<std::function<void()>>;

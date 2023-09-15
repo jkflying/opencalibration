@@ -95,6 +95,7 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
 
     size_t graph_connection_depth = num_groups > 1 ? 0 : 2;
     const auto &cluster = _k_groups->getClusters();
+
     // k-means were smallest to biggest, but we want to process the big ones first to improve load balancing on really
     // large problem
     for (auto it = cluster.rbegin(); it != cluster.rend(); ++it)

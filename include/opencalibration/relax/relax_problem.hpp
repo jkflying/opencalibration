@@ -105,6 +105,7 @@ class RelaxProblem
 
     std::unordered_map<size_t, NodePose *> _nodes_to_optimize;
     std::unordered_map<size_t, CameraModel *> _cam_models_to_optimize;
+    std::unordered_map<size_t, InverseDifferentiableCameraModel<double>> _inverse_cam_model_to_optimize;
     std::unordered_set<size_t> _edges_used;
 
     // Surface models
