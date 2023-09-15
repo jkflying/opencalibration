@@ -27,38 +27,6 @@ struct Backend
 std::vector<Backend> getBackends()
 {
     std::vector<Backend> backends;
-    backends.emplace_back(RelaxOptionSet{Option::ORIENTATION},
-                          [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                             std::unordered_map<size_t, CameraModel> &cam_models,
-                             const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &,
-                             const std::vector<surface_model> &) {
-                              // doesn't use the camera model at all, just decomposed relative orientations
-                              (void)cam_models;
-
-                              PerformanceMeasure p("Relax runner relative");
-
-                              for (auto &node : nodes)
-                              {
-                                  if (node.orientation.coeffs().hasNaN())
-                                  {
-                                      node.orientation = DOWN_ORIENTED_NORTH;
-
-                                      // add just one image at a time with a bad initial orientation, then force an
-                                      // optimize otherwise we could disturb the other images and end up in a bad local
-                                      // minima the setup will already discard images which are uninitialized
-                                      RelaxProblem rp;
-                                      rp.setupDecompositionProblem(graph, nodes, edges_to_optimize);
-                                      rp.solve();
-                                  }
-                              }
-
-                              // finally do an optimize for the whole batch
-                              RelaxProblem rp;
-                              rp.setupDecompositionProblem(graph, nodes, edges_to_optimize);
-                              rp.solve();
-
-                              return rp.getSurfaceModel();
-                          });
     auto points_solver = [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                             std::unordered_map<size_t, CameraModel> &cam_models,
                             const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options,
@@ -82,67 +50,98 @@ std::vector<Backend> getBackends()
 
         return rp.getSurfaceModel();
     };
+    auto ground_plane_solver = [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                                  std::unordered_map<size_t, CameraModel> &cam_models,
+                                  const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options,
+                                  const std::vector<surface_model> &) {
+        PerformanceMeasure p("Relax runner ground plane");
+
+        Eigen::Quaterniond previous_node_orientation = DOWN_ORIENTED_NORTH;
+        for (auto &node : nodes)
+        {
+
+            if (node.orientation.coeffs().hasNaN())
+            {
+                node.orientation = previous_node_orientation;
+
+                // add just one image at a time with a bad initial orientation, and optimize it while holding others
+                // still if there are enough images to do so
+                // The setup will already discard images which are uninitialized
+                if (graph.size_nodes() > 2 * nodes.size())
+                {
+                    std::vector<NodePose> justThis{node};
+                    RelaxProblem rp;
+                    rp.setupGroundPlaneProblem(graph, justThis, cam_models, edges_to_optimize, options);
+                    rp.relaxObservedModelOnly();
+                    rp.solve();
+                    node = justThis[0];
+                }
+                else
+                {
+                    RelaxProblem rp;
+                    rp.setupGroundPlaneProblem(graph, nodes, cam_models, edges_to_optimize, options);
+                    rp.relaxObservedModelOnly();
+                    rp.solve();
+                }
+            }
+            previous_node_orientation = node.orientation;
+        }
+
+        RelaxProblem rp;
+        rp.setupGroundPlaneProblem(graph, nodes, cam_models, edges_to_optimize, options);
+        rp.relaxObservedModelOnly();
+        rp.solve();
+
+        return rp.getSurfaceModel();
+    };
+    auto relative_orientation_solver = [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                                          std::unordered_map<size_t, CameraModel> &cam_models,
+                                          const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &,
+                                          const std::vector<surface_model> &) {
+        // doesn't use the camera model at all, just decomposed relative orientations
+        (void)cam_models;
+
+        PerformanceMeasure p("Relax runner relative");
+
+        for (auto &node : nodes)
+        {
+            if (node.orientation.coeffs().hasNaN())
+            {
+                node.orientation = DOWN_ORIENTED_NORTH;
+
+                // add just one image at a time with a bad initial orientation, then force an
+                // optimize otherwise we could disturb the other images and end up in a bad local
+                // minima the setup will already discard images which are uninitialized
+                RelaxProblem rp;
+                rp.setupDecompositionProblem(graph, nodes, edges_to_optimize);
+                rp.solve();
+            }
+        }
+
+        // finally do an optimize for the whole batch
+        RelaxProblem rp;
+        rp.setupDecompositionProblem(graph, nodes, edges_to_optimize);
+        rp.solve();
+
+        return rp.getSurfaceModel();
+    };
+
+    backends.emplace_back(RelaxOptionSet{Option::ORIENTATION}, relative_orientation_solver);
+
+    backends.emplace_back(RelaxOptionSet{Option::ORIENTATION, Option::GROUND_PLANE}, ground_plane_solver);
+
+    backends.emplace_back(RelaxOptionSet{Option::LENS_DISTORTIONS_RADIAL,
+                                         Option::LENS_DISTORTIONS_RADIAL_BROWN2_PARAMETERIZATION,
+                                         Option::LENS_DISTORTIONS_RADIAL_BROWN24_PARAMETERIZATION,
+                                         Option::LENS_DISTORTIONS_RADIAL_BROWN246_PARAMETERIZATION,
+                                         Option::FOCAL_LENGTH, Option::ORIENTATION, Option::GROUND_MESH},
+                          mesh_solver);
     backends.emplace_back(RelaxOptionSet{Option::LENS_DISTORTIONS_TANGENTIAL, Option::LENS_DISTORTIONS_RADIAL,
                                          Option::LENS_DISTORTIONS_RADIAL_BROWN2_PARAMETERIZATION,
                                          Option::LENS_DISTORTIONS_RADIAL_BROWN24_PARAMETERIZATION,
                                          Option::LENS_DISTORTIONS_RADIAL_BROWN246_PARAMETERIZATION,
                                          Option::FOCAL_LENGTH, Option::ORIENTATION, Option::POINTS_3D},
                           points_solver);
-    backends.emplace_back(RelaxOptionSet{Option::LENS_DISTORTIONS_RADIAL,
-                                         Option::LENS_DISTORTIONS_RADIAL_BROWN2_PARAMETERIZATION,
-                                         Option::LENS_DISTORTIONS_RADIAL_BROWN24_PARAMETERIZATION,
-                                         Option::LENS_DISTORTIONS_RADIAL_BROWN246_PARAMETERIZATION,
-                                         Option::FOCAL_LENGTH, Option::ORIENTATION, Option::POINTS_3D},
-                          points_solver);
-    backends.emplace_back(RelaxOptionSet{Option::FOCAL_LENGTH, Option::ORIENTATION, Option::POINTS_3D}, points_solver);
-    backends.emplace_back(RelaxOptionSet{Option::ORIENTATION, Option::GROUND_MESH}, mesh_solver);
-    backends.emplace_back(RelaxOptionSet{Option::ORIENTATION, Option::POINTS_3D}, points_solver);
-
-    backends.emplace_back(
-        RelaxOptionSet{Option::ORIENTATION, Option::GROUND_PLANE},
-        [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-           std::unordered_map<size_t, CameraModel> &cam_models, const std::unordered_set<size_t> &edges_to_optimize,
-           const RelaxOptionSet &options, const std::vector<surface_model> &) {
-            PerformanceMeasure p("Relax runner ground plane");
-
-            Eigen::Quaterniond previous_node_orientation = DOWN_ORIENTED_NORTH;
-            for (auto &node : nodes)
-            {
-
-                if (node.orientation.coeffs().hasNaN())
-                {
-                    node.orientation = previous_node_orientation;
-
-                    // add just one image at a time with a bad initial orientation, and optimize it while holding others
-                    // still if there are enough images to do so
-                    // The setup will already discard images which are uninitialized
-                    if (graph.size_nodes() > 2 * nodes.size())
-                    {
-                        std::vector<NodePose> justThis{node};
-                        RelaxProblem rp;
-                        rp.setupGroundPlaneProblem(graph, justThis, cam_models, edges_to_optimize, options);
-                        rp.relaxObservedModelOnly();
-                        rp.solve();
-                        node = justThis[0];
-                    }
-                    else
-                    {
-                        RelaxProblem rp;
-                        rp.setupGroundPlaneProblem(graph, nodes, cam_models, edges_to_optimize, options);
-                        rp.relaxObservedModelOnly();
-                        rp.solve();
-                    }
-                }
-                previous_node_orientation = node.orientation;
-            }
-
-            RelaxProblem rp;
-            rp.setupGroundPlaneProblem(graph, nodes, cam_models, edges_to_optimize, options);
-            rp.relaxObservedModelOnly();
-            rp.solve();
-
-            return rp.getSurfaceModel();
-        });
     return backends;
 }
 
