@@ -417,6 +417,11 @@ void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, 
             {
                 _problem->SetParameterization(inverse_iter->second.radial_distortion.data(), &_brown2_parameterization);
             }
+            else if (!options.hasAny({Option::LENS_DISTORTIONS_RADIAL}))
+            {
+
+                _problem->SetParameterBlockConstant(inverse_iter->second.radial_distortion.data());
+            }
             else
             {
                 spdlog::warn("No parameterization chosen for radial distortion");
