@@ -402,7 +402,6 @@ struct PlaneIntersectionAngleCost_OrientationFocalRadial_SharedModel
         using Vector3TM = Eigen::Map<Vector3T>;
         using Vector3TCM = Eigen::Map<const Vector3T>;
 
-
         const QuaternionTCM rotation_em[2]{QuaternionTCM(rotation0), QuaternionTCM(rotation1)};
         InverseDifferentiableCameraModel<T> model = sharedModel.cast<T>();
         model.focal_length_pixels = T(*focal);

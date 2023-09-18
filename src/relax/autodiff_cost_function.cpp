@@ -36,13 +36,13 @@ ceres::CostFunction *newAutoDiffPlaneIntersectionAngleCost_FocalRadial(
     const Eigen::Vector2d &plane_point3, const InverseDifferentiableCameraModel<double> &model)
 {
     using Functor = PlaneIntersectionAngleCost_OrientationFocalRadial_SharedModel;
-    using CostFunction = ceres::AutoDiffCostFunction<Functor, Functor::NUM_RESIDUALS, Functor::NUM_PARAMETERS_1,
-                                                     Functor::NUM_PARAMETERS_2, Functor::NUM_PARAMETERS_3,
-                                                     Functor::NUM_PARAMETERS_4, Functor::NUM_PARAMETERS_5,
-                                                     Functor::NUM_PARAMETERS_6, Functor::NUM_PARAMETERS_7>;
+    using CostFunction =
+        ceres::AutoDiffCostFunction<Functor, Functor::NUM_RESIDUALS, Functor::NUM_PARAMETERS_1,
+                                    Functor::NUM_PARAMETERS_2, Functor::NUM_PARAMETERS_3, Functor::NUM_PARAMETERS_4,
+                                    Functor::NUM_PARAMETERS_5, Functor::NUM_PARAMETERS_6, Functor::NUM_PARAMETERS_7>;
 
-    return new CostFunction(
-        new Functor(camera_loc1, camera_loc2, camera_pixel1, camera_pixel2, plane_point1, plane_point2, plane_point3, model));
+    return new CostFunction(new Functor(camera_loc1, camera_loc2, camera_pixel1, camera_pixel2, plane_point1,
+                                        plane_point2, plane_point3, model));
 }
 
 ceres::CostFunction *newAutoDiffPixelErrorCost_Orientation(const Eigen::Vector3d &camera_loc,
