@@ -38,6 +38,10 @@ bool MeshIntersectionSearcher::init(const MeshGraph &meshGraph, const Intersecti
     for (size_t i = 0; i < 3; i++)
     {
         const MeshGraph::Node *node = _meshGraph->getNode(_info.nodeIndexes[i]);
+        if (node == nullptr)
+        {
+            return false;
+        }
         _info.nodeLocations[i] = &node->payload.location;
     }
 

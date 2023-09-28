@@ -51,7 +51,7 @@ TEST(meshgraph, intersects_rays)
     g = rebuildMesh(p, {surface_model{{}, g}});
 
     MeshIntersectionSearcher s;
-    s.init(g);
+    ASSERT_TRUE(s.init(g));
 
     for (int i = 0; i < 50; i++)
     {
@@ -78,7 +78,7 @@ TEST(meshgraph, doesnt_intersect_outside)
     g = rebuildMesh(p, {surface_model{{}, g}});
 
     MeshIntersectionSearcher s;
-    s.init(g);
+    ASSERT_TRUE(s.init(g));
 
     for (int i = 0; i < 50; i++)
     {

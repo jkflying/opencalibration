@@ -31,9 +31,9 @@ class MeshIntersectionSearcher
         size_t steps;
     };
 
-    bool init(const MeshGraph &meshGraph, const IntersectionInfo &info = {});
+    [[nodiscard]] bool init(const MeshGraph &meshGraph, const IntersectionInfo &info = {});
 
-    bool reinit();
+    [[nodiscard]] bool reinit();
 
     // Faster if called consecutively with rays that intersect the mesh near to each other
     // Note: not threadsafe, use one instance of MeshIntersectionSearcher per thread

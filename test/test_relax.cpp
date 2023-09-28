@@ -369,6 +369,37 @@ TEST_F(relax_, measurement_3_images_plane)
             << "g: " << ground_ori[i].coeffs().transpose();
 }
 
+TEST_F(relax_, measurement_3_images_mesh_radial)
+{
+    // GIVEN: a graph, 3 images with edges between them all, then with their rotation disturbed
+    init_cameras();
+    cam_models[model->id].radial_distortion << 0.1, -0.1, 0.1;
+    add_point_measurements(generate_planar_points());
+    add_ori_noise({-0.1, 0.1, 0.1});
+    cam_models[model->id].radial_distortion.fill(0);
+
+    // WHEN: we relax them with relative orientation
+    const RelaxOptionSet options({Option::ORIENTATION, Option::LENS_DISTORTIONS_RADIAL,
+                                  Option::LENS_DISTORTIONS_RADIAL_BROWN246_PARAMETERIZATION, Option::GROUND_MESH});
+    std::unordered_set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
+
+    for (int i = 0; i < 10; i++)
+        // a few times...
+        relax(graph, np, cam_models, edges, options, {});
+
+    // THEN: it should put them back into the original orientation
+    for (int i = 0; i < 3; i++)
+    {
+        EXPECT_LT(Eigen::AngleAxisd(np[i].orientation.inverse() * ground_ori[i]).angle(), 1e-3)
+            << i << ": " << np[i].orientation.coeffs().transpose() << std::endl
+            << "g: " << ground_ori[i].coeffs().transpose();
+    }
+
+    EXPECT_LT((cam_models[model->id].radial_distortion - model->radial_distortion).norm(), 1e-4)
+        << cam_models[model->id].radial_distortion;
+    EXPECT_NEAR(cam_models[model->id].focal_length_pixels, model->focal_length_pixels, 1e-9);
+}
+
 class TestRelaxProblem : public RelaxProblem
 {
   public:

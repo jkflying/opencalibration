@@ -83,7 +83,7 @@ void RelaxProblem::setupGroundMeshProblem(const MeasurementGraph &graph, std::ve
     initialize(nodes, cam_models);
     initializeGroundMesh(previousSurfaces);
     _loss.Reset(new ceres::HuberLoss(1 * M_PI / 180), ceres::TAKE_OWNERSHIP);
-    gridFilterMatchesPerImage(graph, edges_to_optimize, 0.05);
+    gridFilterMatchesPerImage(graph, edges_to_optimize, 0.1);
 
     for (size_t edge_id : edges_to_optimize)
     {
@@ -326,7 +326,11 @@ void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, 
     const std::array<double *, 2> datas = {pkg.source.rot_ptr->coeffs().data(), pkg.dest.rot_ptr->coeffs().data()};
 
     MeshIntersectionSearcher intersectionSearcher;
-    intersectionSearcher.init(_mesh);
+    if (!intersectionSearcher.init(_mesh))
+    {
+        spdlog::debug("could not initialize mesh searcher, skipping edge");
+        return;
+    }
 
     bool points_added = false;
     for (const auto &inlier : edge.payload.inlier_matches)
@@ -376,6 +380,10 @@ void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, 
             _problem->AddResidualBlock(func.release(), &_loss, datas[0], datas[1], zValues[0], zValues[1], zValues[2],
                                        &inverse_iter->second.focal_length_pixels,
                                        inverse_iter->second.radial_distortion.data());
+            if (!options.hasAny(RelaxOptionSet{Option::FOCAL_LENGTH}))
+            {
+                _problem->SetParameterBlockConstant(&inverse_iter->second.focal_length_pixels);
+            }
             points_added = true;
         }
         else
@@ -401,7 +409,7 @@ void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, 
             _problem->SetParameterBlockConstant(datas[1]);
         }
 
-        if (options.hasAny({Option::FOCAL_LENGTH, Option::LENS_DISTORTIONS_RADIAL}))
+        if (options.hasAny({Option::LENS_DISTORTIONS_RADIAL}))
         {
             if (options.hasAll({Option::LENS_DISTORTIONS_RADIAL_BROWN246_PARAMETERIZATION}))
             {
@@ -439,44 +447,50 @@ void RelaxProblem::relaxObservedModelOnly()
     std::vector<double *> params;
     _problem->GetParameterBlocks(&params);
 
-    std::vector<bool> isConst;
-    isConst.reserve(params.size());
-    std::unordered_set<double *> params_set;
+    std::unordered_map<double *, bool> params_map;
+
+    // back up parameters and set everything to constant
     for (double *p : params)
     {
-        isConst.push_back(_problem->IsParameterBlockConstant(p));
+        const bool isConst = _problem->IsParameterBlockConstant(p);
         _problem->SetParameterBlockConstant(p);
-        params_set.insert(p);
+        params_map.emplace(p, isConst);
     }
+
+    // set the mesh nodes and 3d points to variable
     for (auto &et : _edge_tracks)
     {
         for (auto &t : et.second)
         {
-            if (params_set.find(t.point.data()) != params_set.end())
+            auto param = params_map.find(t.point.data());
+            if (param != params_map.end() && !param->second)
             {
                 _problem->SetParameterBlockVariable(t.point.data());
             }
         }
     }
-
     for (auto iter = _mesh.nodebegin(); iter != _mesh.nodeend(); ++iter)
     {
         auto &p = iter->second.payload.location;
-        if (params_set.find(&p.z()) != params_set.end())
+        auto param = params_map.find(&p.z());
+        if (param != params_map.end() && !param->second)
             _problem->SetParameterBlockVariable(&p.z());
     }
 
+    // solve
     spdlog::debug("optimizing surface only");
     solve();
-    for (size_t i = 0; i < params.size(); i++)
+
+    // restore parameter const-ness from backup
+    for (const auto &[param, isConst] : params_map)
     {
-        if (isConst[i])
+        if (isConst)
         {
-            _problem->SetParameterBlockConstant(params[i]);
+            _problem->SetParameterBlockConstant(param);
         }
         else
         {
-            _problem->SetParameterBlockVariable(params[i]);
+            _problem->SetParameterBlockVariable(param);
         }
     }
 }
