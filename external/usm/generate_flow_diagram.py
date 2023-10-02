@@ -1,6 +1,7 @@
 #!/usr/bin/python
 
 import sys
+import argparse
 
 NORMAL = "normal"
 FALLBACK = "fallback"
@@ -17,13 +18,13 @@ def extract_first_wrapped(table_string, key):
         start = table_string.index(key)
     except ValueError:
         return ""
-    
+
     depth = 0
     while depth == 0:
         start += 1
         if table_string[start] == "(":
             depth += 1
-    
+
     end = start + 1
     while depth != 0:
         end += 1
@@ -31,7 +32,7 @@ def extract_first_wrapped(table_string, key):
             depth += 1
         if table_string[end] == ")":
             depth -= 1
-            
+
     state_string = table_string[start:end+1]
 
     return state_string
@@ -94,7 +95,7 @@ def make_dot_file_string(transitions):
         output.append("    \"{start}\" -> \"{end}\" [label=\"{name}\", "
                                                     "style=\"{style}\", "
                                                     "weight={weight}]".format(start=t.start,
-                                                                              end=t.end, 
+                                                                              end=t.end,
                                                                               name=t.edge_name,
                                                                               style=style,
                                                                               weight=weight))
@@ -107,26 +108,37 @@ def help():
 
 
 def main():
-    arguments = sys.argv[1:]
-    if len(arguments) == 0:
-        help()
-        exit(1)
-    
-    filename = arguments[0]
-    
-    with open(filename, 'r') as file:
+    parser = argparse.ArgumentParser(
+        prog='generate_flow_diagram',
+        description='Generate a .dot file from a file implementing a usm macro based transition table')
+
+    parser.add_argument('-v', '--verify', action='store_true', help='exit with error if the output file doesn\'t match the generated dot file')
+    parser.add_argument('filename')
+    parser.add_argument('out_filename', nargs='?')
+
+    args = parser.parse_args()
+
+    with open(args.filename, 'r') as file:
         cpp_string = file.read()
 
     transitions = extract_transitions(cpp_string)
     dot_file_string = make_dot_file_string(transitions)
 
-    if len(arguments) == 2:
-        out_filename = arguments[1]
+    if args.out_filename:
+        out_filename = args.out_filename
     else:
-        out_filename = filename + ".dot"
+        out_filename = args.filename + ".dot"
+
+    if args.verify:
+        with open(out_filename, 'r') as output_file:
+            previous_dot_file_string = output_file.read()
 
     with open(out_filename, 'w') as output_file:
         output_file.write(dot_file_string)
+
+    if args.verify:
+        if dot_file_string != previous_dot_file_string:
+            exit(1)
 
 if __name__ == "__main__":
     main()
