@@ -57,18 +57,19 @@ void Pipeline::add(const std::vector<std::string> &paths)
 
 PipelineState Pipeline::chooseNextState(PipelineState currentState, Transition transition)
 {
+    PipelineState s = State::COMPLETE;
     // clang-format off
     USM_TABLE(currentState, State::COMPLETE,
         USM_STATE(transition, State::INITIAL_PROCESSING,
-                  USM_MAP(Transition::NEXT, State::GLOBAL_RELAX));
-        USM_STATE(transition, State::GLOBAL_RELAX,
-                  USM_MAP(Transition::NEXT, State::CAMERA_PARAMETER_RELAX));
+                  USM_MAP(Transition::NEXT, State::INITIAL_GLOBAL_RELAX, s));
+        USM_STATE(transition, State::INITIAL_GLOBAL_RELAX,
+                  USM_MAP(Transition::NEXT, State::CAMERA_PARAMETER_RELAX, s));
         USM_STATE(transition, State::CAMERA_PARAMETER_RELAX,
-                  USM_MAP(Transition::NEXT, State::FINAL_GLOBAL_RELAX));
+                  USM_MAP(Transition::NEXT, State::FINAL_GLOBAL_RELAX, s));
         USM_STATE(transition, State::FINAL_GLOBAL_RELAX,
-                  USM_MAP(Transition::NEXT, State::GENERATE_THUMBNAIL));
+                  USM_MAP(Transition::NEXT, State::GENERATE_THUMBNAIL, s));
         USM_STATE(transition, State::GENERATE_THUMBNAIL,
-                  USM_MAP(Transition::NEXT, State::COMPLETE));
+                  USM_MAP(Transition::NEXT, State::COMPLETE, s));
     );
     // clang-format on
 }
@@ -78,30 +79,16 @@ Pipeline::Transition Pipeline::runCurrentState(PipelineState currentState)
     Transition t = Transition::ERROR;
     spdlog::debug("Running {}", toString(currentState));
 
-    switch (currentState)
-    {
-    case State::INITIAL_PROCESSING:
-        t = initial_processing();
-        break;
-    case State::GLOBAL_RELAX:
-        t = global_relax();
-        break;
-    case State::CAMERA_PARAMETER_RELAX:
-        t = camera_parameter_relax();
-        break;
-    case State::FINAL_GLOBAL_RELAX:
-        t = final_global_relax();
-        break;
-    case State::COMPLETE:
-        t = complete();
-        break;
-    case State::GENERATE_THUMBNAIL:
-        t = generate_thumbnail();
-        break;
-    default:
-        t = Transition::ERROR;
-        break;
-    }
+    // clang-format off
+    USM_TABLE(currentState, Transition::ERROR,
+              USM_MAP(State::INITIAL_PROCESSING, initial_processing(), t);
+              USM_MAP(State::INITIAL_GLOBAL_RELAX, initial_global_relax(), t);
+              USM_MAP(State::CAMERA_PARAMETER_RELAX, camera_parameter_relax(), t);
+              USM_MAP(State::FINAL_GLOBAL_RELAX, final_global_relax(), t);
+              USM_MAP(State::COMPLETE, complete(), t);
+              USM_MAP(State::GENERATE_THUMBNAIL, generate_thumbnail(), t)
+    );
+    // clang-format on
 
     StepCompletionInfo info{_next_loaded_ids,    _next_linked_ids,  _next_relaxed_ids, _surfaces,
                             _graph.size_nodes(), _add_queue.size(), currentState,      stateRunCount()};
@@ -149,16 +136,13 @@ Pipeline::Transition Pipeline::initial_processing()
         _next_loaded_ids = _load_stage->finalize(_coordinate_system, _graph, _imageGPSLocations);
         _next_linked_ids = _link_stage->finalize(_graph);
         _next_relaxed_ids = _relax_stage->finalize(_graph);
+    }
 
-        return Transition::REPEAT;
-    }
-    else
-    {
-        return Transition::NEXT;
-    }
+    USM_DECISION_TABLE(Transition::REPEAT,
+                       USM_MAKE_DECISION(_next_loaded_ids.size() == 0 && _next_linked_ids.size() == 0, Transition::NEXT));
 }
 
-Pipeline::Transition Pipeline::global_relax()
+Pipeline::Transition Pipeline::initial_global_relax()
 {
     _relax_stage->init(_graph, {}, _imageGPSLocations, true, false, {Option::ORIENTATION, Option::GROUND_MESH});
 
@@ -168,10 +152,8 @@ Pipeline::Transition Pipeline::global_relax()
     _next_relaxed_ids = _relax_stage->finalize(_graph);
     _surfaces = _relax_stage->getSurfaceModels();
 
-    if (stateRunCount() < 5)
-        return Transition::REPEAT;
-    else
-        return Transition::NEXT;
+    USM_DECISION_TABLE(Transition::REPEAT,
+                       USM_MAKE_DECISION(stateRunCount() >= 5, Transition::NEXT));
 }
 
 Pipeline::Transition Pipeline::camera_parameter_relax()
@@ -213,10 +195,8 @@ Pipeline::Transition Pipeline::camera_parameter_relax()
     _next_relaxed_ids = _relax_stage->finalize(_graph);
     _surfaces = _relax_stage->getSurfaceModels();
 
-    if (stateRunCount() < 5)
-        return Transition::REPEAT;
-    else
-        return Transition::NEXT;
+    USM_DECISION_TABLE(Transition::REPEAT,
+                       USM_MAKE_DECISION(stateRunCount() >= 5, Transition::NEXT));
 }
 
 Pipeline::Transition Pipeline::final_global_relax()
@@ -230,15 +210,13 @@ Pipeline::Transition Pipeline::final_global_relax()
     _next_relaxed_ids = _relax_stage->finalize(_graph);
     _surfaces = _relax_stage->getSurfaceModels();
 
-    if (lastIteration)
-        return Transition::NEXT;
-    else
-        return Transition::REPEAT;
+    USM_DECISION_TABLE(Transition::REPEAT,
+                       USM_MAKE_DECISION(stateRunCount() >= 3, Transition::NEXT));
 }
 
 Pipeline::Transition Pipeline::generate_thumbnail()
 {
-    return Transition::NEXT;
+    USM_DECISION_TABLE(Transition::NEXT);
 
     auto thumbnail = orthomosaic::generateOrthomosaic(_surfaces, _graph);
 
@@ -251,7 +229,7 @@ Pipeline::Transition Pipeline::generate_thumbnail()
 
 Pipeline::Transition Pipeline::complete()
 {
-    return Transition::REPEAT;
+    USM_DECISION_TABLE(Transition::REPEAT);
 }
 
 std::string Pipeline::toString(PipelineState state)
@@ -260,8 +238,8 @@ std::string Pipeline::toString(PipelineState state)
     {
     case State::INITIAL_PROCESSING:
         return "Initial Processing";
-    case State::GLOBAL_RELAX:
-        return "Global Relax";
+    case State::INITIAL_GLOBAL_RELAX:
+        return "Initial global Relax";
     case State::CAMERA_PARAMETER_RELAX:
         return "Camera Parameter Relax";
     case State::FINAL_GLOBAL_RELAX:

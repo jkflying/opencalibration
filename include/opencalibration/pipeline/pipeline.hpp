@@ -24,7 +24,7 @@ class RelaxStage;
 enum class PipelineState
 {
     INITIAL_PROCESSING,
-    GLOBAL_RELAX,
+    INITIAL_GLOBAL_RELAX,
     CAMERA_PARAMETER_RELAX,
     FINAL_GLOBAL_RELAX,
     GENERATE_THUMBNAIL,
@@ -86,7 +86,7 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
 
   private:
     PipelineTransition initial_processing();
-    PipelineTransition global_relax();
+    PipelineTransition initial_global_relax();
     PipelineTransition camera_parameter_relax();
     PipelineTransition final_global_relax();
     PipelineTransition generate_thumbnail();

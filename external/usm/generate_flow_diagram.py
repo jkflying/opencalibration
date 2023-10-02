@@ -5,6 +5,7 @@ import argparse
 
 NORMAL = "normal"
 FALLBACK = "fallback"
+REPEAT = "REPEAT"
 
 class Transition:
     def __init__(self, start, edge_name, end, style=NORMAL):
@@ -13,45 +14,68 @@ class Transition:
         self.end = end
         self.style = style
 
-def extract_first_wrapped(table_string, key):
+class Function:
+    def __init__(self, function_name, state_name):
+        self.state_name = state_name
+        self.function_name = function_name
+        self.decisions = []
+        self.fallback_transition = None
+
+class Decision:
+    def __init__(self, condition, transition):
+        self.condition = condition
+        self.transition = transition
+
+def extract_first_wrapped(table_string, key, open_char="(", close_char=")"):
     try:
         start = table_string.index(key)
     except ValueError:
-        return ""
+        return "", 0, len(key)
 
     depth = 0
     while depth == 0:
         start += 1
-        if table_string[start] == "(":
+
+        if table_string[start] == close_char:
+            return "", start, start
+
+        if table_string[start] == open_char:
             depth += 1
 
     end = start + 1
     while depth != 0:
         end += 1
-        if table_string[end] == "(":
+        if table_string[end] == open_char:
             depth += 1
-        if table_string[end] == ")":
+        if table_string[end] == close_char:
             depth -= 1
 
     state_string = table_string[start:end+1]
 
-    return state_string
+    return state_string, start, end+1
 
 
-def extract_all_wrapped(table_string, key):
+def extract_all_wrapped(table_string, key, open_char="(", close_char=")", exclude_ranges=[]):
     states_strings = []
     end = 0
     while end < len(table_string):
-        state_n = extract_first_wrapped(table_string[end:], key)
-        if len(state_n) == 0:
-            break
-        states_strings.append(state_n)
-        end += table_string[end:].index(state_n) + len(state_n)
+        state_n, start_n, end_n = extract_first_wrapped(table_string[end:], key, open_char, close_char)
+        if len(state_n) > 0:
+            exclude = False
+            for exclude_start, exclude_end in exclude_ranges:
+                if end + start_n < exclude_end and end + end_n > exclude_start:
+                    exclude = True
+            if not exclude:
+                states_strings.append(state_n)
+            end += end_n
+        else:
+            end += len(key)
     return states_strings
 
 
 def extract_transitions(file_string):
-    table_string = extract_first_wrapped(file_string, "USM_TABLE")
+    choose_state_function,_,_ = extract_first_wrapped(file_string, "chooseNextState", "{", "}")
+    table_string,_,_ = extract_first_wrapped(choose_state_function, "USM_TABLE")
     state_strings = extract_all_wrapped(table_string, "USM_STATE")
     error_state = table_string.split(",")[1].strip().split("::")[-1]
     transitions = []
@@ -62,7 +86,7 @@ def extract_transitions(file_string):
         state_transitions = []
         error_handled = False
         for transition_string in transition_strings:
-            edge_name, end_state = (transition_string.replace("("," ").replace(")"," ").split(","))
+            edge_name, end_state, _ = (transition_string.replace("("," ").replace(")"," ").split(","))
             new_transition = Transition(start_state,
                                         edge_name.strip().split("::")[-1],
                                         end_state.strip().split("::")[-1])
@@ -80,7 +104,48 @@ def extract_transitions(file_string):
         transitions.extend(state_transitions)
     return transitions
 
-def make_dot_file_string(transitions):
+def extract_functions(file_string):
+    run_state_function_string, run_functions_start, run_function_end = extract_first_wrapped(file_string, "runCurrentState", "{", "}")
+    table_string,_,_ = extract_first_wrapped(run_state_function_string, "USM_TABLE")
+    run_state_strings = extract_all_wrapped(table_string, "USM_MAP")
+    functions = []
+    for run_state_string in run_state_strings:
+        state_name, function_name, _ = (run_state_string.replace("("," ").replace(")"," ").split(","))
+        f = Function(function_name.strip().split("::")[-1], state_name.strip().split("::")[-1])
+
+        function_f_strings = extract_all_wrapped(file_string, f.function_name, "{", "}", [[run_functions_start, run_function_end]])
+        if len(function_f_strings) != 1:
+            print(f"ERROR: your state names cannot be subsets of other state names: {state_name}")
+            exit(1)
+
+        f_string = function_f_strings[0]
+
+        decision_table_string,_,_ = extract_first_wrapped(f_string, "USM_DECISION_TABLE");
+
+        if decision_table_string:
+            decision_strings = extract_all_wrapped(decision_table_string, "USM_MAKE_DECISION");
+
+            for decision_string in decision_strings:
+                condition,transition = decision_string[1:-1].split(",")
+                f.decisions.append(Decision(condition.strip(), transition.strip().split("::")[-1]))
+
+            fallback_transition = decision_table_string.split(",")[0].strip().split("::")[-1].replace(")","")
+            if fallback_transition:
+                f.fallback_transition = fallback_transition
+
+        functions.append(f)
+
+    return functions
+
+def extract_implicit_transitions(functions):
+    implicit_transitions = []
+    for func in functions:
+        if func.fallback_transition == REPEAT:
+            implicit_transitions.append(Transition(func.state_name, REPEAT, func.state_name, FALLBACK))
+    return implicit_transitions
+
+
+def make_dot_file_string(transitions, functions):
     output = []
     output.append("digraph {")
     for t in transitions:
@@ -92,11 +157,27 @@ def make_dot_file_string(transitions):
             weight = 0.1
         else:
             style = "dashed"
+
+        start_function_candidates = [f for f in functions if f.state_name == t.start]
+        name_extension = ""
+        if len(start_function_candidates) == 1:
+            func = start_function_candidates[0]
+            decision_candidates = [d for d in func.decisions if d.transition == t.edge_name]
+            if len(decision_candidates) == 1:
+                name_extension = f"\n{decision_candidates[0].condition}"
+                print("Extended name: " + t.edge_name)
+            else:
+                print(f"Only {len(decision_candidates)} matching decisions found")
+                for d in func.decisions:
+                    print(f"d: '{d.condition}' , '{d.transition}'")
+        else:
+            print(f"Only {len(start_function_candidates)} matching funcs found")
+
         output.append("    \"{start}\" -> \"{end}\" [label=\"{name}\", "
                                                     "style=\"{style}\", "
                                                     "weight={weight}]".format(start=t.start,
                                                                               end=t.end,
-                                                                              name=t.edge_name,
+                                                                              name=t.edge_name + name_extension,
                                                                               style=style,
                                                                               weight=weight))
     output.append("}")
@@ -122,7 +203,9 @@ def main():
         cpp_string = file.read()
 
     transitions = extract_transitions(cpp_string)
-    dot_file_string = make_dot_file_string(transitions)
+    functions = extract_functions(cpp_string)
+    transitions += extract_implicit_transitions(functions)
+    dot_file_string = make_dot_file_string(transitions, functions)
 
     if args.out_filename:
         out_filename = args.out_filename

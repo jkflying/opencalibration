@@ -1,0 +1,20 @@
+digraph {
+    "INITIAL_PROCESSING" -> "INITIAL_GLOBAL_RELAX" [label="NEXT
+_next_loaded_ids.size() == 0 && _next_linked_ids.size() == 0", style="solid", weight=1]
+    "INITIAL_PROCESSING" -> "COMPLETE" [label="ERROR", style="dotted", weight=0.1]
+    "INITIAL_GLOBAL_RELAX" -> "CAMERA_PARAMETER_RELAX" [label="NEXT
+stateRunCount() >= 5", style="solid", weight=1]
+    "INITIAL_GLOBAL_RELAX" -> "COMPLETE" [label="ERROR", style="dotted", weight=0.1]
+    "CAMERA_PARAMETER_RELAX" -> "FINAL_GLOBAL_RELAX" [label="NEXT
+stateRunCount() >= 5", style="solid", weight=1]
+    "CAMERA_PARAMETER_RELAX" -> "COMPLETE" [label="ERROR", style="dotted", weight=0.1]
+    "FINAL_GLOBAL_RELAX" -> "GENERATE_THUMBNAIL" [label="NEXT
+stateRunCount() >= 3", style="solid", weight=1]
+    "FINAL_GLOBAL_RELAX" -> "COMPLETE" [label="ERROR", style="dotted", weight=0.1]
+    "GENERATE_THUMBNAIL" -> "COMPLETE" [label="NEXT\nERROR", style="solid", weight=1]
+    "INITIAL_PROCESSING" -> "INITIAL_PROCESSING" [label="REPEAT", style="dotted", weight=0.1]
+    "INITIAL_GLOBAL_RELAX" -> "INITIAL_GLOBAL_RELAX" [label="REPEAT", style="dotted", weight=0.1]
+    "CAMERA_PARAMETER_RELAX" -> "CAMERA_PARAMETER_RELAX" [label="REPEAT", style="dotted", weight=0.1]
+    "FINAL_GLOBAL_RELAX" -> "FINAL_GLOBAL_RELAX" [label="REPEAT", style="dotted", weight=0.1]
+    "COMPLETE" -> "COMPLETE" [label="REPEAT", style="dotted", weight=0.1]
+}

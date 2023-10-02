@@ -83,36 +83,40 @@ class TestStateMachine final : public StateMachine<TestStates, TestTransition> {
       return Transition::ERROR;
     }
 
+    Transition t = Transition::ERROR;
     // clang-format off
-    switch(currentState) {
-        case START: return start();
-        case PATH_A_1: return a1();
-        case PATH_A_2: return a2();
-        case END: return end();
-        case PATH_B_1: return b1();
-        case PATH_B_2: return b2();
-        case PATH_B_3: return b3();
-        case CLEANUP: return cleanup();
-    }
+    USM_TABLE(currentState, Transition::ERROR,
+              USM_MAP(START, start(), t);
+              USM_MAP(PATH_A_1, a1(), t);
+              USM_MAP(PATH_A_2, a2(), t);
+              USM_MAP(END, end(), t);
+              USM_MAP(PATH_B_1, b1(), t);
+              USM_MAP(PATH_B_2, b2(), t);
+              USM_MAP(PATH_B_3, b3(), t);
+              USM_MAP(CLEANUP, cleanup(), t)
+              );
     // clang-format on
-    return Transition::ERROR;
+
+    return t;
   }
 
   TestStates chooseNextState(TestStates currentState,
                              Transition transition) override {
+    TestStates s = CLEANUP;
     // clang-format off
     USM_TABLE(currentState, CLEANUP,
-      USM_STATE(transition, START,    USM_MAP(Transition::CONTINUE, PATH_A_1);
-                                      USM_MAP(Transition::OUT_OF_DATA, PATH_B_1));
-      USM_STATE(transition, PATH_A_1, USM_MAP(Transition::CONTINUE, PATH_A_2);
-                                      USM_MAP(Transition::ERROR, PATH_B_3));
-      USM_STATE(transition, PATH_A_2, USM_MAP(Transition::CONTINUE, END));
-      USM_STATE(transition, PATH_B_1, USM_MAP(Transition::CONTINUE, PATH_B_2));
-      USM_STATE(transition, PATH_B_2, USM_MAP(Transition::CONTINUE, PATH_B_3));
-      USM_STATE(transition, PATH_B_3, USM_MAP(Transition::CONTINUE, END));
-      USM_STATE(transition, CLEANUP,  USM_MAP(Transition::CONTINUE, END))
+      USM_STATE(transition, START,    USM_MAP(Transition::CONTINUE, PATH_A_1, s);
+                                      USM_MAP(Transition::OUT_OF_DATA, PATH_B_1, s));
+      USM_STATE(transition, PATH_A_1, USM_MAP(Transition::CONTINUE, PATH_A_2, s);
+                                      USM_MAP(Transition::ERROR, PATH_B_3, s));
+      USM_STATE(transition, PATH_A_2, USM_MAP(Transition::CONTINUE, END, s));
+      USM_STATE(transition, PATH_B_1, USM_MAP(Transition::CONTINUE, PATH_B_2, s));
+      USM_STATE(transition, PATH_B_2, USM_MAP(Transition::CONTINUE, PATH_B_3, s));
+      USM_STATE(transition, PATH_B_3, USM_MAP(Transition::CONTINUE, END, s));
+      USM_STATE(transition, CLEANUP,  USM_MAP(Transition::CONTINUE, END, s))
     );
     // clang-format on
+    return s;
   }
 
  private:

@@ -107,7 +107,15 @@ return error
         } \
     break
 
-#define USM_MAP(transition, next_state) \
-            case transition: return next_state
+#define USM_MAP(transition, next_state, target) \
+            case transition: target = next_state; \
+            break
+
+#define USM_MAKE_DECISION(condition, transition) \
+    if(condition) return transition
+
+#define USM_DECISION_TABLE(transition, ...) \
+        __VA_ARGS__; \
+        return transition;
 
 // clang-format on
