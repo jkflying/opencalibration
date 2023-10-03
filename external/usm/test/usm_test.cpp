@@ -122,35 +122,36 @@ class TestStateMachine final : public StateMachine<TestStates, TestTransition> {
  private:
   Transition start() {
     start_called = true;
-    return path_a ? Transition::CONTINUE : Transition::OUT_OF_DATA;
+    USM_DECISION_TABLE(Transition::OUT_OF_DATA,
+                       USM_MAKE_DECISION(path_a, Transition::CONTINUE));
   }
   Transition a1() {
     a1_called = true;
-    return Transition::CONTINUE;
+    USM_DECISION_TABLE(Transition::CONTINUE);
   }
   Transition a2() {
     a2_called = true;
-    return Transition::CONTINUE;
+    USM_DECISION_TABLE(Transition::CONTINUE);
   }
   Transition b1() {
     b1_called = true;
-    return Transition::CONTINUE;
+    USM_DECISION_TABLE(Transition::CONTINUE);
   }
   Transition b2() {
     b2_called = true;
-    return Transition::CONTINUE;
+    USM_DECISION_TABLE(Transition::CONTINUE);
   }
   Transition b3() {
     b3_called = true;
-    return Transition::CONTINUE;
+    USM_DECISION_TABLE(Transition::CONTINUE);
   }
   Transition end() {
     end_called = true;
-    return Transition::REPEAT;
+    USM_DECISION_TABLE(Transition::REPEAT);
   }
   Transition cleanup() {
     cleanup_called = true;
-    return Transition::CONTINUE;
+    USM_DECISION_TABLE(Transition::CONTINUE);
   }
 };
 

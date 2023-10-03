@@ -110,8 +110,8 @@ def extract_functions(file_string):
     run_state_strings = extract_all_wrapped(table_string, "USM_MAP")
     functions = []
     for run_state_string in run_state_strings:
-        state_name, function_name, _ = (run_state_string.replace("("," ").replace(")"," ").split(","))
-        f = Function(function_name.strip().split("::")[-1], state_name.strip().split("::")[-1])
+        state_name, function_name, _ = (run_state_string.split(","))
+        f = Function(function_name.strip().split("::")[-1], state_name.replace("(","").replace(")","").strip().split("::")[-1])
 
         function_f_strings = extract_all_wrapped(file_string, f.function_name, "{", "}", [[run_functions_start, run_function_end]])
         if len(function_f_strings) != 1:
@@ -160,23 +160,24 @@ def make_dot_file_string(transitions, functions):
 
         start_function_candidates = [f for f in functions if f.state_name == t.start]
         name_extension = ""
+        start_extension = ""
         if len(start_function_candidates) == 1:
             func = start_function_candidates[0]
+            start_extension = f"\\n{func.function_name}"
             decision_candidates = [d for d in func.decisions if d.transition == t.edge_name]
             if len(decision_candidates) == 1:
-                name_extension = f"\n{decision_candidates[0].condition}"
-                print("Extended name: " + t.edge_name)
-            else:
-                print(f"Only {len(decision_candidates)} matching decisions found")
-                for d in func.decisions:
-                    print(f"d: '{d.condition}' , '{d.transition}'")
-        else:
-            print(f"Only {len(start_function_candidates)} matching funcs found")
+                name_extension = f"\\n{decision_candidates[0].condition}"
+
+        end_function_candidates = [f for f in functions if f.state_name == t.end]
+        end_extension = ""
+        if len(end_function_candidates) == 1:
+            func = end_function_candidates[0]
+            end_extension = f"\\n{func.function_name}"
 
         output.append("    \"{start}\" -> \"{end}\" [label=\"{name}\", "
                                                     "style=\"{style}\", "
-                                                    "weight={weight}]".format(start=t.start,
-                                                                              end=t.end,
+                                                    "weight={weight}]".format(start=t.start + start_extension,
+                                                                              end=t.end + end_extension,
                                                                               name=t.edge_name + name_extension,
                                                                               style=style,
                                                                               weight=weight))
