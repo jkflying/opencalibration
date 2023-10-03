@@ -92,12 +92,13 @@ uint64_t StateMachine<StateEnum, TransitionEnum>::stateRunCount() {
 /*---------------MACROS TO MAKE TRANSITION TABLES EASY------------------*/
 
 // clang-format off
-#define USM_TABLE(current_state, error, ...) \
+#define USM_TABLE(current_state, transition, target, ...) \
 switch (current_state) { \
     __VA_ARGS__; \
-    default: break; \
-} \
-return error
+    default: \
+        target = transition; \
+        break; \
+} do {} while(false)
 
 #define USM_STATE(transition, start_state, ...) \
     case start_state: \
@@ -116,6 +117,6 @@ return error
 
 #define USM_DECISION_TABLE(transition, ...) \
         __VA_ARGS__; \
-        return transition;
+        return transition
 
 // clang-format on

@@ -94,12 +94,6 @@ def extract_transitions(file_string):
                 error_handled = True
             state_transitions.append(new_transition)
         if not error_handled:
-            for t in state_transitions:
-                if t.start == start_state and t.end == error_state:
-                    t.edge_name += "\\nERROR"
-                    error_handled = True
-                    break
-        if not error_handled:
             state_transitions.append(Transition(start_state, "ERROR", error_state, FALLBACK))
         transitions.extend(state_transitions)
     return transitions

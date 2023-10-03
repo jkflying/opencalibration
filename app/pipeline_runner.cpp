@@ -115,7 +115,7 @@ int main(int argc, char *argv[])
                       << " relaxed: " << total_relaxed << std::endl;
             break;
         }
-        case PipelineState::GLOBAL_RELAX:
+        case PipelineState::INITIAL_GLOBAL_RELAX:
         case PipelineState::CAMERA_PARAMETER_RELAX:
         case PipelineState::FINAL_GLOBAL_RELAX: {
             std::cout << ": iteration: " << info.state_iteration << " relaxed: " << total_relaxed << std::endl;

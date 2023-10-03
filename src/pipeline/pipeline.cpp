@@ -58,8 +58,9 @@ void Pipeline::add(const std::vector<std::string> &paths)
 PipelineState Pipeline::chooseNextState(PipelineState currentState, Transition transition)
 {
     PipelineState s = State::COMPLETE;
+
     // clang-format off
-    USM_TABLE(currentState, State::COMPLETE,
+    USM_TABLE(currentState, State::COMPLETE, s,
         USM_STATE(transition, State::INITIAL_PROCESSING,
                   USM_MAP(Transition::NEXT, State::INITIAL_GLOBAL_RELAX, s));
         USM_STATE(transition, State::INITIAL_GLOBAL_RELAX,
@@ -72,6 +73,8 @@ PipelineState Pipeline::chooseNextState(PipelineState currentState, Transition t
                   USM_MAP(Transition::NEXT, State::COMPLETE, s));
     );
     // clang-format on
+
+    return s;
 }
 
 Pipeline::Transition Pipeline::runCurrentState(PipelineState currentState)
@@ -80,7 +83,7 @@ Pipeline::Transition Pipeline::runCurrentState(PipelineState currentState)
     spdlog::debug("Running {}", toString(currentState));
 
     // clang-format off
-    USM_TABLE(currentState, Transition::ERROR,
+    USM_TABLE(currentState, Transition::ERROR, t,
               USM_MAP(State::INITIAL_PROCESSING, initial_processing(), t);
               USM_MAP(State::INITIAL_GLOBAL_RELAX, initial_global_relax(), t);
               USM_MAP(State::CAMERA_PARAMETER_RELAX, camera_parameter_relax(), t);

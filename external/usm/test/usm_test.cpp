@@ -85,7 +85,7 @@ class TestStateMachine final : public StateMachine<TestStates, TestTransition> {
 
     Transition t = Transition::ERROR;
     // clang-format off
-    USM_TABLE(currentState, Transition::ERROR,
+    USM_TABLE(currentState, Transition::ERROR, t,
               USM_MAP(START, start(), t);
               USM_MAP(PATH_A_1, a1(), t);
               USM_MAP(PATH_A_2, a2(), t);
@@ -104,7 +104,7 @@ class TestStateMachine final : public StateMachine<TestStates, TestTransition> {
                              Transition transition) override {
     TestStates s = CLEANUP;
     // clang-format off
-    USM_TABLE(currentState, CLEANUP,
+    USM_TABLE(currentState, CLEANUP, s,
       USM_STATE(transition, START,    USM_MAP(Transition::CONTINUE, PATH_A_1, s);
                                       USM_MAP(Transition::OUT_OF_DATA, PATH_B_1, s));
       USM_STATE(transition, PATH_A_1, USM_MAP(Transition::CONTINUE, PATH_A_2, s);
