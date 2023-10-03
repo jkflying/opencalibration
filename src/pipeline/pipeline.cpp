@@ -141,8 +141,9 @@ Pipeline::Transition Pipeline::initial_processing()
         _next_relaxed_ids = _relax_stage->finalize(_graph);
     }
 
-    USM_DECISION_TABLE(Transition::REPEAT,
-                       USM_MAKE_DECISION(_next_loaded_ids.size() == 0 && _next_linked_ids.size() == 0, Transition::NEXT));
+    USM_DECISION_TABLE(
+        Transition::REPEAT,
+        USM_MAKE_DECISION(_next_loaded_ids.size() == 0 && _next_linked_ids.size() == 0, Transition::NEXT));
 }
 
 Pipeline::Transition Pipeline::initial_global_relax()
@@ -155,8 +156,7 @@ Pipeline::Transition Pipeline::initial_global_relax()
     _next_relaxed_ids = _relax_stage->finalize(_graph);
     _surfaces = _relax_stage->getSurfaceModels();
 
-    USM_DECISION_TABLE(Transition::REPEAT,
-                       USM_MAKE_DECISION(stateRunCount() >= 5, Transition::NEXT));
+    USM_DECISION_TABLE(Transition::REPEAT, USM_MAKE_DECISION(stateRunCount() >= 5, Transition::NEXT));
 }
 
 Pipeline::Transition Pipeline::camera_parameter_relax()
@@ -198,8 +198,7 @@ Pipeline::Transition Pipeline::camera_parameter_relax()
     _next_relaxed_ids = _relax_stage->finalize(_graph);
     _surfaces = _relax_stage->getSurfaceModels();
 
-    USM_DECISION_TABLE(Transition::REPEAT,
-                       USM_MAKE_DECISION(stateRunCount() >= 5, Transition::NEXT));
+    USM_DECISION_TABLE(Transition::REPEAT, USM_MAKE_DECISION(stateRunCount() >= 5, Transition::NEXT));
 }
 
 Pipeline::Transition Pipeline::final_global_relax()
@@ -213,8 +212,7 @@ Pipeline::Transition Pipeline::final_global_relax()
     _next_relaxed_ids = _relax_stage->finalize(_graph);
     _surfaces = _relax_stage->getSurfaceModels();
 
-    USM_DECISION_TABLE(Transition::REPEAT,
-                       USM_MAKE_DECISION(stateRunCount() >= 3, Transition::NEXT));
+    USM_DECISION_TABLE(Transition::REPEAT, USM_MAKE_DECISION(stateRunCount() >= 3, Transition::NEXT));
 }
 
 Pipeline::Transition Pipeline::generate_thumbnail()
