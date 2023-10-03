@@ -217,7 +217,7 @@ Pipeline::Transition Pipeline::final_global_relax()
 
 Pipeline::Transition Pipeline::generate_thumbnail()
 {
-    USM_DECISION_TABLE(Transition::NEXT);
+    USM_DECISION_TABLE(Transition::NEXT, );
 
     auto thumbnail = orthomosaic::generateOrthomosaic(_surfaces, _graph);
 
@@ -230,7 +230,7 @@ Pipeline::Transition Pipeline::generate_thumbnail()
 
 Pipeline::Transition Pipeline::complete()
 {
-    USM_DECISION_TABLE(Transition::REPEAT);
+    USM_DECISION_TABLE(Transition::REPEAT, );
 }
 
 std::string Pipeline::toString(PipelineState state)
