@@ -3,6 +3,7 @@
 #include <opencalibration/types/camera_model.hpp>
 #include <opencalibration/types/feature_2d.hpp>
 #include <opencalibration/types/image_metadata.hpp>
+#include <opencalibration/types/raster.hpp>
 
 #include <eigen3/Eigen/Geometry>
 
@@ -21,7 +22,7 @@ struct image
     // Loaded / processed from image data
     image_metadata metadata;
     std::vector<feature_2d> features;
-    cv::Mat thumbnail;
+    RGBRaster thumbnail;
 
     // Things to discover and optimize
     std::shared_ptr<CameraModel> model;
@@ -31,9 +32,7 @@ struct image
     bool operator==(const image &other) const
     {
         bool pat = path == other.path;
-        bool thu = thumbnail.data == other.thumbnail.data ||
-                   (thumbnail.size() == other.thumbnail.size() &&
-                    std::equal(thumbnail.begin<uchar>(), thumbnail.end<uchar>(), other.thumbnail.begin<uchar>()));
+        bool thu = thumbnail == other.thumbnail;
         bool met = metadata == other.metadata;
         bool feat = features == other.features;
         bool mod = (model == other.model) || (model != nullptr && other.model != nullptr && *model == *other.model);

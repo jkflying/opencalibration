@@ -15,6 +15,7 @@
 #include <chrono>
 #include <iostream>
 #include <omp.h>
+#include <opencalibration/io/cv_raster_conversion.hpp>
 #include <opencalibration/ortho/ortho.hpp>
 
 using namespace std::chrono_literals;
@@ -221,9 +222,9 @@ Pipeline::Transition Pipeline::generate_thumbnail()
 
     auto thumbnail = orthomosaic::generateOrthomosaic(_surfaces, _graph);
 
-    cv::imwrite("thumbnail.tiff", thumbnail.pixelValues);
-    cv::imwrite("source.png", thumbnail.cameraUUIDLsb);
-    cv::imwrite("overlap.png", thumbnail.overlap);
+    cv::imwrite("thumbnail.tiff", rasterToCv(thumbnail.pixelValues));
+    cv::imwrite("source.png", rasterToCv(thumbnail.cameraUUID));
+    cv::imwrite("overlap.png", rasterToCv(thumbnail.overlap));
 
     return Transition::NEXT;
 }

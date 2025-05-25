@@ -14,6 +14,8 @@ namespace opencalibration
 
 struct fundamental_matrix_model
 {
+    fundamental_matrix_model();
+
     static constexpr size_t MINIMUM_POINTS = 8;
 
     void fit(const std::vector<correspondence> &corrs, const std::array<size_t, MINIMUM_POINTS> &initial_indices);
@@ -23,7 +25,7 @@ struct fundamental_matrix_model
 
     double error(const correspondence &cor);
 
-    double inlier_threshold = 0.001;
+    double inlier_threshold;
     Eigen::Matrix3d fundamental_matrix;
 };
 

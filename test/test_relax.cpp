@@ -14,7 +14,7 @@
 using namespace opencalibration;
 using namespace std::chrono_literals;
 
-struct relax_ : public ::testing::Test
+struct relax_group : public ::testing::Test
 {
     size_t id[3];
     MeasurementGraph graph;
@@ -164,7 +164,7 @@ struct relax_ : public ::testing::Test
     }
 };
 
-TEST_F(relax_, downwards_prior_cost_function)
+TEST_F(relax_group, downwards_prior_cost_function)
 {
     // GIVEN: a starting angle
     Eigen::Quaterniond q = Eigen::Quaterniond::Identity() * Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX());
@@ -185,7 +185,7 @@ TEST_F(relax_, downwards_prior_cost_function)
     EXPECT_NEAR(r, 0.3 * 1e-3, 1e-9);
 }
 
-TEST_F(relax_, rel_rot_cost_function)
+TEST_F(relax_group, rel_rot_cost_function)
 {
     // GIVEN: two cameras
     init_cameras();
@@ -233,7 +233,7 @@ TEST_F(relax_, rel_rot_cost_function)
     }
 }
 
-TEST(relax, no_images)
+TEST_F(relax_group, no_images)
 {
     // GIVEN: a graph, with no images
     MeasurementGraph graph;
@@ -246,7 +246,7 @@ TEST(relax, no_images)
     // THEN: it shouldn't crash
 }
 
-TEST(relax, prior_1_image)
+TEST_F(relax_group, prior_1_image)
 {
     // GIVEN: a graph, with 1 image
     MeasurementGraph graph;
@@ -270,7 +270,7 @@ TEST(relax, prior_1_image)
         << np[0].orientation.coeffs().transpose();
 }
 
-TEST(relax, prior_2_images)
+TEST_F(relax_group, prior_2_images)
 {
     // GIVEN: a graph, with 2 images with relative orientation as identity
     MeasurementGraph graph;
@@ -313,7 +313,7 @@ TEST(relax, prior_2_images)
     EXPECT_LT(Eigen::AngleAxisd(np[1].orientation).angle(), 1e-5) << np[1].orientation.coeffs().transpose();
 }
 
-TEST_F(relax_, relative_orientation_3_images)
+TEST_F(relax_group, relative_orientation_3_images)
 {
     // GIVEN: a graph, 3 images with edges between them all, then with their rotation disturbed
     init_cameras();
@@ -331,7 +331,7 @@ TEST_F(relax_, relative_orientation_3_images)
             << np[i].orientation.coeffs().transpose();
 }
 
-TEST_F(relax_, measurement_3_images_points)
+TEST_F(relax_group, measurement_3_images_points)
 {
     // GIVEN: a graph, 3 images with edges between them all, then with their rotation disturbed
     init_cameras();
@@ -349,7 +349,7 @@ TEST_F(relax_, measurement_3_images_points)
             << "g: " << ground_ori[i].coeffs().transpose();
 }
 
-TEST_F(relax_, measurement_3_images_plane)
+TEST_F(relax_group, measurement_3_images_plane)
 {
     // GIVEN: a graph, 3 images with edges between them all, then with their rotation disturbed
     init_cameras();
@@ -369,7 +369,7 @@ TEST_F(relax_, measurement_3_images_plane)
             << "g: " << ground_ori[i].coeffs().transpose();
 }
 
-TEST_F(relax_, measurement_3_images_mesh_radial)
+TEST_F(relax_group, measurement_3_images_mesh_radial)
 {
     // GIVEN: a graph, 3 images with edges between them all, then with their rotation disturbed
     init_cameras();
@@ -419,7 +419,7 @@ class TestRelaxProblem : public RelaxProblem
     }
 };
 
-TEST_F(relax_, measurement_3_images_points_internals_point_triangulation_exact)
+TEST_F(relax_group, measurement_3_images_points_internals_point_triangulation_exact)
 {
     // GIVEN: a graph, 3 images with edges between them all, with zero noise
     init_cameras();
@@ -456,7 +456,7 @@ TEST_F(relax_, measurement_3_images_points_internals_point_triangulation_exact)
     EXPECT_LT(rp.test_get_solver_summary().final_cost, 1e-10);
 }
 
-TEST_F(relax_, measurement_3_images_points_internals_point_triangulation_noise)
+TEST_F(relax_group, measurement_3_images_points_internals_point_triangulation_noise)
 {
     // GIVEN: a graph, 3 images with edges between them all, with some noise
     init_cameras();
@@ -496,7 +496,7 @@ TEST_F(relax_, measurement_3_images_points_internals_point_triangulation_noise)
     EXPECT_LT(rp.test_get_solver_summary().final_cost, 1e-10);
 }
 
-TEST_F(relax_, measurement_3_images_points_internals_point_triangulation_noise_focal)
+TEST_F(relax_group, measurement_3_images_points_internals_point_triangulation_noise_focal)
 {
     // GIVEN: a graph, 3 images with edges between them all, with some noise
     init_cameras();
@@ -538,7 +538,7 @@ TEST_F(relax_, measurement_3_images_points_internals_point_triangulation_noise_f
     EXPECT_LT(rp.test_get_solver_summary().final_cost, 1e-10);
 }
 
-TEST_F(relax_, measurement_3_images_points_internals_point_triangulation_accuracy)
+TEST_F(relax_group, measurement_3_images_points_internals_point_triangulation_accuracy)
 {
     // a test which just optimizes the points to check how they move from triangulation -> full bundle
 

@@ -12,6 +12,7 @@
 #include <unordered_set>
 
 #include <iostream>
+#include <opencalibration/io/cv_raster_conversion.hpp>
 
 namespace
 {
@@ -256,8 +257,9 @@ template <> class Serializer<MeasurementGraph>
                 }
                 writer.EndArray();
 
+                cv::Mat cvThumbnail = rasterToCv(node.payload.thumbnail);
                 std::vector<uchar> thumbPng;
-                cv::imencode(".png", node.payload.thumbnail, thumbPng);
+                cv::imencode(".png", cvThumbnail, thumbPng);
                 std::string b64Thumb;
                 b64Thumb.resize(Base64encode_len(thumbPng.size()));
                 const int actual_size =

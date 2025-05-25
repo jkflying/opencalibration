@@ -2,7 +2,7 @@
 set -e
 
 # Fix style recursively in all the repository
-bash tools/fix_style.sh src include app test
+bash tools/fix_style.sh include src test
 
 # Print the diff with the remote branch (empty if no diff)
 git --no-pager diff -U0 --color

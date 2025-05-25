@@ -18,7 +18,7 @@ RelaxProblem::RelaxProblem()
 {
     _problemOptions.cost_function_ownership = ceres::TAKE_OWNERSHIP;
     _problemOptions.loss_function_ownership = ceres::DO_NOT_TAKE_OWNERSHIP;
-    _problemOptions.local_parameterization_ownership = ceres::DO_NOT_TAKE_OWNERSHIP;
+    _problemOptions.manifold_ownership = ceres::DO_NOT_TAKE_OWNERSHIP;
     _problem.reset(new ceres::Problem(_problemOptions));
 
     _solver_options.num_threads = 1;
@@ -280,8 +280,8 @@ void RelaxProblem::addRelationCost(const MeasurementGraph &graph, size_t edge_id
     double *datas[2] = {pkg.source.rot_ptr->coeffs().data(), pkg.dest.rot_ptr->coeffs().data()};
 
     _problem->AddResidualBlock(func.release(), &_loss, datas[0], datas[1]);
-    _problem->SetParameterization(datas[0], &_quat_parameterization);
-    _problem->SetParameterization(datas[1], &_quat_parameterization);
+    _problem->SetManifold(datas[0], &_quat_parameterization);
+    _problem->SetManifold(datas[1], &_quat_parameterization);
 
     if (!pkg.source.optimize)
     {
@@ -397,8 +397,8 @@ void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, 
     }
     if (points_added)
     {
-        _problem->SetParameterization(datas[0], &_quat_parameterization);
-        _problem->SetParameterization(datas[1], &_quat_parameterization);
+        _problem->SetManifold(datas[0], &_quat_parameterization);
+        _problem->SetManifold(datas[1], &_quat_parameterization);
 
         if (!pkg.source.optimize)
         {
@@ -413,17 +413,15 @@ void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, 
         {
             if (options.hasAll({Option::LENS_DISTORTIONS_RADIAL_BROWN246_PARAMETERIZATION}))
             {
-                _problem->SetParameterization(inverse_iter->second.radial_distortion.data(),
-                                              &_brown246_parameterization);
+                _problem->SetManifold(inverse_iter->second.radial_distortion.data(), &_brown246_parameterization);
             }
             else if (options.hasAll({Option::LENS_DISTORTIONS_RADIAL_BROWN24_PARAMETERIZATION}))
             {
-                _problem->SetParameterization(inverse_iter->second.radial_distortion.data(),
-                                              &_brown24_parameterization);
+                _problem->SetManifold(inverse_iter->second.radial_distortion.data(), &_brown24_parameterization);
             }
             else if (options.hasAll({Option::LENS_DISTORTIONS_RADIAL_BROWN2_PARAMETERIZATION}))
             {
-                _problem->SetParameterization(inverse_iter->second.radial_distortion.data(), &_brown2_parameterization);
+                _problem->SetManifold(inverse_iter->second.radial_distortion.data(), &_brown2_parameterization);
             }
             else if (!options.hasAny({Option::LENS_DISTORTIONS_RADIAL}))
             {
@@ -625,8 +623,8 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
 
     if (points_added)
     {
-        _problem->SetParameterization(orientation_ptrs[0], &_quat_parameterization);
-        _problem->SetParameterization(orientation_ptrs[1], &_quat_parameterization);
+        _problem->SetManifold(orientation_ptrs[0], &_quat_parameterization);
+        _problem->SetManifold(orientation_ptrs[1], &_quat_parameterization);
         if (!pkg.source.optimize)
         {
             _problem->SetParameterBlockConstant(orientation_ptrs[0]);
@@ -639,18 +637,18 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
         {
             if (options.hasAll({Option::LENS_DISTORTIONS_RADIAL_BROWN246_PARAMETERIZATION}))
             {
-                _problem->SetParameterization(source_model.radial_distortion.data(), &_brown246_parameterization);
-                _problem->SetParameterization(dest_model.radial_distortion.data(), &_brown246_parameterization);
+                _problem->SetManifold(source_model.radial_distortion.data(), &_brown246_parameterization);
+                _problem->SetManifold(dest_model.radial_distortion.data(), &_brown246_parameterization);
             }
             else if (options.hasAll({Option::LENS_DISTORTIONS_RADIAL_BROWN24_PARAMETERIZATION}))
             {
-                _problem->SetParameterization(source_model.radial_distortion.data(), &_brown24_parameterization);
-                _problem->SetParameterization(dest_model.radial_distortion.data(), &_brown24_parameterization);
+                _problem->SetManifold(source_model.radial_distortion.data(), &_brown24_parameterization);
+                _problem->SetManifold(dest_model.radial_distortion.data(), &_brown24_parameterization);
             }
             else if (options.hasAll({Option::LENS_DISTORTIONS_RADIAL_BROWN2_PARAMETERIZATION}))
             {
-                _problem->SetParameterization(source_model.radial_distortion.data(), &_brown2_parameterization);
-                _problem->SetParameterization(dest_model.radial_distortion.data(), &_brown2_parameterization);
+                _problem->SetManifold(source_model.radial_distortion.data(), &_brown2_parameterization);
+                _problem->SetManifold(dest_model.radial_distortion.data(), &_brown2_parameterization);
             }
             else
             {
@@ -736,7 +734,7 @@ void RelaxProblem::addDownwardsPrior()
         {
             double *d = p.second->orientation.coeffs().data();
             _problem->AddResidualBlock(newAutoDiffPointsDownwardsPrior(1e-3), nullptr, d);
-            _problem->SetParameterization(d, &_quat_parameterization);
+            _problem->SetManifold(d, &_quat_parameterization);
         }
     }
 }

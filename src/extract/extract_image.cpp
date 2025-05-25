@@ -8,6 +8,7 @@
 #include <opencv2/imgproc.hpp>
 
 #include <iostream>
+#include <opencalibration/io/cv_raster_conversion.hpp>
 
 namespace
 {
@@ -41,7 +42,10 @@ std::optional<image> extract_image(const std::string &path)
         }
 
         const double scale = 50 / std::sqrt(image.size().area());
-        cv::resize(image, img.thumbnail, cv::Size(0, 0), scale, scale, cv::INTER_AREA);
+        cv::Mat thumbnail;
+        cv::resize(image, thumbnail, cv::Size(0, 0), scale, scale, cv::INTER_AREA);
+
+        img.thumbnail = RasterToRGB(cvToRaster(thumbnail));
 
         p.reset("Load features");
         img.features = extract_features(image);

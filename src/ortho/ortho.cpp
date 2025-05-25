@@ -14,6 +14,15 @@ std::array<double, 3> to_array(const Eigen::Vector3d &v)
 {
     return {v.x(), v.y(), v.z()};
 }
+
+Eigen::Vector2i size(const opencalibration::GenericRaster &raster)
+{
+    const auto getSize = [](const auto &rasterInstance) -> Eigen::Vector2i {
+        return {rasterInstance.layers[0].pixels.rows(), rasterInstance.layers[0].pixels.cols()};
+    };
+    return std::visit(getSize, raster);
+}
+
 } // namespace
 
 namespace opencalibration::orthomosaic
@@ -29,6 +38,7 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
 
     for (const auto &surface : surfaces)
     {
+        bool has_mesh = false;
         for (auto iter = surface.mesh.cnodebegin(); iter != surface.mesh.cnodeend(); ++iter)
         {
             const auto &loc = iter->second.payload.location;
@@ -39,6 +49,22 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
             min_y = std::min(min_y, loc.y());
             max_y = std::max(max_y, loc.y());
             count_z++;
+
+            has_mesh = true;
+        }
+
+        if (!has_mesh)
+        for (const auto& points : surface.cloud)
+        {
+            for (const auto& loc : points)
+            {
+                mean_surface_z = (loc.z() + mean_surface_z * count_z) / (count_z + 1);
+                min_x = std::min(min_x, loc.x());
+                max_x = std::max(max_x, loc.x());
+                min_y = std::min(min_y, loc.y());
+                max_y = std::max(max_y, loc.y());
+                count_z++;
+            }
         }
     }
 
@@ -57,8 +83,10 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
         Eigen::Vector2d pixel = image_from_3d({0, 0, 1}, *payload.model);
         Eigen::Vector2d pixelShift = image_from_3d({h, 0, 1}, *payload.model);
         double arc_pixel = h / (pixel - pixelShift).norm();
-        double thumb_scale =
-            static_cast<double>(payload.thumbnail.size().height) / payload.metadata.camera_info.height_px;
+        double thumb_scale = static_cast<double>(size(payload.thumbnail)[0]) / payload.metadata.camera_info.height_px;
+
+        spdlog::info("arc pixel {} scale {}", arc_pixel, thumb_scale);
+
         thumb_arc_pixel = (thumb_arc_pixel * thumb_count + arc_pixel / thumb_scale) / (thumb_count + 1);
         mean_camera_z = (mean_camera_z * thumb_count + payload.position.z()) / (thumb_count + 1);
         thumb_count++;
@@ -79,12 +107,14 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
     spdlog::info("gsd {}  img dims {}x{}", mean_gsd, image_dimensions.width, image_dimensions.height);
 
     OrthoMosaic result;
-    result.pixelValues = cv::Mat(image_dimensions, CV_8UC4, cv::Scalar(0, 0, 0, 0));
-    result.cameraUUIDLsb = cv::Mat(image_dimensions, CV_8UC1, 0);
-    result.overlap = cv::Mat(image_dimensions, CV_8UC1, 0);
+    MultiLayerRaster<uint8_t> pixelValues(image_dimensions.width, image_dimensions.height, 4);
+    // result.pixelValues; // assign at end
+    result.cameraUUID.pixels.resize(image_dimensions.width, image_dimensions.height);
+    result.overlap.pixels.resize(image_dimensions.width, image_dimensions.height);
+    result.dsm.pixels.resize(image_dimensions.width, image_dimensions.height);
 
     // iterate over each pixel
-#pragma omp parallel for
+    //#pragma omp parallel for
     for (int row = 0; row < image_dimensions.height; row++)
     {
         PerformanceMeasure p("Generate thumbnail");
@@ -120,21 +150,28 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
                     }
                 }
 
-                auto result = searcher.triangleIntersect(intersectionRay);
-                if (result.type == MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
+                auto intersection = searcher.triangleIntersect(intersectionRay);
+                if (intersection.type == MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
                 {
-                    z = result.intersectionLocation.z();
+                    z = intersection.intersectionLocation.z();
                     break;
                 }
             }
 
+            if (std::isnan(z))
+            {
+                continue;
+            }
+
             Eigen::Vector3d sample_point(x, y, z);
 
-            cv::Vec4b color(0, 0, 0, 0);
-            uint8_t pixelSource =
+            Eigen::Vector<uint8_t, Eigen::Dynamic> color;
+            color.resize(4);
+            color.fill(0);
+            uint32_t pixelSource =
                 (row + col) % 2 == 0
                     ? -1
-                    : static_cast<int>(
+                    : static_cast<uint32_t>(
                           graph.size_nodes()); // give a checkerboard pattern of illegal values for background color
 
             auto closest5 = imageGPSLocations.searchKnn({x, y, average_camera_elevation}, 5);
@@ -149,28 +186,31 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
                 Eigen::Vector2d pixel =
                     image_from_3d(sample_point, *payload.model, payload.position, payload.orientation);
 
-                const double thumb_scale =
-                    static_cast<double>(payload.thumbnail.size().height) / payload.metadata.camera_info.height_px;
+                Eigen::Vector2i imageSize = size(payload.thumbnail);
+                const double thumb_scale = static_cast<double>(imageSize[0]) / payload.metadata.camera_info.height_px;
                 Eigen::Vector2d thumb_pixel = pixel * thumb_scale;
                 cv::Point2i cvPixel(thumb_pixel.x(), thumb_pixel.y());
 
-                if (0 < cvPixel.x && cvPixel.x < payload.thumbnail.size().width && 0 < cvPixel.y &&
-                    cvPixel.y < payload.thumbnail.size().height)
+                if (0 < cvPixel.x && cvPixel.x < imageSize[1] && 0 < cvPixel.y && cvPixel.y < imageSize[0])
                 {
-                    auto pixel =
-                        payload.thumbnail.at<cv::Vec3b>(cvPixel); // TODO: use a kernel to get subpixel accuracy
-                    color = cv::Vec4b(pixel[0], pixel[1], pixel[2], 255);
-                    pixelSource = closest.payload & 0xFF;
-                    break;
+                    Eigen::Vector<uint8_t, Eigen::Dynamic> pixelValue;
+                    pixelValue.resize(3);
+                    if (payload.thumbnail.get((int)thumb_pixel.x(), (int)thumb_pixel.y(), pixelValue))
+                    {
+                        color << pixelValue, 255;
+                        pixelSource = closest.payload & 0xFFFFFFFF;
+                        break;
+                    }
                 }
             }
 
             // assign color to thumbnail pixel
-            result.pixelValues.at<cv::Vec4b>(row, col) = color;
-            result.cameraUUIDLsb.at<uint8_t>(row, col) = pixelSource;
+            pixelValues.set(row, col, color);
+            result.cameraUUID.pixels(row, col) = pixelSource;
         }
     }
 
+    result.pixelValues = std::move(pixelValues);
     return result;
 
     //     cv::imwrite("thumbnail.png", image);

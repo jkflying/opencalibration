@@ -1,5 +1,7 @@
-add_library(oc_io serialize_MeasurementGraph.cpp
+add_library(oc_io cv_raster_conversion.cpp
+                  serialize_MeasurementGraph.cpp
                   serialize_MeshGraph.cpp
+                  serialise_Raster.cpp
                   deserialize_MeasurementGraph.cpp
                   deserialize_MeshGraph.cpp
                   saveXYZ.cpp

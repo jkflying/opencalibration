@@ -7,6 +7,7 @@
 #define RAPIDJSON_HAS_STDSTRING 1
 #define RAPIDJSON_PARSE_DEFAULT_FLAGS (kParseFullPrecisionFlag | kParseNanAndInfFlag)
 
+#include <opencalibration/io/cv_raster_conversion.hpp>
 #include <rapidjson/document.h>
 #include <rapidjson/prettywriter.h>
 #include <rapidjson/stringbuffer.h>
@@ -74,7 +75,9 @@ template <> class Deserializer<MeasurementGraph>
                     thumbnail.resize(Base64decode_len(base64_thumbnail), '\0');
                     int actual_size = Base64decode(reinterpret_cast<char *>(thumbnail.data()), base64_thumbnail);
                     thumbnail.resize(actual_size);
-                    cv::imdecode(thumbnail, cv::IMREAD_COLOR, &img.thumbnail);
+                    cv::Mat cvThumbnail;
+                    cv::imdecode(thumbnail, cv::IMREAD_COLOR, &cvThumbnail);
+                    img.thumbnail = RasterToRGB(cvToRaster(cvThumbnail));
 
                     const auto &model = niter->value.GetObject()["model"].GetObject();
 

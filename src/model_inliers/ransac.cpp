@@ -41,7 +41,7 @@ double ransac(const std::vector<correspondence> &matches, Model &model, std::vec
         return 0; // need at least this much score increase
     }
 
-    Model best_model;
+    Model best_model{};
     double best_inlier_count = 0;
 
     std::default_random_engine generator(42);

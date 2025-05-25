@@ -11,8 +11,8 @@
 #include <opencalibration/types/relax_options.hpp>
 #include <opencalibration/types/surface_model.hpp>
 
-#include <ceres/local_parameterization.h>
 #include <ceres/loss_function.h>
+#include <ceres/manifold.h>
 #include <ceres/problem.h>
 #include <ceres/solver.h>
 #include <spdlog/spdlog.h>
@@ -90,11 +90,11 @@ class RelaxProblem
     ceres::LossFunctionWrapper _loss;
 
     ceres::Problem::Options _problemOptions;
-    ceres::EigenQuaternionParameterization _quat_parameterization;
+    ceres::EigenQuaternionManifold _quat_parameterization;
 
-    ceres::SubsetParameterization _brown2_parameterization;
-    ceres::SubsetParameterization _brown24_parameterization;
-    ceres::IdentityParameterization _brown246_parameterization;
+    ceres::SubsetManifold _brown2_parameterization;
+    ceres::SubsetManifold _brown24_parameterization;
+    ceres::EuclideanManifold<3> _brown246_parameterization;
 
     std::unique_ptr<ceres::Problem> _problem;
 

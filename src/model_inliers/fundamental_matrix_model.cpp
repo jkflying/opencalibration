@@ -29,6 +29,11 @@ void calculateFundamentalMatrix(const Eigen::Matrix<double, D, 9> &A, Eigen::Mat
 namespace opencalibration
 {
 
+fundamental_matrix_model::fundamental_matrix_model()
+    : inlier_threshold(0.001), fundamental_matrix(Eigen::Matrix3d::Constant(NAN))
+{
+}
+
 void fundamental_matrix_model::fit(const std::vector<correspondence> &corrs,
                                    const std::array<size_t, MINIMUM_POINTS> &initial_indices)
 {

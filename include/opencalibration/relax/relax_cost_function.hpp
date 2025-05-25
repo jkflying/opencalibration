@@ -185,7 +185,7 @@ struct MultiDecomposedRotationCost
         VectorRTM res_vec(residuals);
         res_vec = lowest_res;
 
-        return ceres::IsFinite(lowest_res_norm);
+        return ceres::isfinite(lowest_res_norm);
     }
 
     std::vector<DecomposedRotationCost> decompose;

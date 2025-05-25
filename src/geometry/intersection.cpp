@@ -73,6 +73,10 @@ struct pixel_cost_functor
 
 struct twin_pixel_cost_functor
 {
+    twin_pixel_cost_functor(pixel_cost_functor &&f1_arg, pixel_cost_functor &&f2_arg) : f1(f1_arg), f2(f2_arg)
+    {
+    }
+
     pixel_cost_functor f1, f2;
 
     using Scalar = pixel_cost_functor::Scalar;
@@ -91,14 +95,16 @@ struct twin_pixel_cost_functor
         else
         {
             Eigen::Matrix<double, 2, 3> jac1, jac2;
-            bool ret = f1(parameters, residuals, jac1.data()) &&
-                       f2(parameters, residuals + pixel_cost_functor::NUM_RESIDUALS, jac2.data());
+            if (f1(parameters, residuals, jac1.data()) &&
+                f2(parameters, residuals + pixel_cost_functor::NUM_RESIDUALS, jac2.data()))
+            {
+                Eigen::Map<Eigen::Matrix<double, 4, 3>> jac(jacobian);
+                jac.template topRows<2>() = jac1;
+                jac.template bottomRows<2>() = jac2;
+                return true;
+            }
 
-            Eigen::Map<Eigen::Matrix<double, 4, 3>> jac(jacobian);
-            jac.topRows<2>() = jac1;
-            jac.bottomRows<2>() = jac2;
-
-            return ret;
+            return false;
         }
     }
 };
