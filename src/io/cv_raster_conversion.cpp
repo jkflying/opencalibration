@@ -59,9 +59,9 @@ template <typename T> cv::Mat rasterToCvImpl(const RasterLayer<T> &layer)
 
 template <typename T> cv::Mat rasterToCvImpl(const MultiLayerRaster<T> &raster)
 {
-    const int cvType = CV_MAKETYPE(rasterTypeToCvType<T>(), 1);
+    const int cvType = rasterTypeToCvType<T>();
 
-    cv::Size dims(raster.layers[0].pixels.rows(), raster.layers[0].pixels.cols());
+    cv::Size dims(raster.layers[0].pixels.cols(), raster.layers[0].pixels.rows());
 
     std::vector<cv::Mat> channels;
     for (size_t i = 0; i < raster.layers.size(); i++)
@@ -69,14 +69,27 @@ template <typename T> cv::Mat rasterToCvImpl(const MultiLayerRaster<T> &raster)
         channels.emplace_back(dims, cvType);
     }
 
-    for (size_t channel = 0; channel < raster.layers.size(); channel++)
+    std::vector<size_t> channel_map;
+    if (raster.layers.size() == 3 && raster.layers[0].band == Band::RED && raster.layers[1].band == Band::GREEN && raster.layers[2].band == Band::BLUE)
+    {
+        channel_map = {2, 1, 0};
+    }
+    else
+    {
+        for (size_t i = 0; i < raster.layers.size(); i++)
+        {
+            channel_map.push_back(i);
+        }
+    }
+
+    for (size_t channel = 0; channel < channel_map.size(); channel++)
     {
         for (Eigen::Index row = 0; row < raster.layers[channel].pixels.rows(); row++)
         {
             for (Eigen::Index col = 0; col < raster.layers[channel].pixels.cols(); col++)
             {
                 // TODO: this could be better optimized
-                channels[channel].at<T>(row, col) = raster.layers[channel].pixels(row, col);
+                channels[channel_map[channel]].at<T>(row, col) = raster.layers[channel].pixels(row, col);
             }
         }
     }
