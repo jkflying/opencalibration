@@ -115,19 +115,21 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
 
     // iterate over each pixel
     //#pragma omp parallel for
+
+    PerformanceMeasure p("Generate thumbnail");
+    std::vector<MeshIntersectionSearcher> searchers;
+    for (const auto &surface : surfaces)
+    {
+        searchers.emplace_back();
+        if (!searchers.back().init(surface.mesh))
+        {
+            spdlog::error("Could not initialize searcher on mesh surface");
+            searchers.pop_back();
+        }
+    }
+
     for (int row = 0; row < image_dimensions.height; row++)
     {
-        PerformanceMeasure p("Generate thumbnail");
-        std::vector<MeshIntersectionSearcher> searchers;
-        for (const auto &surface : surfaces)
-        {
-            searchers.emplace_back();
-            if (!searchers.back().init(surface.mesh))
-            {
-                spdlog::error("Could not initialize searcher on mesh surface");
-                searchers.pop_back();
-            }
-        }
         spdlog::debug("processing row {}", row);
 
         for (int col = 0; col < image_dimensions.width; col++)
