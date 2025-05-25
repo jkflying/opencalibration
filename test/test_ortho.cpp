@@ -1,13 +1,13 @@
 #include <jk/KDTree.h>
 #include <opencalibration/distort/distort_keypoints.hpp>
+#include <opencalibration/ortho/ortho.hpp>
 #include <opencalibration/relax/relax.hpp>
 #include <opencalibration/relax/relax_cost_function.hpp>
 #include <opencalibration/relax/relax_problem.hpp>
+#include <opencalibration/surface/expand_mesh.hpp>
 #include <opencalibration/types/measurement_graph.hpp>
 #include <opencalibration/types/node_pose.hpp>
 #include <opencalibration/types/point_cloud.hpp>
-#include <opencalibration/ortho/ortho.hpp>
-#include <opencalibration/surface/expand_mesh.hpp>
 
 #include <gtest/gtest.h>
 
@@ -99,7 +99,6 @@ struct ortho : public ::testing::Test
     }
 };
 
-
 TEST_F(ortho, measurement_3_images_points)
 {
     // GIVEN: a graph with 3 images and a 3d point based surface model
@@ -109,19 +108,17 @@ TEST_F(ortho, measurement_3_images_points)
     points_surface.cloud.push_back(generate_planar_points());
 
     point_cloud camera_locations; // TODO: get camera locations
-    for (const auto& nodePose : nodePoses)
+    for (const auto &nodePose : nodePoses)
     {
         camera_locations.push_back(nodePose.position);
     }
     surface_model mesh_surface;
     mesh_surface.mesh = rebuildMesh(camera_locations, {points_surface});
 
-
     // WHEN: we generate an orthomosaic
     OrthoMosaic result = generateOrthomosaic({mesh_surface}, graph);
 
     // THEN: it should have the right colours in the right locations
-
 }
 /*
 TEST_F(ortho_, measurement_3_images_plane)

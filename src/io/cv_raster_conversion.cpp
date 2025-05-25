@@ -70,7 +70,8 @@ template <typename T> cv::Mat rasterToCvImpl(const MultiLayerRaster<T> &raster)
     }
 
     std::vector<size_t> channel_map;
-    if (raster.layers.size() == 3 && raster.layers[0].band == Band::RED && raster.layers[1].band == Band::GREEN && raster.layers[2].band == Band::BLUE)
+    if (raster.layers.size() == 3 && raster.layers[0].band == Band::RED && raster.layers[1].band == Band::GREEN &&
+        raster.layers[2].band == Band::BLUE)
     {
         channel_map = {2, 1, 0};
     }

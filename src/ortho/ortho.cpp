@@ -54,18 +54,18 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
         }
 
         if (!has_mesh)
-        for (const auto& points : surface.cloud)
-        {
-            for (const auto& loc : points)
+            for (const auto &points : surface.cloud)
             {
-                mean_surface_z = (loc.z() + mean_surface_z * count_z) / (count_z + 1);
-                min_x = std::min(min_x, loc.x());
-                max_x = std::max(max_x, loc.x());
-                min_y = std::min(min_y, loc.y());
-                max_y = std::max(max_y, loc.y());
-                count_z++;
+                for (const auto &loc : points)
+                {
+                    mean_surface_z = (loc.z() + mean_surface_z * count_z) / (count_z + 1);
+                    min_x = std::min(min_x, loc.x());
+                    max_x = std::max(max_x, loc.x());
+                    min_y = std::min(min_y, loc.y());
+                    max_y = std::max(max_y, loc.y());
+                    count_z++;
+                }
             }
-        }
     }
 
     spdlog::info("x range [{}; {}]  y range [{}; {}]  mean surface {}", min_x, max_x, min_y, max_y, mean_surface_z);
