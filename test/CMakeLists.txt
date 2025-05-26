@@ -44,6 +44,7 @@ target_link_libraries(unit_tests PUBLIC gtest pthread oc_geo_coord
                                                       oc_surface)
 
 add_custom_target(test
+                  USES_TERMINAL
                   COMMAND ${CMAKE_BINARY_DIR}/test/unit_tests
                   COMMAND ${CMAKE_BINARY_DIR}/test/functional_tests
                   COMMAND ${CMAKE_BINARY_DIR}/app/pipeline_runner -i "${CMAKE_CURRENT_SOURCE_DIR}/test_data/" -g test_data.geojson -d 4 -s test_data.json -p test_data.xyz
@@ -62,12 +63,14 @@ if ("${CMAKE_BUILD_TYPE}" STREQUAL "Coverage")
 
     add_custom_target(test_coverage
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        USES_TERMINAL
         COMMAND ${CMAKE_SOURCE_DIR}/external/venv/bin/fastcov -i `realpath ${CMAKE_SOURCE_DIR}`  -e external/ -l -o clean_coverage.info
         COMMAND lcov --summary clean_coverage.info --ignore-errors mismatch
         DEPENDS test)
 
     add_custom_target(test_coverage_html
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        USES_TERMINAL
         COMMAND genhtml clean_coverage.info --output-directory coverage_html --branch-coverage --ignore-errors mismatch
         DEPENDS test_coverage)
 endif()
