@@ -36,3 +36,4 @@ jobs:
         files: build/test/clean_coverage.info
         token: ${{ secrets.CODECOV_TOKEN }}
         verbose: true
+        disable_search: true
