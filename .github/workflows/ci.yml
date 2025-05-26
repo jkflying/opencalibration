@@ -30,7 +30,6 @@ jobs:
       run: cd build && cmake -DCMAKE_BUILD_TYPE=Coverage .. && ninja
     - name: Coverage Test
       run: cd build && ninja test_coverage_html
-      steps:
     - uses: codecov/codecov-action@v5
       with:
         fail_ci_if_error: true
