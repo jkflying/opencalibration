@@ -12,7 +12,7 @@ jobs:
     steps:
     - uses: actions/checkout@v2
       with:
-        submodules: 'true'
+        submodules: true
     - run: sudo apt-get update
     - name: ccache
       uses: hendrikmuhs/ccache-action@v1.2
@@ -30,8 +30,10 @@ jobs:
       run: cd build && cmake -DCMAKE_BUILD_TYPE=Coverage .. && ninja
     - name: Coverage Test
       run: cd build && ninja test_coverage_html
-    - name: upload to codecov
-      run:  |
-        curl -Os https://uploader.codecov.io/latest/linux/codecov
-        chmod +x codecov
-        ./codecov -f build/test/clean_coverage.info
+      steps:
+    - uses: codecov/codecov-action@v5
+      with:
+        fail_ci_if_error: true
+        files: build/test/clean_coverage.info
+        token: ${{ secrets.CODECOV_TOKEN }}
+        verbose: true
