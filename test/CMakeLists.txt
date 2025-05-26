@@ -52,21 +52,22 @@ add_custom_target(test
 if ("${CMAKE_BUILD_TYPE}" STREQUAL "Coverage")
 
     add_custom_target(clean_coverage
-        COMMAND lcov --zerocounters --no-external --base-directory `realpath ${CMAKE_CURRENT_SOURCE_DIR}/..` --directory `realpath ${CMAKE_CURRENT_SOURCE_DIR}/..` --ignore-errors mismatch
-        COMMAND lcov --capture --initial --no-external --base-directory `realpath ${CMAKE_CURRENT_SOURCE_DIR}/..` --directory `realpath ${CMAKE_CURRENT_SOURCE_DIR}/..` --output-file base_coverage.info --ignore-errors mismatch
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        COMMAND ${CMAKE_SOURCE_DIR}/external/venv/bin/fastcov -z
         COMMAND rm -r coverage_html || echo "no existing coverage report"
+        COMMAND bash -c "echo `pwd`"
         DEPENDS functional_tests unit_tests pipeline_runner)
 
     add_dependencies(test clean_coverage)
 
     add_custom_target(test_coverage
-        COMMAND lcov --capture --base-directory `realpath ${CMAKE_BINARY_DIR}/..`  --directory `realpath ${CMAKE_BINARY_DIR}/..` --no-external --output-file test_coverage.info --ignore-errors mismatch
-        COMMAND lcov -a base_coverage.info -a test_coverage.info -o coverage.info --ignore-errors mismatch
-        COMMAND lcov -r coverage.info "*/external/*" "*/app/*" -o clean_coverage.info --ignore-errors mismatch
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        COMMAND ${CMAKE_SOURCE_DIR}/external/venv/bin/fastcov -i `realpath ${CMAKE_SOURCE_DIR}`  -e external/ -l -o clean_coverage.info
         COMMAND lcov --summary clean_coverage.info --ignore-errors mismatch
         DEPENDS test)
 
     add_custom_target(test_coverage_html
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         COMMAND genhtml clean_coverage.info --output-directory coverage_html --branch-coverage --ignore-errors mismatch
         DEPENDS test_coverage)
 endif()

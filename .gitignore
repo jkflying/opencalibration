@@ -41,3 +41,6 @@ external/install
 
 # VS Code
 .vscode/
+
+# local virtual environment for python packages
+external/venv/
