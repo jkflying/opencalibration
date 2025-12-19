@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <limits>
 #include <random>
 #include <vector>
 
@@ -57,7 +58,7 @@ template <typename T, size_t D> class KMeans
         if (!_initialized)
         {
             if (initialize())
-                return true; // first iteration just initializes on random seeds
+                return true; // first iteration just initializes on furthest points
             else
                 return false;
         }
@@ -87,18 +88,55 @@ template <typename T, size_t D> class KMeans
         }
 
         point_vec points = collect_all_points();
-        {
-            point_vec empty;
-            std::swap(_clusters[0].points, empty); // free up memory
-        }
-        std::shuffle(points.begin(), points.end(), _random_generator);
 
-        for (size_t i = 0; i < points.size(); i++)
+        // K-center initialization
+        std::vector<size_t> seeds;
+        seeds.reserve(_clusters.size());
+        seeds.push_back(0);
+
+        std::vector<double> min_dists(points.size(), std::numeric_limits<double>::max());
+
+        for (size_t k = 1; k < _clusters.size(); ++k)
         {
-            size_t cluster_id = nearest_cluster(points[i].first);
-            add_shift_centroid(_clusters[cluster_id].centroid, points[i].first, _clusters[cluster_id].points.size());
-            _clusters[cluster_id].points.push_back(points[i]);
+            const auto &last_seed_loc = points[seeds.back()].first;
+            size_t furthest_idx = 0;
+            double max_min_dist = -1.0;
+
+            for (size_t i = 0; i < points.size(); ++i)
+            {
+                min_dists[i] = std::min(min_dists[i], distance_sq(points[i].first, last_seed_loc));
+
+                if (min_dists[i] > max_min_dist)
+                {
+                    max_min_dist = min_dists[i];
+                    furthest_idx = i;
+                }
+            }
+            seeds.push_back(furthest_idx);
         }
+
+        for (size_t k = 0; k < _clusters.size(); ++k)
+        {
+            _clusters[k].centroid = points[seeds[k]].first;
+        }
+
+        for (const auto &p : points)
+        {
+            size_t best_idx = 0;
+            double min_dist = std::numeric_limits<double>::infinity();
+            for (size_t k = 0; k < _clusters.size(); ++k)
+            {
+                double d = distance_sq(p.first, _clusters[k].centroid);
+                if (d < min_dist)
+                {
+                    min_dist = d;
+                    best_idx = k;
+                }
+            }
+            _clusters[best_idx].points.push_back(p);
+        }
+
+        recalculate_centroids();
         std::sort(_clusters.begin(), _clusters.end());
 
         _initialized = true;
@@ -126,6 +164,8 @@ template <typename T, size_t D> class KMeans
     {
         for (auto &c : _clusters)
         {
+            if (c.points.empty())
+                continue;
             std::fill(c.centroid.begin(), c.centroid.end(), 0);
             for (const auto &p : c.points)
             {

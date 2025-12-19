@@ -242,6 +242,118 @@ TEST(kmeans, clusters)
     }
 }
 
+TEST(kmeans, spread_initialization)
+{
+    // GIVEN: a very dense cluster at the origin and 3 distant outliers
+    opencalibration::KMeans<size_t, 2> kmeans(4);
+
+    for (size_t i = 0; i < 100; ++i)
+        kmeans.add({0.0, 0.0}, i);
+
+    kmeans.add({1000.0, 1000.0}, 100);
+    kmeans.add({-1000.0, 1000.0}, 101);
+    kmeans.add({1000.0, -1000.0}, 102);
+
+    // WHEN: we initialize and iterate
+    kmeans.iterate();
+
+    // THEN: each distant outlier should be in its own cluster, and the dense cluster should remain together
+    auto clusters = kmeans.getClusters();
+    ASSERT_EQ(clusters.size(), 4);
+
+    EXPECT_EQ(clusters[0].points.size(), 1);
+    EXPECT_EQ(clusters[1].points.size(), 1);
+    EXPECT_EQ(clusters[2].points.size(), 1);
+    EXPECT_EQ(clusters[3].points.size(), 100);
+
+    EXPECT_NEAR(clusters[3].centroid[0], 0.0, 1e-9);
+    EXPECT_NEAR(clusters[3].centroid[1], 0.0, 1e-9);
+
+    double x_sum = clusters[0].centroid[0] + clusters[1].centroid[0] + clusters[2].centroid[0];
+    double y_sum = clusters[0].centroid[1] + clusters[1].centroid[1] + clusters[2].centroid[1];
+    EXPECT_NEAR(x_sum, 1000.0, 1e-9);
+    EXPECT_NEAR(y_sum, 1000.0, 1e-9);
+}
+
+TEST(kmeans, large_clusters)
+{
+    // GIVEN: a large number of clusters
+    size_t num_clusters = 100;
+    opencalibration::KMeans<size_t, 2> kmeans(num_clusters);
+
+    for (size_t i = 0; i < num_clusters; i++)
+        for (size_t j = 0; j < 5; j++)
+            kmeans.add({(double)i, (double)j}, num_clusters * i + j);
+
+    // WHEN: we iterate
+    kmeans.iterate();
+
+    // THEN: we should have 100 clusters
+    EXPECT_EQ(kmeans.getClusters().size(), num_clusters);
+}
+
+TEST(kmeans, many_points)
+{
+    // GIVEN: 2 clusters with 1000 points each
+    opencalibration::KMeans<size_t, 2> kmeans(2);
+
+    for (size_t i = 0; i < 1000; i++)
+    {
+        kmeans.add({0.0, (double)i}, i);
+        kmeans.add({1000.0, (double)i}, 1000 + i);
+    }
+
+    // WHEN: we iterate
+    kmeans.iterate();
+
+    // THEN: we should have 2 clusters of size 1000
+    auto clusters = kmeans.getClusters();
+    ASSERT_EQ(clusters.size(), 2);
+    EXPECT_EQ(clusters[0].points.size(), 1000);
+    EXPECT_EQ(clusters[1].points.size(), 1000);
+}
+
+TEST(kmeans, plane_split)
+{
+    // GIVEN: a 100x100 grid of points
+    opencalibration::KMeans<size_t, 2> kmeans(4);
+    for (size_t i = 0; i < 100; i++)
+        for (size_t j = 0; j < 100; j++)
+            kmeans.add({(double)i, (double)j}, 100 * i + j);
+
+    // WHEN: we iterate
+    for (int i = 0; i < 100; i++)
+        kmeans.iterate();
+
+    // THEN: they should split evenly into 4 clusters of 2500 points
+    auto clusters = kmeans.getClusters();
+    for (const auto &c : clusters)
+    {
+        EXPECT_EQ(c.points.size(), 2500);
+    }
+}
+
+TEST(kmeans, cube_split)
+{
+    // GIVEN: a 10x10x10 grid of points
+    opencalibration::KMeans<size_t, 3> kmeans(8);
+    for (size_t i = 0; i < 10; i++)
+        for (size_t j = 0; j < 10; j++)
+            for (size_t k = 0; k < 10; k++)
+                kmeans.add({(double)i, (double)j, (double)k}, 100 * i + 10 * j + k);
+
+    // WHEN: we iterate
+    for (int i = 0; i < 100; i++)
+        kmeans.iterate();
+
+    // THEN: they should split evenly into 8 clusters of 125 points
+    auto clusters = kmeans.getClusters();
+    for (const auto &c : clusters)
+    {
+        EXPECT_EQ(c.points.size(), 125);
+    }
+}
+
 TEST(spectral, no_edges_no_spectralize)
 {
     opencalibration::SpectralClustering<size_t, 2> spectral(4);
