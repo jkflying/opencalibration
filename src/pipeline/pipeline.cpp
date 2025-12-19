@@ -69,7 +69,7 @@ PipelineState Pipeline::chooseNextState(PipelineState currentState, Transition t
         USM_STATE(transition, State::CAMERA_PARAMETER_RELAX,
                   USM_MAP(Transition::NEXT, State::FINAL_GLOBAL_RELAX, s));
         USM_STATE(transition, State::FINAL_GLOBAL_RELAX,
-                  USM_MAP(Transition::NEXT, State::GENERATE_THUMBNAIL, s));
+                  USM_MAP(Transition::NEXT, _generate_thumbnails ? State::GENERATE_THUMBNAIL : State::COMPLETE, s));
         USM_STATE(transition, State::GENERATE_THUMBNAIL,
                   USM_MAP(Transition::NEXT, State::COMPLETE, s));
     );
@@ -178,8 +178,12 @@ Pipeline::Transition Pipeline::camera_parameter_relax()
                    Option::LENS_DISTORTIONS_RADIAL_BROWN24_PARAMETERIZATION};
         break;
     case 4:
-        options = {Option::ORIENTATION, Option::GROUND_MESH, Option::FOCAL_LENGTH, Option::PRINCIPAL_POINT,
-                   Option::LENS_DISTORTIONS_RADIAL, Option::LENS_DISTORTIONS_RADIAL_BROWN246_PARAMETERIZATION};
+        options = {Option::ORIENTATION,
+                   Option::GROUND_MESH,
+                   Option::FOCAL_LENGTH,
+                   Option::PRINCIPAL_POINT,
+                   Option::LENS_DISTORTIONS_RADIAL,
+                   Option::LENS_DISTORTIONS_RADIAL_BROWN246_PARAMETERIZATION};
         break;
     default:
         options = {Option::ORIENTATION,
@@ -219,15 +223,21 @@ Pipeline::Transition Pipeline::final_global_relax()
 
 Pipeline::Transition Pipeline::generate_thumbnail()
 {
-    USM_DECISION_TABLE(Transition::NEXT, );
+    if (_thumbnail_filename.empty() && _source_filename.empty() && _overlap_filename.empty())
+    {
+        USM_DECISION_TABLE(Transition::NEXT, );
+    }
 
     auto thumbnail = orthomosaic::generateOrthomosaic(_surfaces, _graph);
 
-    cv::imwrite("thumbnail.tiff", rasterToCv(thumbnail.pixelValues));
-    cv::imwrite("source.png", rasterToCv(thumbnail.cameraUUID));
-    cv::imwrite("overlap.png", rasterToCv(thumbnail.overlap));
+    if (!_thumbnail_filename.empty())
+        cv::imwrite(_thumbnail_filename, rasterToCv(thumbnail.pixelValues));
+    if (!_source_filename.empty())
+        cv::imwrite(_source_filename, rasterToCv(thumbnail.cameraUUID));
+    if (!_overlap_filename.empty())
+        cv::imwrite(_overlap_filename, rasterToCv(thumbnail.overlap));
 
-    return Transition::NEXT;
+    USM_DECISION_TABLE(Transition::NEXT, );
 }
 
 Pipeline::Transition Pipeline::complete()

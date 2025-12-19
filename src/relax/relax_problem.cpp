@@ -369,8 +369,8 @@ void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, 
         }
 
         // select correct cost function based on options
-        if (options.hasAny(RelaxOptionSet{Option::FOCAL_LENGTH, Option::PRINCIPAL_POINT,
-                                          Option::LENS_DISTORTIONS_RADIAL}) &&
+        if (options.hasAny(
+                RelaxOptionSet{Option::FOCAL_LENGTH, Option::PRINCIPAL_POINT, Option::LENS_DISTORTIONS_RADIAL}) &&
             source_model == dest_model)
         {
 
@@ -553,8 +553,8 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
         double *tangentials[2] = {source_model.tangential_distortion.data(), dest_model.tangential_distortion.data()};
 
         if (options.hasAny({Option::LENS_DISTORTIONS_TANGENTIAL}) &&
-            options.hasAll({Option::LENS_DISTORTIONS_RADIAL, Option::FOCAL_LENGTH, Option::ORIENTATION,
-                            Option::POINTS_3D}))
+            options.hasAll(
+                {Option::LENS_DISTORTIONS_RADIAL, Option::FOCAL_LENGTH, Option::ORIENTATION, Option::POINTS_3D}))
         {
             func[0].reset(newAutoDiffPixelErrorCost_OrientationFocalRadialTangential(*pkg.source.loc_ptr, source_model,
                                                                                      inlier.pixel_1));

@@ -78,6 +78,18 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
         _step_callback = step_complete;
     }
 
+    void set_generate_thumbnails(bool generate)
+    {
+        _generate_thumbnails = generate;
+    }
+
+    void set_thumbnail_filenames(const std::string &thumbnail, const std::string &source, const std::string &overlap)
+    {
+        _thumbnail_filename = thumbnail;
+        _source_filename = source;
+        _overlap_filename = overlap;
+    }
+
     static std::string toString(PipelineState state);
 
   protected:
@@ -113,5 +125,9 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
 
     size_t _batch_size;
     size_t _parallelism;
+    bool _generate_thumbnails = true;
+    std::string _thumbnail_filename = "";
+    std::string _source_filename = "";
+    std::string _overlap_filename = "";
 };
 } // namespace opencalibration
