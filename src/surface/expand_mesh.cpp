@@ -46,17 +46,27 @@ MeshGraph rebuildMesh(const point_cloud &cameraLocations, const std::vector<surf
     std::vector<double> heights;
     heights.reserve(cameraLocations.size());
 
+    double minCamZ = std::numeric_limits<double>::max();
+    double maxCamZ = -minCamZ;
+
     for (const auto &p : cameraLocations)
     {
         cameraMin = cameraMin.cwiseMin(p.topRows<2>());
         cameraMax = cameraMax.cwiseMax(p.topRows<2>());
+        minCamZ = std::min(minCamZ, p.z());
+        maxCamZ = std::max(maxCamZ, p.z());
         cameraTree.addPoint(toArray(p.topRows<2>()), p.z(), false);
 
         if (vertexTree.size() > 0)
         {
             auto nearest = vertexTree.search(toArray(p.topRows<2>()));
             double agl = p.z() - nearest.payload;
-            heights.push_back(agl);
+            // Filter outlier heights: ground should be below camera but within reasonable distance.
+            // We allow some range above camera for cases where it's a ground vehicle in a valley.
+            if (agl > -500 && agl < 5000)
+            {
+                heights.push_back(agl);
+            }
         }
     }
     cameraTree.splitOutstanding();
@@ -70,15 +80,26 @@ MeshGraph rebuildMesh(const point_cloud &cameraLocations, const std::vector<surf
     }
     std::sort(nearestCameraDistances.begin(), nearestCameraDistances.end());
 
-    const double gridDistance = nearestCameraDistances.size() < 2
-                                    ? std::numeric_limits<double>::infinity()
-                                    : std::sqrt(nearestCameraDistances[nearestCameraDistances.size() / 2]);
+    double gridDistance = nearestCameraDistances.size() < 2
+                              ? std::numeric_limits<double>::infinity()
+                              : std::sqrt(nearestCameraDistances[nearestCameraDistances.size() / 2]);
+
+    // Ensure grid distance is not too small to avoid runaway grid density
+    const double minGridDistance = (cameraMax - cameraMin).norm() / 1000.0;
+    if (gridDistance < minGridDistance)
+    {
+        spdlog::debug("rebuildMesh: gridDistance {} too small, increasing to {}", gridDistance, minGridDistance);
+        gridDistance = std::max(1e-3, minGridDistance);
+    }
+
     if (heights.size() == 0)
-        heights.push_back(std::isfinite(gridDistance) ? gridDistance : 0);
+        heights.push_back(std::isfinite(gridDistance) ? gridDistance : 10.0);
     std::sort(heights.begin(), heights.end());
     const double medianHeight = heights[heights.size() / 2];
 
-    const double minBorderWidth = medianHeight * HEIGHT_MARGIN;
+    // Cap minBorderWidth to a reasonable value to avoid explosion if medianHeight is still wrong.
+    // Also ensure it is non-negative.
+    const double minBorderWidth = std::max(0.0, std::min(1000.0, medianHeight * HEIGHT_MARGIN));
 
     MeshGraph newGraph;
 
@@ -89,7 +110,8 @@ MeshGraph rebuildMesh(const point_cloud &cameraLocations, const std::vector<surf
 
     if (rows > 1000 || cols > 1000)
     {
-        spdlog::warn("Mesh grid too large: {}x{}, capping to 1000", rows, cols);
+        spdlog::warn("Mesh grid too large: {}x{}, capping to 1000. gridDistance: {}, medianHeight: {}", rows, cols,
+                     gridDistance, medianHeight);
         rows = std::min<size_t>(rows, 1000);
         cols = std::min<size_t>(cols, 1000);
     }
