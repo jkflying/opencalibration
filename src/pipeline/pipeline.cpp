@@ -178,13 +178,14 @@ Pipeline::Transition Pipeline::camera_parameter_relax()
                    Option::LENS_DISTORTIONS_RADIAL_BROWN24_PARAMETERIZATION};
         break;
     case 4:
-        options = {Option::ORIENTATION, Option::GROUND_MESH, Option::FOCAL_LENGTH, Option::LENS_DISTORTIONS_RADIAL,
-                   Option::LENS_DISTORTIONS_RADIAL_BROWN246_PARAMETERIZATION};
+        options = {Option::ORIENTATION, Option::GROUND_MESH, Option::FOCAL_LENGTH, Option::PRINCIPAL_POINT,
+                   Option::LENS_DISTORTIONS_RADIAL, Option::LENS_DISTORTIONS_RADIAL_BROWN246_PARAMETERIZATION};
         break;
     default:
         options = {Option::ORIENTATION,
                    Option::POINTS_3D,
                    Option::FOCAL_LENGTH,
+                   Option::PRINCIPAL_POINT,
                    Option::LENS_DISTORTIONS_RADIAL,
                    Option::LENS_DISTORTIONS_RADIAL_BROWN246_PARAMETERIZATION,
                    Option::LENS_DISTORTIONS_TANGENTIAL};

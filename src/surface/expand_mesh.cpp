@@ -1,6 +1,7 @@
 #include <opencalibration/surface/expand_mesh.hpp>
 
 #include <jk/KDTree.h>
+#include <spdlog/spdlog.h>
 
 namespace
 {
@@ -81,10 +82,19 @@ MeshGraph rebuildMesh(const point_cloud &cameraLocations, const std::vector<surf
 
     MeshGraph newGraph;
 
-    const size_t rows = static_cast<size_t>(
+    size_t rows = static_cast<size_t>(
         std::ceil(std::max(0., cameraMax.y() - cameraMin.y() + 1e-9 + 2 * minBorderWidth) / gridDistance));
-    const size_t cols = static_cast<size_t>(
+    size_t cols = static_cast<size_t>(
         std::ceil(std::max(0., cameraMax.x() - cameraMin.x() + 1e-9 + 2 * minBorderWidth) / gridDistance));
+
+    if (rows > 1000 || cols > 1000)
+    {
+        spdlog::warn("Mesh grid too large: {}x{}, capping to 1000", rows, cols);
+        rows = std::min<size_t>(rows, 1000);
+        cols = std::min<size_t>(cols, 1000);
+    }
+
+    spdlog::debug("Rebuilding mesh with {}x{} grid", rows, cols);
 
     Eigen::Matrix<size_t, Eigen::Dynamic, Eigen::Dynamic> nodeIdGrid;
     nodeIdGrid.resize(rows, cols);

@@ -235,6 +235,7 @@ struct PixelErrorCost_OrientationFocal
     static const int NUM_PARAMETERS_1 = 4;
     static const int NUM_PARAMETERS_2 = 3;
     static const int NUM_PARAMETERS_3 = 1;
+    static const int NUM_PARAMETERS_4 = 2;
 
     PixelErrorCost_OrientationFocal(const Eigen::Vector3d &camera_loc, const CameraModel &camera_model,
                                     const Eigen::Vector2d &camera_pixel)
@@ -242,13 +243,15 @@ struct PixelErrorCost_OrientationFocal
     {
     }
 
-    template <typename T> bool operator()(const T *rotation, const T *point, const T *focal, T *residuals) const
+    template <typename T>
+    bool operator()(const T *rotation, const T *point, const T *focal, const T *principal, T *residuals) const
     {
         using QuaterionT = Eigen::Quaternion<T>;
         using Vector3T = Eigen::Matrix<T, 3, 1>;
         using Vector2T = Eigen::Matrix<T, 2, 1>;
         using QuaterionTCM = Eigen::Map<const QuaterionT>;
         using Vector3TCM = Eigen::Map<const Vector3T>;
+        using Vector2TCM = Eigen::Map<const Vector2T>;
         using Vector2TM = Eigen::Map<Vector2T>;
 
         const QuaterionTCM rotation_em(rotation);
@@ -258,6 +261,7 @@ struct PixelErrorCost_OrientationFocal
 
         DifferentiableCameraModel<T> model_t = model.cast<T>();
         model_t.focal_length_pixels = *focal;
+        model_t.principle_point = Vector2TCM(principal);
 
         Vector2T projected_pixel = image_from_3d<T>(ray, model_t);
 
@@ -279,7 +283,8 @@ struct PixelErrorCost_OrientationFocalRadial
     static const int NUM_PARAMETERS_1 = 4;
     static const int NUM_PARAMETERS_2 = 3;
     static const int NUM_PARAMETERS_3 = 1;
-    static const int NUM_PARAMETERS_4 = 3;
+    static const int NUM_PARAMETERS_4 = 2;
+    static const int NUM_PARAMETERS_5 = 3;
 
     PixelErrorCost_OrientationFocalRadial(const Eigen::Vector3d &camera_loc, const CameraModel &camera_model,
                                           const Eigen::Vector2d &camera_pixel)
@@ -288,13 +293,16 @@ struct PixelErrorCost_OrientationFocalRadial
     }
 
     template <typename T>
-    bool operator()(const T *rotation, const T *point, const T *focal, const T *radial, T *residuals) const
+    bool operator()(const T *rotation, const T *point, const T *focal, const T *principal, const T *radial,
+                    T *residuals) const
     {
         using QuaterionT = Eigen::Quaternion<T>;
         using Vector3T = Eigen::Matrix<T, 3, 1>;
         using Vector2T = Eigen::Matrix<T, 2, 1>;
         using QuaterionTCM = Eigen::Map<const QuaterionT>;
         using Vector3TCM = Eigen::Map<const Vector3T>;
+        using Vector3TCM_const = Eigen::Map<const Eigen::Matrix<T, 3, 1>>;
+        using Vector2TCM = Eigen::Map<const Vector2T>;
         using Vector2TM = Eigen::Map<Vector2T>;
 
         const QuaterionTCM rotation_em(rotation);
@@ -304,7 +312,8 @@ struct PixelErrorCost_OrientationFocalRadial
 
         DifferentiableCameraModel<T> model_t = model.cast<T>();
         model_t.focal_length_pixels = *focal;
-        model_t.radial_distortion = Eigen::Map<const Eigen::Matrix<T, 3, 1>>(radial);
+        model_t.principle_point = Vector2TCM(principal);
+        model_t.radial_distortion = Vector3TCM_const(radial);
 
         Vector2T projected_pixel = image_from_3d<T>(ray, model_t);
 
@@ -326,8 +335,9 @@ struct PixelErrorCost_OrientationFocalRadialTangential
     static const int NUM_PARAMETERS_1 = 4;
     static const int NUM_PARAMETERS_2 = 3;
     static const int NUM_PARAMETERS_3 = 1;
-    static const int NUM_PARAMETERS_4 = 3;
-    static const int NUM_PARAMETERS_5 = 2;
+    static const int NUM_PARAMETERS_4 = 2;
+    static const int NUM_PARAMETERS_5 = 3;
+    static const int NUM_PARAMETERS_6 = 2;
 
     PixelErrorCost_OrientationFocalRadialTangential(const Eigen::Vector3d &camera_loc, const CameraModel &camera_model,
                                                     const Eigen::Vector2d &camera_pixel)
@@ -336,14 +346,16 @@ struct PixelErrorCost_OrientationFocalRadialTangential
     }
 
     template <typename T>
-    bool operator()(const T *rotation, const T *point, const T *focal, const T *radial, const T *tangential,
-                    T *residuals) const
+    bool operator()(const T *rotation, const T *point, const T *focal, const T *principal, const T *radial,
+                    const T *tangential, T *residuals) const
     {
         using QuaterionT = Eigen::Quaternion<T>;
         using Vector3T = Eigen::Matrix<T, 3, 1>;
         using Vector2T = Eigen::Matrix<T, 2, 1>;
         using QuaterionTCM = Eigen::Map<const QuaterionT>;
         using Vector3TCM = Eigen::Map<const Vector3T>;
+        using Vector3TCM_const = Eigen::Map<const Eigen::Matrix<T, 3, 1>>;
+        using Vector2TCM = Eigen::Map<const Vector2T>;
         using Vector2TM = Eigen::Map<Vector2T>;
 
         const QuaterionTCM rotation_em(rotation);
@@ -353,8 +365,9 @@ struct PixelErrorCost_OrientationFocalRadialTangential
 
         DifferentiableCameraModel<T> model_t = model.cast<T>();
         model_t.focal_length_pixels = *focal;
-        model_t.radial_distortion = Eigen::Map<const Eigen::Matrix<T, 3, 1>>(radial);
-        model_t.tangential_distortion = Eigen::Map<const Eigen::Matrix<T, 2, 1>>(tangential);
+        model_t.principle_point = Vector2TCM(principal);
+        model_t.radial_distortion = Vector3TCM_const(radial);
+        model_t.tangential_distortion = Vector2TCM(tangential);
 
         Vector2T projected_pixel = image_from_3d<T>(ray, model_t);
 
@@ -379,7 +392,8 @@ struct PlaneIntersectionAngleCost_OrientationFocalRadial_SharedModel
     static const int NUM_PARAMETERS_4 = 1; // z 1
     static const int NUM_PARAMETERS_5 = 1; // z 2
     static const int NUM_PARAMETERS_6 = 1; // focal
-    static const int NUM_PARAMETERS_7 = 3; // radial
+    static const int NUM_PARAMETERS_7 = 2; // principal
+    static const int NUM_PARAMETERS_8 = 3; // radial
 
     PlaneIntersectionAngleCost_OrientationFocalRadial_SharedModel(
         const Eigen::Vector3d &camera_loc1, const Eigen::Vector3d &camera_loc2, const Eigen::Vector2d &camera_pixel1,
@@ -394,17 +408,20 @@ struct PlaneIntersectionAngleCost_OrientationFocalRadial_SharedModel
 
     template <typename T>
     bool operator()(const T *rotation0, const T *rotation1, const T *z0, const T *z1, const T *z2, const T *focal,
-                    const T *radial, T *residuals) const
+                    const T *principal, const T *radial, T *residuals) const
     {
         using QuaterionT = Eigen::Quaternion<T>;
         using Vector3T = Eigen::Matrix<T, 3, 1>;
+        using Vector2T = Eigen::Matrix<T, 2, 1>;
         using QuaternionTCM = Eigen::Map<const QuaterionT>;
         using Vector3TM = Eigen::Map<Vector3T>;
         using Vector3TCM = Eigen::Map<const Vector3T>;
+        using Vector2TCM = Eigen::Map<const Vector2T>;
 
         const QuaternionTCM rotation_em[2]{QuaternionTCM(rotation0), QuaternionTCM(rotation1)};
         InverseDifferentiableCameraModel<T> model = sharedModel.cast<T>();
         model.focal_length_pixels = T(*focal);
+        model.principle_point = Vector2TCM(principal);
         model.radial_distortion = Vector3TCM(radial);
         ray<T> rays[2];
         for (int i = 0; i < 2; i++)

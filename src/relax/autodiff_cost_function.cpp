@@ -39,7 +39,8 @@ ceres::CostFunction *newAutoDiffPlaneIntersectionAngleCost_FocalRadial(
     using CostFunction =
         ceres::AutoDiffCostFunction<Functor, Functor::NUM_RESIDUALS, Functor::NUM_PARAMETERS_1,
                                     Functor::NUM_PARAMETERS_2, Functor::NUM_PARAMETERS_3, Functor::NUM_PARAMETERS_4,
-                                    Functor::NUM_PARAMETERS_5, Functor::NUM_PARAMETERS_6, Functor::NUM_PARAMETERS_7>;
+                                    Functor::NUM_PARAMETERS_5, Functor::NUM_PARAMETERS_6, Functor::NUM_PARAMETERS_7,
+                                    Functor::NUM_PARAMETERS_8>;
 
     return new CostFunction(new Functor(camera_loc1, camera_loc2, camera_pixel1, camera_pixel2, plane_point1,
                                         plane_point2, plane_point3, model));
@@ -60,8 +61,9 @@ ceres::CostFunction *newAutoDiffPixelErrorCost_OrientationFocal(const Eigen::Vec
                                                                 const Eigen::Vector2d &camera_pixel)
 {
     using Functor = PixelErrorCost_OrientationFocal;
-    using CostFunction = ceres::AutoDiffCostFunction<Functor, Functor::NUM_RESIDUALS, Functor::NUM_PARAMETERS_1,
-                                                     Functor::NUM_PARAMETERS_2, Functor::NUM_PARAMETERS_3>;
+    using CostFunction =
+        ceres::AutoDiffCostFunction<Functor, Functor::NUM_RESIDUALS, Functor::NUM_PARAMETERS_1,
+                                    Functor::NUM_PARAMETERS_2, Functor::NUM_PARAMETERS_3, Functor::NUM_PARAMETERS_4>;
     return new CostFunction(new Functor(camera_loc, camera_model, camera_pixel));
 }
 
@@ -70,9 +72,9 @@ ceres::CostFunction *newAutoDiffPixelErrorCost_OrientationFocalRadial(const Eige
                                                                       const Eigen::Vector2d &camera_pixel)
 {
     using Functor = PixelErrorCost_OrientationFocalRadial;
-    using CostFunction =
-        ceres::AutoDiffCostFunction<Functor, Functor::NUM_RESIDUALS, Functor::NUM_PARAMETERS_1,
-                                    Functor::NUM_PARAMETERS_2, Functor::NUM_PARAMETERS_3, Functor::NUM_PARAMETERS_4>;
+    using CostFunction = ceres::AutoDiffCostFunction<Functor, Functor::NUM_RESIDUALS, Functor::NUM_PARAMETERS_1,
+                                                     Functor::NUM_PARAMETERS_2, Functor::NUM_PARAMETERS_3,
+                                                     Functor::NUM_PARAMETERS_4, Functor::NUM_PARAMETERS_5>;
     return new CostFunction(new Functor(camera_loc, camera_model, camera_pixel));
 }
 
@@ -83,7 +85,8 @@ ceres::CostFunction *newAutoDiffPixelErrorCost_OrientationFocalRadialTangential(
     using Functor = PixelErrorCost_OrientationFocalRadialTangential;
     using CostFunction = ceres::AutoDiffCostFunction<Functor, Functor::NUM_RESIDUALS, Functor::NUM_PARAMETERS_1,
                                                      Functor::NUM_PARAMETERS_2, Functor::NUM_PARAMETERS_3,
-                                                     Functor::NUM_PARAMETERS_4, Functor::NUM_PARAMETERS_5>;
+                                                     Functor::NUM_PARAMETERS_4, Functor::NUM_PARAMETERS_5,
+                                                     Functor::NUM_PARAMETERS_6>;
     return new CostFunction(new Functor(camera_loc, camera_model, camera_pixel));
 }
 

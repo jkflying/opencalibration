@@ -116,7 +116,7 @@ void RelaxProblem::setup3dPointProblem(const MeasurementGraph &graph, std::vecto
         }
     }
 
-    _solver_options.max_num_iterations = 300;
+    _solver_options.max_num_iterations = 1000;
     _solver_options.linear_solver_type = ceres::SPARSE_SCHUR;
 }
 
@@ -369,7 +369,8 @@ void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, 
         }
 
         // select correct cost function based on options
-        if (options.hasAny(RelaxOptionSet{Option::FOCAL_LENGTH, Option::LENS_DISTORTIONS_RADIAL}) &&
+        if (options.hasAny(RelaxOptionSet{Option::FOCAL_LENGTH, Option::PRINCIPAL_POINT,
+                                          Option::LENS_DISTORTIONS_RADIAL}) &&
             source_model == dest_model)
         {
 
@@ -379,10 +380,15 @@ void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, 
 
             _problem->AddResidualBlock(func.release(), &_loss, datas[0], datas[1], zValues[0], zValues[1], zValues[2],
                                        &inverse_iter->second.focal_length_pixels,
+                                       inverse_iter->second.principle_point.data(),
                                        inverse_iter->second.radial_distortion.data());
             if (!options.hasAny(RelaxOptionSet{Option::FOCAL_LENGTH}))
             {
                 _problem->SetParameterBlockConstant(&inverse_iter->second.focal_length_pixels);
+            }
+            if (!options.hasAny(RelaxOptionSet{Option::PRINCIPAL_POINT}))
+            {
+                _problem->SetParameterBlockConstant(inverse_iter->second.principle_point.data());
             }
             points_added = true;
         }
@@ -542,11 +548,13 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
         std::vector<double *> args[2];
 
         double *focals[2] = {&source_model.focal_length_pixels, &dest_model.focal_length_pixels};
+        double *principals[2] = {source_model.principle_point.data(), dest_model.principle_point.data()};
         double *radials[2] = {source_model.radial_distortion.data(), dest_model.radial_distortion.data()};
         double *tangentials[2] = {source_model.tangential_distortion.data(), dest_model.tangential_distortion.data()};
 
-        if (options.hasAll({Option::LENS_DISTORTIONS_TANGENTIAL, Option::LENS_DISTORTIONS_RADIAL, Option::FOCAL_LENGTH,
-                            Option::ORIENTATION, Option::POINTS_3D}))
+        if (options.hasAny({Option::LENS_DISTORTIONS_TANGENTIAL}) &&
+            options.hasAll({Option::LENS_DISTORTIONS_RADIAL, Option::FOCAL_LENGTH, Option::ORIENTATION,
+                            Option::POINTS_3D}))
         {
             func[0].reset(newAutoDiffPixelErrorCost_OrientationFocalRadialTangential(*pkg.source.loc_ptr, source_model,
                                                                                      inlier.pixel_1));
@@ -554,11 +562,12 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
                                                                                      inlier.pixel_2));
             for (int i = 0; i < 2; i++)
             {
-                args[i] = {orientation_ptrs[i], points.back().point.data(), focals[i], radials[i], tangentials[i]};
+                args[i] = {orientation_ptrs[i], points.back().point.data(), focals[i], principals[i], radials[i],
+                           tangentials[i]};
             }
         }
-        else if (options.hasAll(
-                     {Option::LENS_DISTORTIONS_RADIAL, Option::FOCAL_LENGTH, Option::ORIENTATION, Option::POINTS_3D}))
+        else if (options.hasAny({Option::LENS_DISTORTIONS_RADIAL}) &&
+                 options.hasAll({Option::FOCAL_LENGTH, Option::ORIENTATION, Option::POINTS_3D}))
         {
             func[0].reset(
                 newAutoDiffPixelErrorCost_OrientationFocalRadial(*pkg.source.loc_ptr, source_model, inlier.pixel_1));
@@ -566,10 +575,11 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
                 newAutoDiffPixelErrorCost_OrientationFocalRadial(*pkg.dest.loc_ptr, dest_model, inlier.pixel_2));
             for (int i = 0; i < 2; i++)
             {
-                args[i] = {orientation_ptrs[i], points.back().point.data(), focals[i], radials[i]};
+                args[i] = {orientation_ptrs[i], points.back().point.data(), focals[i], principals[i], radials[i]};
             }
         }
-        else if (options.hasAll({Option::FOCAL_LENGTH, Option::ORIENTATION, Option::POINTS_3D}))
+        else if (options.hasAny({Option::FOCAL_LENGTH, Option::PRINCIPAL_POINT}) &&
+                 options.hasAll({Option::ORIENTATION, Option::POINTS_3D}))
         {
             func[0].reset(
                 newAutoDiffPixelErrorCost_OrientationFocal(*pkg.source.loc_ptr, source_model, inlier.pixel_1));
@@ -577,7 +587,7 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
 
             for (int i = 0; i < 2; i++)
             {
-                args[i] = {orientation_ptrs[i], points.back().point.data(), focals[i]};
+                args[i] = {orientation_ptrs[i], points.back().point.data(), focals[i], principals[i]};
             }
         }
         else if (options.hasAll({Option::ORIENTATION, Option::POINTS_3D}))
@@ -633,6 +643,22 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
         {
             _problem->SetParameterBlockConstant(orientation_ptrs[1]);
         }
+
+        if (options.hasAny({Option::FOCAL_LENGTH, Option::PRINCIPAL_POINT, Option::LENS_DISTORTIONS_RADIAL,
+                            Option::LENS_DISTORTIONS_TANGENTIAL}))
+        {
+            if (!options.hasAny({Option::FOCAL_LENGTH}))
+            {
+                _problem->SetParameterBlockConstant(&source_model.focal_length_pixels);
+                _problem->SetParameterBlockConstant(&dest_model.focal_length_pixels);
+            }
+            if (!options.hasAny({Option::PRINCIPAL_POINT}))
+            {
+                _problem->SetParameterBlockConstant(source_model.principle_point.data());
+                _problem->SetParameterBlockConstant(dest_model.principle_point.data());
+            }
+        }
+
         if (options.hasAll({Option::LENS_DISTORTIONS_RADIAL}))
         {
             if (options.hasAll({Option::LENS_DISTORTIONS_RADIAL_BROWN246_PARAMETERIZATION}))

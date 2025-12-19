@@ -538,6 +538,55 @@ TEST_F(relax_group, measurement_3_images_points_internals_point_triangulation_no
     EXPECT_LT(rp.test_get_solver_summary().final_cost, 1e-10);
 }
 
+TEST_F(relax_group, measurement_3_images_points_internals_point_triangulation_noise_focal_principal)
+{
+    // GIVEN: a graph, 3 images with edges between them all, with some noise
+    init_cameras();
+    auto points = generate_3d_points();
+    auto vec2arr = [](const Eigen::Vector3d &vec) { return std::array<double, 3>{vec.x(), vec.y(), vec.z()}; };
+    jk::tree::KDTree<size_t, 3> points_tree;
+    for (size_t i = 0; i < points.size(); i++)
+        points_tree.addPoint(vec2arr(points[i]), i);
+
+    // add measurements with a different focal length and principal point
+    model->focal_length_pixels *= 0.8;
+    model->principle_point << 380, 320;
+    const double expected_focal_length = model->focal_length_pixels;
+    const Eigen::Vector2d expected_principal_point = model->principle_point;
+
+    add_point_measurements(points);
+
+    // disturb them for the optimization
+    model->focal_length_pixels /= 0.8;
+    model->principle_point << 400, 300;
+    add_ori_noise({-0.05, 0.05, 0.05});
+
+    // WHEN: we set up the problem and
+    std::unordered_set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
+    TestRelaxProblem rp;
+    rp.setup3dPointProblem(graph, np, cam_models, edges,
+                           {Option::ORIENTATION, Option::POINTS_3D, Option::FOCAL_LENGTH, Option::PRINCIPAL_POINT});
+
+    // WHEN: we solve the problem
+    rp.solve();
+
+    // THEN: the 3D points should be in the correct locations
+    for (const auto &track : rp.test_get_tracks())
+    {
+        auto nearest = points_tree.search(vec2arr(track.point));
+        EXPECT_LT(nearest.distance, 1e-7);
+    }
+
+    // AND: the camera model parameters were optimized to what the measurements were made with
+    EXPECT_NEAR(cam_models[model->id].focal_length_pixels, expected_focal_length, 0.1);
+    EXPECT_NEAR(cam_models[model->id].principle_point.x(), expected_principal_point.x(), 0.1);
+    EXPECT_NEAR(cam_models[model->id].principle_point.y(), expected_principal_point.y(), 0.1);
+
+    // AND: it took many iterations, and started with lots of error, but it minimizes to almost zero error
+    EXPECT_GT(rp.test_get_solver_summary().iterations.size(), 10);
+    EXPECT_LT(rp.test_get_solver_summary().final_cost, 1e-10);
+}
+
 TEST_F(relax_group, measurement_3_images_points_internals_point_triangulation_accuracy)
 {
     // a test which just optimizes the points to check how they move from triangulation -> full bundle

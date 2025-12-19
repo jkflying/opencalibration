@@ -138,14 +138,16 @@ std::vector<Backend> getBackends()
                                          Option::LENS_DISTORTIONS_RADIAL_BROWN2_PARAMETERIZATION,
                                          Option::LENS_DISTORTIONS_RADIAL_BROWN24_PARAMETERIZATION,
                                          Option::LENS_DISTORTIONS_RADIAL_BROWN246_PARAMETERIZATION,
-                                         Option::FOCAL_LENGTH, Option::ORIENTATION, Option::GROUND_MESH},
+                                         Option::FOCAL_LENGTH, Option::PRINCIPAL_POINT, Option::ORIENTATION,
+                                         Option::GROUND_MESH},
                           mesh_solver);
 
     backends.emplace_back(RelaxOptionSet{Option::LENS_DISTORTIONS_TANGENTIAL, Option::LENS_DISTORTIONS_RADIAL,
                                          Option::LENS_DISTORTIONS_RADIAL_BROWN2_PARAMETERIZATION,
                                          Option::LENS_DISTORTIONS_RADIAL_BROWN24_PARAMETERIZATION,
                                          Option::LENS_DISTORTIONS_RADIAL_BROWN246_PARAMETERIZATION,
-                                         Option::FOCAL_LENGTH, Option::ORIENTATION, Option::POINTS_3D},
+                                         Option::FOCAL_LENGTH, Option::PRINCIPAL_POINT, Option::ORIENTATION,
+                                         Option::POINTS_3D},
                           points_solver);
     return backends;
 }
