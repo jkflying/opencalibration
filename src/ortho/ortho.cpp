@@ -42,15 +42,16 @@ OrthoMosaicBounds calculateBoundsAndMeanZ(const std::vector<surface_model> &surf
     for (const auto &surface : surfaces)
     {
         bool has_mesh = false;
+        double s_min_x = inf, s_max_x = -inf, s_min_y = inf, s_max_y = -inf;
         for (auto iter = surface.mesh.cnodebegin(); iter != surface.mesh.cnodeend(); ++iter)
         {
             const auto &loc = iter->second.payload.location;
 
             mean_surface_z = (loc.z() + mean_surface_z * count_z) / (count_z + 1);
-            min_x = std::min(min_x, loc.x());
-            max_x = std::max(max_x, loc.x());
-            min_y = std::min(min_y, loc.y());
-            max_y = std::max(max_y, loc.y());
+            s_min_x = std::min(s_min_x, loc.x());
+            s_max_x = std::max(s_max_x, loc.x());
+            s_min_y = std::min(s_min_y, loc.y());
+            s_max_y = std::max(s_max_y, loc.y());
             count_z++;
 
             has_mesh = true;
@@ -62,27 +63,36 @@ OrthoMosaicBounds calculateBoundsAndMeanZ(const std::vector<surface_model> &surf
                 for (const auto &loc : points)
                 {
                     mean_surface_z = (loc.z() + mean_surface_z * count_z) / (count_z + 1);
-                    min_x = std::min(min_x, loc.x());
-                    max_x = std::max(max_x, loc.x());
-                    min_y = std::min(min_y, loc.y());
-                    max_y = std::max(max_y, loc.y());
+                    s_min_x = std::min(s_min_x, loc.x());
+                    s_max_x = std::max(s_max_x, loc.x());
+                    s_min_y = std::min(s_min_y, loc.y());
+                    s_max_y = std::max(s_max_y, loc.y());
                     count_z++;
                 }
             }
+        
+        min_x = std::min(min_x, s_min_x);
+        max_x = std::max(max_x, s_max_x);
+        min_y = std::min(min_y, s_min_y);
+        max_y = std::max(max_y, s_max_y);
     }
 
     return {min_x, max_x, min_y, max_y, mean_surface_z};
 }
 
-double calculateGSD(const MeasurementGraph &graph, double mean_surface_z)
+double calculateGSD(const MeasurementGraph &graph, const std::unordered_set<size_t> &involved_nodes,
+                    double mean_surface_z)
 {
     double thumb_arc_pixel = 0;
     double mean_camera_z = 0;
     size_t thumb_count = 0;
 
-    for (auto iter = graph.cnodebegin(); iter != graph.cnodeend(); ++iter)
+    for (size_t node_id : involved_nodes)
     {
-        const auto &payload = iter->second.payload;
+        const auto *node = graph.getNode(node_id);
+        if (!node)
+            continue;
+        const auto &payload = node->payload;
         const double h = 0.001;
         Eigen::Vector2d pixel = image_from_3d({0, 0, 1}, *payload.model);
         Eigen::Vector2d pixelShift = image_from_3d({h, 0, 1}, *payload.model);
@@ -113,16 +123,26 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
 
     spdlog::info("x range [{}; {}]  y range [{}; {}]  mean surface {}", min_x, max_x, min_y, max_y, mean_surface_z);
 
-    double mean_gsd = calculateGSD(graph, mean_surface_z);
+    std::unordered_set<size_t> involved_nodes;
+    for (auto iter = graph.cnodebegin(); iter != graph.cnodeend(); ++iter)
+    {
+        if (iter->second.payload.orientation.coeffs().allFinite())
+        {
+            involved_nodes.insert(iter->first);
+        }
+    }
+
+    double mean_gsd = calculateGSD(graph, involved_nodes, mean_surface_z);
 
     // calculate gsd size based on thumbnail resolution at average mesh/keypoint height
     jk::tree::KDTree<size_t, 3> imageGPSLocations;
     double mean_camera_z = 0;
     size_t count = 0;
-    for (auto iter = graph.cnodebegin(); iter != graph.cnodeend(); ++iter)
+    for (size_t node_id : involved_nodes)
     {
-        imageGPSLocations.addPoint(to_array(iter->second.payload.position), iter->first, false);
-        mean_camera_z = (mean_camera_z * count + iter->second.payload.position.z()) / (count + 1);
+        const auto *node = graph.getNode(node_id);
+        imageGPSLocations.addPoint(to_array(node->payload.position), node_id, false);
+        mean_camera_z = (mean_camera_z * count + node->payload.position.z()) / (count + 1);
         count++;
     }
     imageGPSLocations.splitOutstanding();
@@ -180,7 +200,7 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
                 const double y = row * mean_gsd + min_y;
 
                 // get height of pixel from mesh or nearest keypoint
-                const ray_d intersectionRay{{0, 0, -1}, {x, y, average_camera_elevation}};
+                const ray_d intersectionRay{{0, 0, -1}, {x, y, mean_camera_z}};
                 double z = NAN;
                 for (auto &searcher : searchers)
                 {
@@ -210,11 +230,7 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
                 Eigen::Vector<uint8_t, Eigen::Dynamic> color;
                 color.resize(4);
                 color.fill(0);
-                uint32_t pixelSource =
-                    (row + col) % 2 == 0
-                        ? -1
-                        : static_cast<uint32_t>(
-                              graph.size_nodes()); // give a checkerboard pattern of illegal values for background color
+                uint32_t pixelSource = std::numeric_limits<uint32_t>::max();
 
                 auto closest5 = imageGPSLocations.searchKnn({x, y, average_camera_elevation}, 5);
 
@@ -244,6 +260,13 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
                             break;
                         }
                     }
+                }
+
+                if (pixelSource == std::numeric_limits<uint32_t>::max())
+                {
+                    // background checkerboard
+                    uint8_t grey = (row + col) % 2 == 0 ? 64 : 128;
+                    color << grey, grey, grey, 0; // alpha 0 for background
                 }
 
                 // assign color to thumbnail pixel

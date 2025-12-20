@@ -161,7 +161,7 @@ TEST_F(ortho, calculate_gsd)
     // gsd = 9 * 0.01 = 0.09
 
     // WHEN: we calculate the GSD
-    double gsd = calculateGSD(single_image_graph, 0);
+    double gsd = calculateGSD(single_image_graph, {id[0]}, 0);
 
     // THEN: it should be 0.09
     EXPECT_NEAR(gsd, 0.09, 1e-7);
@@ -187,7 +187,7 @@ TEST_F(ortho, calculate_gsd_multi)
     // mean_gsd = 14 * 0.01 = 0.14
 
     // WHEN: we calculate the GSD
-    double gsd = calculateGSD(multi_image_graph, 0);
+    double gsd = calculateGSD(multi_image_graph, {id[0], id[1]}, 0);
 
     // THEN: it should be 0.14
     EXPECT_NEAR(gsd, 0.14, 1e-7);

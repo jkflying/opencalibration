@@ -23,7 +23,8 @@ struct OrthoMosaicBounds
 };
 
 OrthoMosaicBounds calculateBoundsAndMeanZ(const std::vector<surface_model> &surfaces);
-double calculateGSD(const MeasurementGraph &graph, double mean_surface_z);
+double calculateGSD(const MeasurementGraph &graph, const std::unordered_set<size_t> &involved_nodes,
+                    double mean_surface_z);
 
 OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph);
 
