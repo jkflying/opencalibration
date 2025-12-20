@@ -39,7 +39,7 @@ template <> class Serializer<MeshGraph>
         out << "property double x" << newline;
         out << "property double y" << newline;
         out << "property double z" << newline;
-        out << "property int nodeIndex" << newline;
+        out << "property double nodeIndex" << newline;
 
         auto nodes_anticlockwise = [&graph](const std::array<size_t, 3> &face) {
             std::array<Eigen::Vector3d, 3> corners;

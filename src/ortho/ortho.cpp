@@ -197,7 +197,7 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
             for (int col = 0; col < image_dimensions.width; col++)
             {
                 const double x = col * mean_gsd + min_x;
-                const double y = row * mean_gsd + min_y;
+                const double y = max_y - row * mean_gsd;
 
                 // get height of pixel from mesh or nearest keypoint
                 const ray_d intersectionRay{{0, 0, -1}, {x, y, mean_camera_z}};

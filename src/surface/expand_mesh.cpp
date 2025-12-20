@@ -104,9 +104,9 @@ MeshGraph rebuildMesh(const point_cloud &cameraLocations, const std::vector<surf
     MeshGraph newGraph;
 
     size_t rows = static_cast<size_t>(
-        std::ceil(std::max(0., cameraMax.y() - cameraMin.y() + 1e-9 + 2 * minBorderWidth) / gridDistance));
+        std::ceil(std::max(0., cameraMax.y() - cameraMin.y() + 1e-9 + 2 * minBorderWidth) / gridDistance)) + 1;
     size_t cols = static_cast<size_t>(
-        std::ceil(std::max(0., cameraMax.x() - cameraMin.x() + 1e-9 + 2 * minBorderWidth) / gridDistance));
+        std::ceil(std::max(0., cameraMax.x() - cameraMin.x() + 1e-9 + 2 * minBorderWidth) / gridDistance)) + 1;
 
     if (rows > 1000 || cols > 1000)
     {

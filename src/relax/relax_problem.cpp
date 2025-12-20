@@ -349,8 +349,16 @@ void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, 
         auto sourceDestIntersection = rayIntersection(ray_d{*pkg.source.rot_ptr * sourceRay.dir, sourceRay.offset},
                                                       ray_d{*pkg.dest.rot_ptr * destRay.dir, destRay.offset});
 
-        const auto intersectionTriangle =
-            intersectionSearcher.triangleIntersect(ray_d{Eigen::Vector3d(0, 0, 1), sourceDestIntersection.first});
+        NodeIdFeatureIndex nifi[2];
+        nifi[0].node_id = edge.getSource();
+        nifi[0].feature_index = inlier.feature_index_1;
+        nifi[1].node_id = edge.getDest();
+        nifi[1].feature_index = inlier.feature_index_2;
+        points.emplace_back(FeatureTrack{sourceDestIntersection.first, sourceDestIntersection.second, {nifi[0], nifi[1]}});
+
+        const double mean_cam_z = (pkg.source.loc_ptr->z() + pkg.dest.loc_ptr->z()) * 0.5;
+        const auto intersectionTriangle = intersectionSearcher.triangleIntersect(
+            ray_d{Eigen::Vector3d(0, 0, -1), {sourceDestIntersection.first.x(), sourceDestIntersection.first.y(), mean_cam_z}});
         if (intersectionTriangle.type != MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
         {
             continue;
