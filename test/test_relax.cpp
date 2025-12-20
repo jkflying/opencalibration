@@ -90,7 +90,7 @@ struct relax_group : public ::testing::Test
         {
             for (const Eigen::Vector3d &p : points)
             {
-                Eigen::Vector3d ray = np[i].orientation.inverse() * (np[i].position - p).normalized();
+                Eigen::Vector3d ray = np[i].orientation.inverse() * (p - np[i].position).normalized();
                 Eigen::Vector2d pixel = image_from_3d(ray, *model);
                 feature_2d feat;
                 feat.location = pixel;

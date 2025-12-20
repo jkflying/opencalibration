@@ -257,7 +257,7 @@ struct PixelErrorCost_OrientationFocal
         const QuaterionTCM rotation_em(rotation);
         const Vector3TCM point_em(point);
 
-        Vector3T ray = rotation_em.inverse() * (loc.cast<T>() - point_em);
+        Vector3T ray = rotation_em.inverse() * (point_em - loc.cast<T>());
 
         DifferentiableCameraModel<T> model_t = model.cast<T>();
         model_t.focal_length_pixels = *focal;
@@ -308,7 +308,7 @@ struct PixelErrorCost_OrientationFocalRadial
         const QuaterionTCM rotation_em(rotation);
         const Vector3TCM point_em(point);
 
-        Vector3T ray = rotation_em.inverse() * (loc.cast<T>() - point_em);
+        Vector3T ray = rotation_em.inverse() * (point_em - loc.cast<T>());
 
         DifferentiableCameraModel<T> model_t = model.cast<T>();
         model_t.focal_length_pixels = *focal;
@@ -361,7 +361,7 @@ struct PixelErrorCost_OrientationFocalRadialTangential
         const QuaterionTCM rotation_em(rotation);
         const Vector3TCM point_em(point);
 
-        Vector3T ray = rotation_em.inverse() * (loc.cast<T>() - point_em);
+        Vector3T ray = rotation_em.inverse() * (point_em - loc.cast<T>());
 
         DifferentiableCameraModel<T> model_t = model.cast<T>();
         model_t.focal_length_pixels = *focal;

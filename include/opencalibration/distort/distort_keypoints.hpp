@@ -48,7 +48,10 @@ Eigen::Matrix<T, 2, 1> image_from_3d(const Eigen::Matrix<T, 3, 1> &ray, const Di
     switch (model.projection_type)
     {
     case ProjectionType::PLANAR: {
-        ray_projected = ray.hnormalized();
+        const T z = ray.z();
+        const T min_z = T(1e-3);
+        const T clamped_z = (z < min_z) ? min_z : z;
+        ray_projected = ray.template head<2>() / clamped_z;
         break;
     }
     case ProjectionType::UNKNOWN:
@@ -68,7 +71,7 @@ Eigen::Matrix<T, 2, 1> image_from_3d(const Eigen::Matrix<T, 3, 1> &point, const 
                                      const Eigen::Matrix<T, 3, 1> &camera_location,
                                      const Eigen::Quaternion<T> &camera_orientation)
 {
-    const Eigen::Matrix<T, 3, 1> rotated_ray = camera_orientation.inverse() * (camera_location - point);
+    const Eigen::Matrix<T, 3, 1> rotated_ray = camera_orientation.inverse() * (point - camera_location);
     return image_from_3d(rotated_ray, model);
 }
 
@@ -77,7 +80,7 @@ inline Eigen::Vector2d image_from_3d(const Eigen::Vector3d &point,
                                      const Eigen::Vector3d &camera_location,
                                      const Eigen::Quaterniond &camera_orientation)
 {
-    const Eigen::Vector3d rotated_ray = camera_orientation.inverse() * (camera_location - point);
+    const Eigen::Vector3d rotated_ray = camera_orientation.inverse() * (point - camera_location);
     return image_from_3d(rotated_ray, model);
 }
 

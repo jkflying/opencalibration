@@ -382,6 +382,8 @@ void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, 
                                        &inverse_iter->second.focal_length_pixels,
                                        inverse_iter->second.principle_point.data(),
                                        inverse_iter->second.radial_distortion.data());
+            _problem->SetParameterLowerBound(&inverse_iter->second.focal_length_pixels, 0, 100.0);
+            _problem->SetParameterUpperBound(&inverse_iter->second.focal_length_pixels, 0, 20000.0);
             if (!options.hasAny(RelaxOptionSet{Option::FOCAL_LENGTH}))
             {
                 _problem->SetParameterBlockConstant(&inverse_iter->second.focal_length_pixels);
@@ -651,6 +653,13 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
             {
                 _problem->SetParameterBlockConstant(&source_model.focal_length_pixels);
                 _problem->SetParameterBlockConstant(&dest_model.focal_length_pixels);
+            }
+            else
+            {
+                _problem->SetParameterLowerBound(&source_model.focal_length_pixels, 0, 100.0);
+                _problem->SetParameterLowerBound(&dest_model.focal_length_pixels, 0, 100.0);
+                _problem->SetParameterUpperBound(&source_model.focal_length_pixels, 0, 20000.0);
+                _problem->SetParameterUpperBound(&dest_model.focal_length_pixels, 0, 20000.0);
             }
             if (!options.hasAny({Option::PRINCIPAL_POINT}))
             {

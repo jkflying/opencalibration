@@ -107,7 +107,10 @@ Eigen::Vector2d image_from_3d(const Eigen::Vector3d &ray, const InverseDifferent
     switch (model.projection_type)
     {
     case ProjectionType::PLANAR: {
-        ray_projected = ray.hnormalized();
+        const double z = ray.z();
+        const double min_z = 1e-3;
+        const double clamped_z = (z < min_z) ? min_z : z;
+        ray_projected = ray.head<2>() / clamped_z;
         break;
     }
     case ProjectionType::UNKNOWN:

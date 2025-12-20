@@ -87,9 +87,14 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
         Eigen::Vector2d pixel = image_from_3d({0, 0, 1}, *payload.model);
         Eigen::Vector2d pixelShift = image_from_3d({h, 0, 1}, *payload.model);
         double arc_pixel = h / (pixel - pixelShift).norm();
-        double thumb_scale = static_cast<double>(size(payload.thumbnail)[0]) / payload.metadata.camera_info.height_px;
+        double thumb_scale = 1.0;
 
         spdlog::debug("arc pixel {} scale {}", arc_pixel, thumb_scale);
+
+        if (payload.model->pixels_rows > 0)
+        {
+            thumb_scale = static_cast<double>(size(payload.thumbnail)[0]) / payload.model->pixels_rows;
+        }
 
         thumb_arc_pixel = (thumb_arc_pixel * thumb_count + arc_pixel / thumb_scale) / (thumb_count + 1);
         mean_camera_z = (mean_camera_z * thumb_count + payload.position.z()) / (thumb_count + 1);
@@ -112,8 +117,8 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
     if (!std::isfinite(image_height) || image_height <= 0)
         image_height = 100;
 
-    image_width = std::min(image_width, 20000.0);
-    image_height = std::min(image_height, 20000.0);
+    spdlog::info("requested image_width: {} image_height: {}", image_width, image_height);
+    spdlog::info("max_x: {} min_x: {} max_y: {} min_y: {}", max_x, min_x, max_y, min_y);
 
     cv::Size image_dimensions(static_cast<int>(image_width), static_cast<int>(image_height));
 
@@ -202,8 +207,7 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
                         image_from_3d(sample_point, *payload.model, payload.position, payload.orientation);
 
                     Eigen::Vector2i imageSize = size(payload.thumbnail);
-                    const double thumb_scale =
-                        static_cast<double>(imageSize[0]) / payload.metadata.camera_info.height_px;
+                    const double thumb_scale = static_cast<double>(imageSize[0]) / payload.model->pixels_rows;
                     Eigen::Vector2d thumb_pixel = pixel * thumb_scale;
                     cv::Point2i cvPixel(thumb_pixel.x(), thumb_pixel.y());
 
