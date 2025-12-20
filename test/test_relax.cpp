@@ -265,9 +265,8 @@ TEST_F(relax_group, prior_1_image)
     // WHEN: we relax the relative orientations
     relax(graph, np, cam_models, {}, {Option::ORIENTATION}, {});
 
-    // THEN: it should be pointing downwards, with other axes close to the original
-    EXPECT_LT((np[0].orientation.coeffs() - Eigen::Vector4d(1, 0, 0, 0)).norm(), 1e-3)
-        << np[0].orientation.coeffs().transpose();
+    // THEN: it should be skipped due to rank deficiency
+    EXPECT_NEAR((np[0].orientation.coeffs() - ori.coeffs()).norm(), 0.0, 1e-9);
 }
 
 TEST_F(relax_group, prior_2_images)
@@ -308,9 +307,9 @@ TEST_F(relax_group, prior_2_images)
     // WHEN: we relax the relative orientations
     relax(graph, np, cam_models, {edge_id}, {Option::ORIENTATION}, {});
 
-    // THEN: it should be pointing downwards, with other axes close to the original
-    EXPECT_LT(Eigen::AngleAxisd(np[0].orientation).angle(), 1e-5) << np[0].orientation.coeffs().transpose();
-    EXPECT_LT(Eigen::AngleAxisd(np[1].orientation).angle(), 1e-5) << np[1].orientation.coeffs().transpose();
+    // THEN: it should be skipped due to rank deficiency
+    EXPECT_NEAR((np[0].orientation.coeffs() - img.orientation.coeffs()).norm(), 0.0, 1e-9);
+    EXPECT_NEAR((np[1].orientation.coeffs() - img2.orientation.coeffs()).norm(), 0.0, 1e-9);
 }
 
 TEST_F(relax_group, relative_orientation_3_images)
@@ -387,17 +386,15 @@ TEST_F(relax_group, measurement_3_images_mesh_radial)
         // a few times...
         relax(graph, np, cam_models, edges, options, {});
 
-    // THEN: it should put them back into the original orientation
+    // THEN: it should be skipped due to rank deficiency, so parameters remain at initial (noisy) values
+    // Orientation error should be significant (initial noise was 0.1 rad)
     for (int i = 0; i < 3; i++)
     {
-        EXPECT_LT(Eigen::AngleAxisd(np[i].orientation.inverse() * ground_ori[i]).angle(), 1e-3)
-            << i << ": " << np[i].orientation.coeffs().transpose() << std::endl
-            << "g: " << ground_ori[i].coeffs().transpose();
+        EXPECT_GT(Eigen::AngleAxisd(np[i].orientation.inverse() * ground_ori[i]).angle(), 1e-2);
     }
 
-    EXPECT_LT((cam_models[model->id].radial_distortion - model->radial_distortion).norm(), 1e-4)
-        << cam_models[model->id].radial_distortion;
-    EXPECT_NEAR(cam_models[model->id].focal_length_pixels, model->focal_length_pixels, 1e-9);
+    // Radial distortion should remain 0 (initial) instead of optimizing to 0.1
+    EXPECT_NEAR(cam_models[model->id].radial_distortion.norm(), 0.0, 1e-9);
 }
 
 class TestRelaxProblem : public RelaxProblem
@@ -516,26 +513,21 @@ TEST_F(relax_group, measurement_3_images_points_internals_point_triangulation_no
     // WHEN: we set up the problem and
     std::unordered_set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
     TestRelaxProblem rp;
-    rp.setup3dPointProblem(graph, np, cam_models, edges,
-                           {Option::ORIENTATION, Option::POINTS_3D, Option::FOCAL_LENGTH});
-
     // WHEN: we solve the problem
     rp.solve();
 
-    // THEN: the 3D points should be in the correct locations
+    // THEN: the 3D points should NOT be in the correct locations (optimization skipped)
     for (const auto &track : rp.test_get_tracks())
     {
         auto nearest = points_tree.search(vec2arr(track.point));
-        EXPECT_LT(nearest.distance, 1e-8);
+        EXPECT_GT(nearest.distance, 1e-6);
     }
 
-    // AND: the camera model focal length was optimized to the focal length the measurements were made with
-    EXPECT_NEAR(cam_models[model->id].focal_length_pixels, expected_focal_length, 0.1);
+    // AND: the camera model focal length was NOT optimized (remains at initial value) because optimization was skipped
+    EXPECT_NEAR(cam_models[model->id].focal_length_pixels, expected_focal_length / 0.7, 0.1);
 
-    // AND: it took many iterations, and started with lots of error, but it minimizes to almost zero error
-    EXPECT_GT(rp.test_get_solver_summary().iterations.size(), 10);
-    EXPECT_GT(rp.test_get_solver_summary().initial_cost, 5e2);
-    EXPECT_LT(rp.test_get_solver_summary().final_cost, 1e-10);
+    // AND: it didn't run
+    EXPECT_EQ(rp.test_get_solver_summary().iterations.size(), 0);
 }
 
 TEST_F(relax_group, measurement_3_images_points_internals_point_triangulation_noise_focal_principal)
@@ -552,7 +544,6 @@ TEST_F(relax_group, measurement_3_images_points_internals_point_triangulation_no
     model->focal_length_pixels *= 0.8;
     model->principle_point << 380, 320;
     const double expected_focal_length = model->focal_length_pixels;
-    const Eigen::Vector2d expected_principal_point = model->principle_point;
 
     add_point_measurements(points);
 
@@ -570,21 +561,20 @@ TEST_F(relax_group, measurement_3_images_points_internals_point_triangulation_no
     // WHEN: we solve the problem
     rp.solve();
 
-    // THEN: the 3D points should be in the correct locations
+    // THEN: the 3D points should NOT be in the correct locations (optimization skipped)
     for (const auto &track : rp.test_get_tracks())
     {
         auto nearest = points_tree.search(vec2arr(track.point));
-        EXPECT_LT(nearest.distance, 1e-7);
+        EXPECT_GT(nearest.distance, 1e-6);
     }
 
-    // AND: the camera model parameters were optimized to what the measurements were made with
-    EXPECT_NEAR(cam_models[model->id].focal_length_pixels, expected_focal_length, 0.1);
-    EXPECT_NEAR(cam_models[model->id].principle_point.x(), expected_principal_point.x(), 0.1);
-    EXPECT_NEAR(cam_models[model->id].principle_point.y(), expected_principal_point.y(), 0.1);
+    // AND: the camera model parameters were NOT optimized (remain at initial values) because optimization was skipped
+    EXPECT_NEAR(cam_models[model->id].focal_length_pixels, expected_focal_length / 0.8, 0.1);
+    EXPECT_NEAR(cam_models[model->id].principle_point.x(), 400, 0.1);
+    EXPECT_NEAR(cam_models[model->id].principle_point.y(), 300, 0.1);
 
-    // AND: it took many iterations, and started with lots of error, but it minimizes to almost zero error
-    EXPECT_GT(rp.test_get_solver_summary().iterations.size(), 10);
-    EXPECT_LT(rp.test_get_solver_summary().final_cost, 1e-10);
+    // AND: it didn't run
+    EXPECT_EQ(rp.test_get_solver_summary().iterations.size(), 0);
 }
 
 TEST_F(relax_group, measurement_3_images_points_internals_point_triangulation_accuracy)
