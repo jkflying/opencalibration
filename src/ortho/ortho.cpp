@@ -32,9 +32,8 @@ Eigen::Vector2i size(const opencalibration::GenericRaster &raster)
 namespace opencalibration::orthomosaic
 {
 
-OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph)
+OrthoMosaicBounds calculateBoundsAndMeanZ(const std::vector<surface_model> &surfaces)
 {
-    // calculate min/max x/y, and average z
     const double inf = std::numeric_limits<double>::infinity();
     double min_x = inf, min_y = inf, max_x = -inf, max_y = -inf;
     double mean_surface_z = 0;
@@ -72,24 +71,23 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
             }
     }
 
-    spdlog::info("x range [{}; {}]  y range [{}; {}]  mean surface {}", min_x, max_x, min_y, max_y, mean_surface_z);
+    return {min_x, max_x, min_y, max_y, mean_surface_z};
+}
 
-    // calculate gsd size based on thumbnail resolution at average mesh/keypoint height
+double calculateGSD(const MeasurementGraph &graph, double mean_surface_z)
+{
     double thumb_arc_pixel = 0;
     double mean_camera_z = 0;
     size_t thumb_count = 0;
-    jk::tree::KDTree<size_t, 3> imageGPSLocations;
+
     for (auto iter = graph.cnodebegin(); iter != graph.cnodeend(); ++iter)
     {
         const auto &payload = iter->second.payload;
-        imageGPSLocations.addPoint(to_array(payload.position), iter->first, false);
         const double h = 0.001;
         Eigen::Vector2d pixel = image_from_3d({0, 0, 1}, *payload.model);
         Eigen::Vector2d pixelShift = image_from_3d({h, 0, 1}, *payload.model);
         double arc_pixel = h / (pixel - pixelShift).norm();
         double thumb_scale = 1.0;
-
-        spdlog::debug("arc pixel {} scale {}", arc_pixel, thumb_scale);
 
         if (payload.model->pixels_rows > 0)
         {
@@ -100,13 +98,36 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
         mean_camera_z = (mean_camera_z * thumb_count + payload.position.z()) / (thumb_count + 1);
         thumb_count++;
     }
-    imageGPSLocations.splitOutstanding();
-
-    spdlog::info("thumb arc pixel {}  mean camera z {}", thumb_arc_pixel, mean_camera_z);
 
     const double average_camera_elevation = mean_camera_z - mean_surface_z;
     double mean_gsd = std::abs(average_camera_elevation * thumb_arc_pixel);
     mean_gsd = std::max(mean_gsd, 0.001);
+    return mean_gsd;
+}
+
+OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph)
+{
+    OrthoMosaicBounds bounds = calculateBoundsAndMeanZ(surfaces);
+    double min_x = bounds.min_x, max_x = bounds.max_x, min_y = bounds.min_y, max_y = bounds.max_y;
+    double mean_surface_z = bounds.mean_surface_z;
+
+    spdlog::info("x range [{}; {}]  y range [{}; {}]  mean surface {}", min_x, max_x, min_y, max_y, mean_surface_z);
+
+    double mean_gsd = calculateGSD(graph, mean_surface_z);
+
+    // calculate gsd size based on thumbnail resolution at average mesh/keypoint height
+    jk::tree::KDTree<size_t, 3> imageGPSLocations;
+    double mean_camera_z = 0;
+    size_t count = 0;
+    for (auto iter = graph.cnodebegin(); iter != graph.cnodeend(); ++iter)
+    {
+        imageGPSLocations.addPoint(to_array(iter->second.payload.position), iter->first, false);
+        mean_camera_z = (mean_camera_z * count + iter->second.payload.position.z()) / (count + 1);
+        count++;
+    }
+    imageGPSLocations.splitOutstanding();
+
+    const double average_camera_elevation = mean_camera_z - mean_surface_z;
 
     // from bounds and gsd, calculate image resolution
     double image_width = (max_x - min_x) / mean_gsd;
@@ -125,6 +146,7 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
     spdlog::info("gsd {}  img dims {}x{}", mean_gsd, image_dimensions.width, image_dimensions.height);
 
     OrthoMosaic result;
+    result.gsd = mean_gsd;
     MultiLayerRaster<uint8_t> pixelValues(image_dimensions.height, image_dimensions.width, 4);
     // result.pixelValues; // assign at end
     result.cameraUUID.pixels.resize(image_dimensions.height, image_dimensions.width);

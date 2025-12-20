@@ -99,6 +99,187 @@ struct ortho : public ::testing::Test
     }
 };
 
+TEST_F(ortho, calculate_bounds_cloud)
+{
+    // GIVEN: a surface model with point clouds
+    surface_model s;
+    point_cloud cloud;
+    cloud.emplace_back(0, 0, 10);
+    cloud.emplace_back(10, 20, 30);
+    s.cloud.push_back(cloud);
+
+    // WHEN: we calculate the bounds
+    auto bounds = calculateBoundsAndMeanZ({s});
+
+    // THEN: they should match the cloud
+    EXPECT_DOUBLE_EQ(bounds.min_x, 0);
+    EXPECT_DOUBLE_EQ(bounds.max_x, 10);
+    EXPECT_DOUBLE_EQ(bounds.min_y, 0);
+    EXPECT_DOUBLE_EQ(bounds.max_y, 20);
+    EXPECT_DOUBLE_EQ(bounds.mean_surface_z, 20);
+}
+
+TEST_F(ortho, calculate_bounds_mesh)
+{
+    // GIVEN: a surface model with a mesh
+    surface_model s;
+    MeshNode n;
+    n.location = {1, 2, 3};
+    s.mesh.addNode(std::move(n));
+    n.location = {5, 6, 7};
+    s.mesh.addNode(std::move(n));
+
+    // WHEN: we calculate the bounds
+    auto bounds = calculateBoundsAndMeanZ({s});
+
+    // THEN: they should match the mesh
+    EXPECT_DOUBLE_EQ(bounds.min_x, 1);
+    EXPECT_DOUBLE_EQ(bounds.max_x, 5);
+    EXPECT_DOUBLE_EQ(bounds.min_y, 2);
+    EXPECT_DOUBLE_EQ(bounds.max_y, 6);
+    EXPECT_DOUBLE_EQ(bounds.mean_surface_z, 5);
+}
+
+TEST_F(ortho, calculate_gsd)
+{
+    // GIVEN: a graph with 1 image
+    init_cameras();
+    MeasurementGraph single_image_graph;
+    image img = graph.getNode(id[0])->payload;
+    single_image_graph.addNode(std::move(img));
+
+    // h = 0.001
+    // ray1 = {0,0,1}, ray2 = {0.001, 0, 1}
+    // focal = 600
+    // pixel1 = {400, 300}, pixel2 = {400 + 0.001*600, 300} = {400.6, 300}
+    // dist = 0.6
+    // arc_pixel = 0.001 / 0.6 = 1/600
+    // thumb_scale = 100 / 600 = 1/6
+    // thumb_arc_pixel = (1/600) / (1/6) = 6/600 = 0.01
+    // camera_z = 9, surface_z = 0
+    // elevation = 9
+    // gsd = 9 * 0.01 = 0.09
+
+    // WHEN: we calculate the GSD
+    double gsd = calculateGSD(single_image_graph, 0);
+
+    // THEN: it should be 0.09
+    EXPECT_NEAR(gsd, 0.09, 1e-7);
+}
+
+TEST_F(ortho, calculate_gsd_multi)
+{
+    // GIVEN: a graph with 2 images at different heights
+    init_cameras();
+    MeasurementGraph multi_image_graph;
+
+    // Image 1: camera_z = 9, surface_z = 0, elevation = 9, thumb_arc_pixel = 0.01 -> GSD = 0.09
+    image img1 = graph.getNode(id[0])->payload;
+    multi_image_graph.addNode(std::move(img1));
+
+    // Image 2: height = 19, surface_z = 0, elevation = 19, thumb_arc_pixel = 0.01 -> GSD = 0.19
+    image img2 = graph.getNode(id[1])->payload;
+    img2.position.z() = 19;
+    multi_image_graph.addNode(std::move(img2));
+
+    // mean_camera_z = (9 + 19) / 2 = 14
+    // elevation = 14 - 0 = 14
+    // mean_gsd = 14 * 0.01 = 0.14
+
+    // WHEN: we calculate the GSD
+    double gsd = calculateGSD(multi_image_graph, 0);
+
+    // THEN: it should be 0.14
+    EXPECT_NEAR(gsd, 0.14, 1e-7);
+}
+
+TEST_F(ortho, functional_ortho_scene)
+{
+    // GIVEN: A scene with two images and a mesh surface
+    // Image 0 at (0, 0, 10), Color Red
+    // Image 1 at (10, 0, 10), Color Blue
+    // Surface is a rectangle from (-2, -2, 0) to (12, 2, 0)
+
+    MeasurementGraph functional_graph;
+    std::vector<NodePose> functional_nodePoses;
+
+    auto model = std::make_shared<CameraModel>();
+    model->focal_length_pixels = 500;
+    model->principle_point << 50, 50;
+    model->pixels_cols = 100;
+    model->pixels_rows = 100;
+    model->projection_type = opencalibration::ProjectionType::PLANAR;
+    model->id = 100;
+
+    auto down = Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX());
+
+    // Image 0 (Red)
+    image img0;
+    img0.orientation = Eigen::Quaterniond::Identity() * down;
+    img0.position = {0, 0, 10};
+    img0.model = model;
+    img0.thumbnail = RGBRaster(100, 100, 3);
+    img0.thumbnail.layers[0].pixels.fill(255); // Red
+    img0.thumbnail.layers[1].pixels.fill(0);
+    img0.thumbnail.layers[2].pixels.fill(0);
+    size_t id0 = functional_graph.addNode(std::move(img0));
+
+    // Image 1 (Blue)
+    image img1;
+    img1.orientation = Eigen::Quaterniond::Identity() * down;
+    img1.position = {10, 0, 10};
+    img1.model = model;
+    img1.thumbnail = RGBRaster(100, 100, 3);
+    img1.thumbnail.layers[0].pixels.fill(0);
+    img1.thumbnail.layers[1].pixels.fill(0);
+    img1.thumbnail.layers[2].pixels.fill(255); // Blue
+    size_t id1 = functional_graph.addNode(std::move(img1));
+
+    // Mesh Surface: Use rebuildMesh to create a valid mesh from points
+    surface_model points_surface;
+    point_cloud cloud;
+    cloud.emplace_back(-2, -2, 0);
+    cloud.emplace_back(12, -2, 0);
+    cloud.emplace_back(12, 2, 0);
+    cloud.emplace_back(-2, 2, 0);
+    cloud.emplace_back(5, 0, 0); // Add a middle point to ensure triangulation
+    points_surface.cloud.push_back(cloud);
+
+    point_cloud camera_locations = {{0, 0, 10}, {10, 0, 10}};
+    
+    surface_model functional_surface;
+    functional_surface.mesh = rebuildMesh(camera_locations, {points_surface});
+
+    // WHEN: We generate the orthomosaic
+    OrthoMosaic result = generateOrthomosaic({functional_surface}, functional_graph);
+
+    // THEN: Verify the output
+    // GSD calculation check:
+    // camera_z = 10, surface_z = 0, elevation = 10
+    // arc_pixel = 0.001 / (f*0.001) = 1/500
+    // thumb_scale = 100 / 100 = 1
+    // thumb_arc_pixel = (1/500) / 1 = 0.002
+    // expected_gsd = 10 * 0.002 = 0.02
+    EXPECT_NEAR(result.gsd, 0.02, 1e-7);
+
+    const auto& pixels = std::get<MultiLayerRaster<uint8_t>>(result.pixelValues);
+
+    // Verify that colors are correct at sample points
+    // Image 0 centered at (0, 0)
+    // World (0, 0) -> col = (0 - (-20)) / 0.02 = 1000, row = (0 - (-20)) / 0.02 = 1000
+    EXPECT_EQ((int)pixels.layers[0].pixels(1000, 1000), 255); // R
+    EXPECT_EQ((int)pixels.layers[1].pixels(1000, 1000), 0);   // G
+    EXPECT_EQ((int)pixels.layers[2].pixels(1000, 1000), 0);   // B
+    EXPECT_EQ(result.cameraUUID.pixels(1000, 1000), static_cast<uint32_t>(id0 & 0xFFFFFFFF));
+
+    // Image 1 centered at (10, 0)
+    // World (10, 0) -> col = (10 - (-20)) / 0.02 = 1500, row = (0 - (-20)) / 0.02 = 1000
+    EXPECT_EQ((int)pixels.layers[0].pixels(1000, 1500), 0);   // R
+    EXPECT_EQ((int)pixels.layers[1].pixels(1000, 1500), 0);   // G
+    EXPECT_EQ((int)pixels.layers[2].pixels(1000, 1500), 255); // B
+    EXPECT_EQ(result.cameraUUID.pixels(1000, 1500), static_cast<uint32_t>(id1 & 0xFFFFFFFF));
+}
+
 TEST_F(ortho, measurement_3_images_points)
 {
     // GIVEN: a graph with 3 images and a 3d point based surface model
