@@ -16,6 +16,20 @@ namespace opencalibration
 
 MeshGraph rebuildMesh(const point_cloud &cameraLocations, const std::vector<surface_model> &previousSurfaces)
 {
+    bool hasPreviousData = false;
+    for (const auto &s : previousSurfaces)
+    {
+        if (s.mesh.size_nodes() > 0 || !s.cloud.empty())
+        {
+            hasPreviousData = true;
+            break;
+        }
+    }
+
+    if (cameraLocations.size() < 2 && !hasPreviousData)
+    {
+        return MeshGraph();
+    }
 
     constexpr double HEIGHT_MARGIN =
         2; // make the mesh border twice as big as the average height of cameras above the mesh
@@ -104,9 +118,9 @@ MeshGraph rebuildMesh(const point_cloud &cameraLocations, const std::vector<surf
     MeshGraph newGraph;
 
     size_t rows = static_cast<size_t>(
-        std::ceil(std::max(0., cameraMax.y() - cameraMin.y() + 1e-9 + 2 * minBorderWidth) / gridDistance)) + 1;
+        std::ceil(std::max(0., cameraMax.y() - cameraMin.y() + 2 * minBorderWidth) / gridDistance)) + 1;
     size_t cols = static_cast<size_t>(
-        std::ceil(std::max(0., cameraMax.x() - cameraMin.x() + 1e-9 + 2 * minBorderWidth) / gridDistance)) + 1;
+        std::ceil(std::max(0., cameraMax.x() - cameraMin.x() + 2 * minBorderWidth) / gridDistance)) + 1;
 
     if (rows > 1000 || cols > 1000)
     {
