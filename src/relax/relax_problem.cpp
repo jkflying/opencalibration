@@ -812,6 +812,13 @@ void RelaxProblem::solve()
     spdlog::info("Thread {} start relax: {} parameter blocks, {} residual blocks", thread_stream.str(),
                  _problem->NumParameterBlocks(), _problem->NumResidualBlocks());
 
+    // Early exit for empty problems (nothing to optimize)
+    if (_problem->NumParameterBlocks() == 0 || _problem->NumResidualBlocks() == 0)
+    {
+        spdlog::info("Thread {} end relax: iterations 0, cost ratio -nan, time {}s", thread_stream.str(), 0.0f);
+        return;
+    }
+
     ceres::Problem::EvaluateOptions eval_options;
     ceres::CRSMatrix jacobian;
     if (_problem->Evaluate(eval_options, nullptr, nullptr, nullptr, &jacobian))
