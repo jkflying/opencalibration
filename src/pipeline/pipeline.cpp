@@ -69,8 +69,11 @@ PipelineState Pipeline::chooseNextState(PipelineState currentState, Transition t
         USM_STATE(transition, State::CAMERA_PARAMETER_RELAX,
                   USM_MAP(Transition::NEXT, State::FINAL_GLOBAL_RELAX, s));
         USM_STATE(transition, State::FINAL_GLOBAL_RELAX,
-                  USM_MAP(Transition::NEXT, _generate_thumbnails ? State::GENERATE_THUMBNAIL : State::COMPLETE, s));
+                  USM_MAP(Transition::NEXT, _generate_thumbnails ? State::GENERATE_THUMBNAIL :
+                                           _generate_geotiff ? State::GENERATE_GEOTIFF : State::COMPLETE, s));
         USM_STATE(transition, State::GENERATE_THUMBNAIL,
+                  USM_MAP(Transition::NEXT, _generate_geotiff ? State::GENERATE_GEOTIFF : State::COMPLETE, s));
+        USM_STATE(transition, State::GENERATE_GEOTIFF,
                   USM_MAP(Transition::NEXT, State::COMPLETE, s));
     );
     // clang-format on
@@ -90,7 +93,8 @@ Pipeline::Transition Pipeline::runCurrentState(PipelineState currentState)
               USM_MAP(State::CAMERA_PARAMETER_RELAX, camera_parameter_relax(), t);
               USM_MAP(State::FINAL_GLOBAL_RELAX, final_global_relax(), t);
               USM_MAP(State::COMPLETE, complete(), t);
-              USM_MAP(State::GENERATE_THUMBNAIL, generate_thumbnail(), t)
+              USM_MAP(State::GENERATE_THUMBNAIL, generate_thumbnail(), t);
+              USM_MAP(State::GENERATE_GEOTIFF, generate_geotiff(), t)
     );
     // clang-format on
 
@@ -240,6 +244,18 @@ Pipeline::Transition Pipeline::generate_thumbnail()
     USM_DECISION_TABLE(Transition::NEXT, );
 }
 
+Pipeline::Transition Pipeline::generate_geotiff()
+{
+    if (_geotiff_filename.empty())
+    {
+        USM_DECISION_TABLE(Transition::NEXT, );
+    }
+
+    orthomosaic::generateGeoTIFFOrthomosaic(_surfaces, _graph, _coordinate_system, _geotiff_filename);
+
+    USM_DECISION_TABLE(Transition::NEXT, );
+}
+
 Pipeline::Transition Pipeline::complete()
 {
     USM_DECISION_TABLE(Transition::REPEAT, );
@@ -259,6 +275,8 @@ std::string Pipeline::toString(PipelineState state)
         return "Final Global Relax";
     case State::GENERATE_THUMBNAIL:
         return "Generate Thumbnail";
+    case State::GENERATE_GEOTIFF:
+        return "Generate GeoTIFF";
     case State::COMPLETE:
         return "Complete";
     };

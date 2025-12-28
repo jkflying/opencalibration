@@ -1,5 +1,7 @@
 #include <jk/KDTree.h>
 #include <opencalibration/distort/distort_keypoints.hpp>
+#include <opencalibration/geo_coord/geo_coord.hpp>
+#include <opencalibration/ortho/image_cache.hpp>
 #include <opencalibration/ortho/ortho.hpp>
 #include <opencalibration/relax/relax.hpp>
 #include <opencalibration/relax/relax_cost_function.hpp>
@@ -9,9 +11,12 @@
 #include <opencalibration/types/node_pose.hpp>
 #include <opencalibration/types/point_cloud.hpp>
 
+#include <gdal/gdal_priv.h>
 #include <gtest/gtest.h>
+#include <opencv2/imgcodecs.hpp>
 
 #include <chrono>
+#include <filesystem>
 
 using namespace opencalibration;
 using namespace opencalibration::orthomosaic;
@@ -246,34 +251,25 @@ TEST_F(ortho, functional_ortho_scene)
     points_surface.cloud.push_back(cloud);
 
     point_cloud camera_locations = {{0, 0, 10}, {10, 0, 10}};
-    
+
     surface_model functional_surface;
     functional_surface.mesh = rebuildMesh(camera_locations, {points_surface});
 
-    // WHEN: We generate the orthomosaic
+    // WHEN: we generate the orthomosaic
     OrthoMosaic result = generateOrthomosaic({functional_surface}, functional_graph);
 
-    // THEN: Verify the output
-    // GSD calculation check:
-    // camera_z = 10, surface_z = 0, elevation = 10
-    // arc_pixel = 0.001 / (f*0.001) = 1/500
-    // thumb_scale = 100 / 100 = 1
-    // thumb_arc_pixel = (1/500) / 1 = 0.002
-    // expected_gsd = 10 * 0.002 = 0.02
+    // THEN: it should have the correct GSD
     EXPECT_NEAR(result.gsd, 0.02, 1e-7);
 
-    const auto& pixels = std::get<MultiLayerRaster<uint8_t>>(result.pixelValues);
+    const auto &pixels = std::get<MultiLayerRaster<uint8_t>>(result.pixelValues);
 
-    // Verify that colors are correct at sample points
-    // Image 0 centered at (0, 0)
-    // World (0, 0) -> col = (0 - (-20)) / 0.02 = 1000, row = (0 - (-20)) / 0.02 = 1000
+    // Image 0 center at world (0, 0)
     EXPECT_EQ((int)pixels.layers[0].pixels(1000, 1000), 255); // R
     EXPECT_EQ((int)pixels.layers[1].pixels(1000, 1000), 0);   // G
     EXPECT_EQ((int)pixels.layers[2].pixels(1000, 1000), 0);   // B
     EXPECT_EQ(result.cameraUUID.pixels(1000, 1000), static_cast<uint32_t>(id0 & 0xFFFFFFFF));
 
-    // Image 1 centered at (10, 0)
-    // World (10, 0) -> col = (10 - (-20)) / 0.02 = 1500, row = (0 - (-20)) / 0.02 = 1000
+    // Image 1 center at world (10, 0)
     EXPECT_EQ((int)pixels.layers[0].pixels(1000, 1500), 0);   // R
     EXPECT_EQ((int)pixels.layers[1].pixels(1000, 1500), 0);   // G
     EXPECT_EQ((int)pixels.layers[2].pixels(1000, 1500), 255); // B
@@ -301,6 +297,7 @@ TEST_F(ortho, measurement_3_images_points)
 
     // THEN: it should have the right colours in the right locations
 }
+
 /*
 TEST_F(ortho_, measurement_3_images_plane)
 {

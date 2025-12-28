@@ -28,6 +28,7 @@ enum class PipelineState
     CAMERA_PARAMETER_RELAX,
     FINAL_GLOBAL_RELAX,
     GENERATE_THUMBNAIL,
+    GENERATE_GEOTIFF,
     COMPLETE
 };
 
@@ -90,6 +91,15 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
         _overlap_filename = overlap;
     }
 
+    void set_geotiff_filename(const std::string &geotiff)
+    {
+        _geotiff_filename = geotiff;
+        if (!geotiff.empty())
+        {
+            _generate_geotiff = true;
+        }
+    }
+
     static std::string toString(PipelineState state);
 
   protected:
@@ -102,6 +112,7 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
     PipelineTransition camera_parameter_relax();
     PipelineTransition final_global_relax();
     PipelineTransition generate_thumbnail();
+    PipelineTransition generate_geotiff();
     PipelineTransition complete();
 
     std::vector<size_t> _previous_loaded_ids, _previous_linked_ids, _next_loaded_ids, _next_linked_ids;
@@ -129,5 +140,7 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
     std::string _thumbnail_filename = "";
     std::string _source_filename = "";
     std::string _overlap_filename = "";
+    bool _generate_geotiff = false;
+    std::string _geotiff_filename = "";
 };
 } // namespace opencalibration

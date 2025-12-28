@@ -2,9 +2,12 @@
 
 #include <jk/KDTree.h>
 #include <opencalibration/distort/distort_keypoints.hpp>
+#include <opencalibration/geo_coord/geo_coord.hpp>
+#include <opencalibration/ortho/image_cache.hpp>
 #include <opencalibration/performance/performance.hpp>
 #include <opencalibration/surface/intersect.hpp>
 
+#include <gdal/gdal_priv.h>
 #include <spdlog/spdlog.h>
 
 #include <atomic>
@@ -70,7 +73,7 @@ OrthoMosaicBounds calculateBoundsAndMeanZ(const std::vector<surface_model> &surf
                     count_z++;
                 }
             }
-        
+
         min_x = std::min(min_x, s_min_x);
         max_x = std::max(max_x, s_max_x);
         min_y = std::min(min_y, s_min_y);
@@ -297,4 +300,402 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
     // TODO: some kind of color balancing of the different patches - maybe in LAB space?
     // TODO: laplacian or gradient domain blending of the differrent patches
 }
+
+namespace
+{
+// Helper: Create GDAL GeoTIFF dataset
+GDALDataset *createGeoTIFF(const std::string &path, int width, int height, double min_x, double max_y, double gsd,
+                           const std::string &wkt)
+{
+    GDALAllRegister();
+
+    GDALDriver *driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    if (!driver)
+    {
+        throw std::runtime_error("GTiff driver not available");
+    }
+
+    char **options = nullptr;
+    options = CSLSetNameValue(options, "TILED", "YES");
+    options = CSLSetNameValue(options, "BLOCKXSIZE", "512");
+    options = CSLSetNameValue(options, "BLOCKYSIZE", "512");
+    options = CSLSetNameValue(options, "COMPRESS", "LZW");
+    options = CSLSetNameValue(options, "PHOTOMETRIC", "RGB");
+    options = CSLSetNameValue(options, "BIGTIFF", "IF_SAFER");
+
+    GDALDataset *dataset = driver->Create(path.c_str(), width, height, 4, GDT_Byte, options);
+
+    CSLDestroy(options);
+
+    if (!dataset)
+    {
+        throw std::runtime_error("Failed to create GeoTIFF: " + path);
+    }
+
+    // Set geotransform: [min_x, gsd, 0, max_y, 0, -gsd]
+    double geotransform[6] = {min_x, gsd, 0, max_y, 0, -gsd};
+    dataset->SetGeoTransform(geotransform);
+
+    // Set projection
+    if (!wkt.empty())
+    {
+        dataset->SetProjection(wkt.c_str());
+    }
+
+    // Set band interpretation
+    dataset->GetRasterBand(1)->SetColorInterpretation(GCI_RedBand);
+    dataset->GetRasterBand(2)->SetColorInterpretation(GCI_GreenBand);
+    dataset->GetRasterBand(3)->SetColorInterpretation(GCI_BlueBand);
+    dataset->GetRasterBand(4)->SetColorInterpretation(GCI_AlphaBand);
+
+    return dataset;
+}
+
+// Helper: Write tile data to GeoTIFF
+void writeTileToGeoTIFF(GDALDataset *dataset, int x_offset, int y_offset, int width, int height,
+                        const std::vector<uint8_t> &buffer)
+{
+    // Deinterleave RGBA -> separate bands
+    std::vector<uint8_t> band_data[4];
+    for (int i = 0; i < 4; i++)
+    {
+        band_data[i].resize(width * height);
+    }
+
+    for (int i = 0; i < width * height; i++)
+    {
+        band_data[0][i] = buffer[i * 4 + 0]; // R
+        band_data[1][i] = buffer[i * 4 + 1]; // G
+        band_data[2][i] = buffer[i * 4 + 2]; // B
+        band_data[3][i] = buffer[i * 4 + 3]; // A
+    }
+
+    // Write each band
+    for (int band = 1; band <= 4; band++)
+    {
+        CPLErr err = dataset->GetRasterBand(band)->RasterIO(GF_Write, x_offset, y_offset, width, height,
+                                                            band_data[band - 1].data(), width, height, GDT_Byte, 0, 0);
+
+        if (err != CE_None)
+        {
+            throw std::runtime_error("Failed to write tile to GeoTIFF");
+        }
+    }
+}
+
+// Helper: Determine which images contribute to a tile
+std::vector<size_t> getContributingImages(double tile_min_x, double tile_max_x, double tile_min_y, double tile_max_y,
+                                          double mean_surface_z, const MeasurementGraph &graph,
+                                          const std::unordered_set<size_t> &involved_nodes)
+{
+    std::vector<size_t> contributing;
+
+    for (size_t node_id : involved_nodes)
+    {
+        const auto *node = graph.getNode(node_id);
+        if (!node)
+            continue;
+
+        // Calculate tile center
+        double tile_center_x = (tile_min_x + tile_max_x) * 0.5;
+        double tile_center_y = (tile_min_y + tile_max_y) * 0.5;
+
+        // Simple distance-based culling: check if camera is reasonably close to tile
+        Eigen::Vector2d camera_pos_2d = node->payload.position.head<2>();
+        Eigen::Vector2d tile_center_2d(tile_center_x, tile_center_y);
+        double dist_to_tile = (camera_pos_2d - tile_center_2d).norm();
+
+        // Conservative estimate: 5x the tile diagonal
+        double tile_diagonal = std::sqrt(std::pow(tile_max_x - tile_min_x, 2) + std::pow(tile_max_y - tile_min_y, 2));
+        double max_distance = 5.0 * tile_diagonal;
+
+        if (dist_to_tile > max_distance)
+        {
+            continue;
+        }
+
+        // Check if any of the tile corners project into the camera image
+        std::vector<Eigen::Vector3d> corners = {{tile_min_x, tile_min_y, mean_surface_z},
+                                                {tile_max_x, tile_min_y, mean_surface_z},
+                                                {tile_min_x, tile_max_y, mean_surface_z},
+                                                {tile_max_x, tile_max_y, mean_surface_z},
+                                                {tile_center_x, tile_center_y, mean_surface_z}};
+
+        bool can_see_tile = false;
+        for (const auto &corner : corners)
+        {
+            Eigen::Vector2d pixel =
+                image_from_3d(corner, *node->payload.model, node->payload.position, node->payload.orientation);
+
+            if (pixel.x() >= 0 && pixel.x() < node->payload.model->pixels_cols && pixel.y() >= 0 &&
+                pixel.y() < node->payload.model->pixels_rows)
+            {
+                can_see_tile = true;
+                break;
+            }
+        }
+
+        if (can_see_tile)
+        {
+            contributing.push_back(node_id);
+        }
+    }
+
+    return contributing;
+}
+
+// Helper: Process a single tile
+void processTile(GDALDataset *dataset, int tile_x, int tile_y, int tile_size, const OrthoMosaicBounds &bounds,
+                 double gsd, int output_width, int output_height, const std::vector<surface_model> &surfaces,
+                 const MeasurementGraph &graph, const std::unordered_set<size_t> &involved_nodes,
+                 const jk::tree::KDTree<size_t, 3> &imageGPSLocations, double average_camera_elevation,
+                 double mean_camera_z, FullResolutionImageCache &image_cache)
+{
+    // Calculate tile bounds in pixels
+    int x_offset = tile_x * tile_size;
+    int y_offset = tile_y * tile_size;
+    int tile_width = std::min(tile_size, output_width - x_offset);
+    int tile_height = std::min(tile_size, output_height - y_offset);
+
+    // Calculate tile bounds in world coordinates
+    double tile_min_x = bounds.min_x + x_offset * gsd;
+    double tile_max_x = bounds.min_x + (x_offset + tile_width) * gsd;
+    double tile_min_y = bounds.max_y - (y_offset + tile_height) * gsd;
+    double tile_max_y = bounds.max_y - y_offset * gsd;
+
+    // Determine contributing images
+    std::vector<size_t> contributing = getContributingImages(tile_min_x, tile_max_x, tile_min_y, tile_max_y,
+                                                             bounds.mean_surface_z, graph, involved_nodes);
+
+    spdlog::debug("Tile ({}, {}): {} contributing images", tile_x, tile_y, contributing.size());
+
+    // Allocate tile buffer
+    std::vector<uint8_t> tile_buffer(tile_width * tile_height * 4);
+
+    // Process pixels in tile
+#pragma omp parallel
+    {
+        std::vector<MeshIntersectionSearcher> searchers;
+        for (const auto &surface : surfaces)
+        {
+            searchers.emplace_back();
+            if (!searchers.back().init(surface.mesh))
+            {
+                spdlog::error("Could not initialize searcher on mesh surface");
+                searchers.pop_back();
+            }
+        }
+
+#pragma omp for schedule(dynamic)
+        for (int local_row = 0; local_row < tile_height; local_row++)
+        {
+            for (int local_col = 0; local_col < tile_width; local_col++)
+            {
+                int global_col = x_offset + local_col;
+                int global_row = y_offset + local_row;
+
+                // World coordinates
+                const double x = global_col * gsd + bounds.min_x;
+                const double y = bounds.max_y - global_row * gsd;
+
+                // Ray-trace to get height
+                const ray_d intersectionRay{{0, 0, -1}, {x, y, mean_camera_z}};
+                double z = NAN;
+                for (auto &searcher : searchers)
+                {
+                    if (searcher.lastResult().type != MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
+                    {
+                        if (!searcher.reinit())
+                        {
+                            continue;
+                        }
+                    }
+
+                    auto intersection = searcher.triangleIntersect(intersectionRay);
+                    if (intersection.type == MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
+                    {
+                        z = intersection.intersectionLocation.z();
+                        break;
+                    }
+                }
+
+                int idx = (local_row * tile_width + local_col) * 4;
+
+                if (std::isnan(z))
+                {
+                    // Background checkerboard
+                    uint8_t grey = (global_row + global_col) % 2 == 0 ? 64 : 128;
+                    tile_buffer[idx + 0] = grey;
+                    tile_buffer[idx + 1] = grey;
+                    tile_buffer[idx + 2] = grey;
+                    tile_buffer[idx + 3] = 0;
+                    continue;
+                }
+
+                Eigen::Vector3d sample_point(x, y, z);
+
+                // Find best image and sample color
+                auto closest5 = imageGPSLocations.searchKnn({x, y, average_camera_elevation}, 5);
+
+                bool found_color = false;
+                for (const auto &closest : closest5)
+                {
+                    const auto *closestNode = graph.getNode(closest.payload);
+                    const auto &payload = closestNode->payload;
+
+                    // Backproject 3D point to image space
+                    Eigen::Vector2d pixel =
+                        image_from_3d(sample_point, *payload.model, payload.position, payload.orientation);
+
+                    // Check if pixel is within image bounds
+                    if (pixel.x() < 0 || pixel.x() >= payload.model->pixels_cols || pixel.y() < 0 ||
+                        pixel.y() >= payload.model->pixels_rows)
+                    {
+                        continue;
+                    }
+
+                    // Load full-resolution image
+                    cv::Mat full_image = image_cache.getImage(closest.payload, payload.path);
+
+                    if (full_image.empty())
+                    {
+                        continue;
+                    }
+
+                    // Sample color at pixel location
+                    int px = static_cast<int>(pixel.x());
+                    int py = static_cast<int>(pixel.y());
+
+                    if (px >= 0 && px < full_image.cols && py >= 0 && py < full_image.rows)
+                    {
+                        cv::Vec3b color_bgr = full_image.at<cv::Vec3b>(py, px);
+
+                        // Convert BGR to RGB
+                        tile_buffer[idx + 0] = color_bgr[2]; // R
+                        tile_buffer[idx + 1] = color_bgr[1]; // G
+                        tile_buffer[idx + 2] = color_bgr[0]; // B
+                        tile_buffer[idx + 3] = 255;          // A
+
+                        found_color = true;
+                        break;
+                    }
+                }
+
+                if (!found_color)
+                {
+                    // Background checkerboard
+                    uint8_t grey = (global_row + global_col) % 2 == 0 ? 64 : 128;
+                    tile_buffer[idx + 0] = grey;
+                    tile_buffer[idx + 1] = grey;
+                    tile_buffer[idx + 2] = grey;
+                    tile_buffer[idx + 3] = 0;
+                }
+            }
+        }
+    }
+
+    // Write tile to GeoTIFF
+    writeTileToGeoTIFF(dataset, x_offset, y_offset, tile_width, tile_height, tile_buffer);
+}
+
+} // namespace
+
+void generateGeoTIFFOrthomosaic(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph,
+                                const opencalibration::GeoCoord &coord_system, const std::string &output_path,
+                                int tile_size)
+{
+    spdlog::info("Generating full-resolution GeoTIFF orthomosaic: {}", output_path);
+
+    PerformanceMeasure p("Generate GeoTIFF orthomosaic");
+
+    // Calculate bounds and GSD
+    OrthoMosaicBounds bounds = calculateBoundsAndMeanZ(surfaces);
+
+    spdlog::info("x range [{}; {}]  y range [{}; {}]  mean surface {}", bounds.min_x, bounds.max_x, bounds.min_y,
+                 bounds.max_y, bounds.mean_surface_z);
+
+    std::unordered_set<size_t> involved_nodes;
+    for (auto iter = graph.cnodebegin(); iter != graph.cnodeend(); ++iter)
+    {
+        if (iter->second.payload.orientation.coeffs().allFinite())
+        {
+            involved_nodes.insert(iter->first);
+        }
+    }
+
+    double gsd = calculateGSD(graph, involved_nodes, bounds.mean_surface_z);
+
+    // Build KDTree
+    jk::tree::KDTree<size_t, 3> imageGPSLocations;
+    double mean_camera_z = 0;
+    size_t count = 0;
+    for (size_t node_id : involved_nodes)
+    {
+        const auto *node = graph.getNode(node_id);
+        imageGPSLocations.addPoint(to_array(node->payload.position), node_id, false);
+        mean_camera_z = (mean_camera_z * count + node->payload.position.z()) / (count + 1);
+        count++;
+    }
+    imageGPSLocations.splitOutstanding();
+
+    const double average_camera_elevation = mean_camera_z - bounds.mean_surface_z;
+
+    // Calculate output dimensions
+    int width = static_cast<int>((bounds.max_x - bounds.min_x) / gsd);
+    int height = static_cast<int>((bounds.max_y - bounds.min_y) / gsd);
+
+    if (width <= 0)
+        width = 100;
+    if (height <= 0)
+        height = 100;
+
+    spdlog::info("GSD: {}  Output dimensions: {}x{} pixels", gsd, width, height);
+
+    // Create GeoTIFF dataset
+    std::string wkt = coord_system.getWKT();
+    GDALDataset *dataset = createGeoTIFF(output_path, width, height, bounds.min_x, bounds.max_y, gsd, wkt);
+
+    // Create image cache
+    FullResolutionImageCache image_cache(10);
+
+    // Process tiles
+    int num_tiles_x = (width + tile_size - 1) / tile_size;
+    int num_tiles_y = (height + tile_size - 1) / tile_size;
+    int total_tiles = num_tiles_x * num_tiles_y;
+
+    spdlog::info("Processing {} tiles ({}x{} grid, tile size: {}x{})", total_tiles, num_tiles_x, num_tiles_y, tile_size,
+                 tile_size);
+
+    int completed_tiles = 0;
+    auto start_time = std::chrono::steady_clock::now();
+
+    for (int tile_y = 0; tile_y < num_tiles_y; tile_y++)
+    {
+        for (int tile_x = 0; tile_x < num_tiles_x; tile_x++)
+        {
+            processTile(dataset, tile_x, tile_y, tile_size, bounds, gsd, width, height, surfaces, graph, involved_nodes,
+                        imageGPSLocations, average_camera_elevation, mean_camera_z, image_cache);
+
+            // Clear cache after each tile to bound memory
+            image_cache.clear();
+
+            completed_tiles++;
+
+            if (completed_tiles % 10 == 0 || completed_tiles == total_tiles)
+            {
+                auto now = std::chrono::steady_clock::now();
+                auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - start_time).count();
+                double progress = 100.0 * completed_tiles / total_tiles;
+                spdlog::info("Progress: {:.1f}% ({}/{} tiles, {} seconds)", progress, completed_tiles, total_tiles,
+                             elapsed);
+            }
+        }
+    }
+
+    // Close dataset
+    GDALClose(dataset);
+
+    spdlog::info("GeoTIFF orthomosaic generation complete: {}", output_path);
+}
+
 } // namespace opencalibration::orthomosaic

@@ -8,6 +8,7 @@ add_executable(functional_tests gtest_main.cpp
                                 test_extract_features.cpp
                                 test_extract_metadata.cpp
                                 test_match.cpp
+                                test_ortho_functional.cpp
                                 test_pipeline.cpp
                                 test_ransac_functional.cpp
                                 test_serialize_deserialize.cpp)
@@ -17,6 +18,7 @@ target_link_libraries(functional_tests PUBLIC gtest pthread oc_distort
                                                             oc_io
                                                             oc_match
                                                             oc_model_inliers
+                                                            oc_ortho
                                                             oc_pipeline
                                                             oc_surface)
 
