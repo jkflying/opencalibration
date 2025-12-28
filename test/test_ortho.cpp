@@ -172,6 +172,86 @@ TEST_F(ortho, calculate_gsd)
     EXPECT_NEAR(gsd, 0.09, 1e-7);
 }
 
+TEST_F(ortho, prepare_context)
+{
+    // GIVEN: a scene with images and surface
+    init_cameras();
+    surface_model s;
+    point_cloud cloud;
+    cloud.emplace_back(5, 5, -10);
+    cloud.emplace_back(10, 10, -5);
+    s.cloud.push_back(cloud);
+
+    // WHEN: we prepare the orthomosaic context
+    OrthoMosaicContext context = prepareOrthoMosaicContext({s}, graph);
+
+    // THEN: it should have correct bounds
+    EXPECT_DOUBLE_EQ(context.bounds.min_x, 5);
+    EXPECT_DOUBLE_EQ(context.bounds.max_x, 10);
+    EXPECT_DOUBLE_EQ(context.bounds.min_y, 5);
+    EXPECT_DOUBLE_EQ(context.bounds.max_y, 10);
+    EXPECT_DOUBLE_EQ(context.bounds.mean_surface_z, -7.5);
+
+    // AND: it should have involved nodes
+    EXPECT_EQ(context.involved_nodes.size(), 3);
+    EXPECT_TRUE(context.involved_nodes.count(id[0]));
+    EXPECT_TRUE(context.involved_nodes.count(id[1]));
+    EXPECT_TRUE(context.involved_nodes.count(id[2]));
+
+    // AND: it should have calculated GSD
+    EXPECT_GT(context.gsd, 0);
+
+    // AND: it should have built KDTree
+    auto nearest = context.imageGPSLocations.searchKnn({10, 10, 9}, 1);
+    EXPECT_EQ(nearest.size(), 1);
+
+    // AND: it should have calculated mean camera z
+    EXPECT_DOUBLE_EQ(context.mean_camera_z, 9);
+
+    // AND: it should have calculated average camera elevation
+    EXPECT_DOUBLE_EQ(context.average_camera_elevation, 16.5);
+}
+
+TEST_F(ortho, ray_trace_height)
+{
+    // GIVEN: a surface model with a mesh
+    surface_model s;
+    point_cloud camera_locations = {{0, 0, 10}, {10, 0, 10}};
+    point_cloud cloud;
+    cloud.emplace_back(5, 5, -10);
+    cloud.emplace_back(10, 10, -5);
+    cloud.emplace_back(5, 10, -7.5);
+    s.cloud.push_back(cloud);
+    s.mesh = rebuildMesh(camera_locations, {s});
+
+    // WHEN: we ray-trace at a point
+    double z = rayTraceHeight(7.5, 7.5, 10, {s});
+
+    // THEN: it should return a valid height
+    EXPECT_FALSE(std::isnan(z));
+    EXPECT_LT(z, 0);   // Surface is below z=0
+    EXPECT_GT(z, -10); // Surface is above z=-10
+}
+
+TEST_F(ortho, ray_trace_height_miss)
+{
+    // GIVEN: a surface model with a small mesh
+    surface_model s;
+    point_cloud camera_locations = {{0, 0, 10}};
+    point_cloud cloud;
+    cloud.emplace_back(5, 5, -10);
+    cloud.emplace_back(6, 5, -10);
+    cloud.emplace_back(5, 6, -10);
+    s.cloud.push_back(cloud);
+    s.mesh = rebuildMesh(camera_locations, {s});
+
+    // WHEN: we ray-trace outside the mesh
+    double z = rayTraceHeight(100, 100, 10, {s});
+
+    // THEN: it should return NAN
+    EXPECT_TRUE(std::isnan(z));
+}
+
 TEST_F(ortho, calculate_gsd_multi)
 {
     // GIVEN: a graph with 2 images at different heights

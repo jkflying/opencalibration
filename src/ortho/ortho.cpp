@@ -3,11 +3,11 @@
 #include <jk/KDTree.h>
 #include <opencalibration/distort/distort_keypoints.hpp>
 #include <opencalibration/geo_coord/geo_coord.hpp>
+#include <opencalibration/ortho/gdal_dataset.hpp>
 #include <opencalibration/ortho/image_cache.hpp>
 #include <opencalibration/performance/performance.hpp>
 #include <opencalibration/surface/intersect.hpp>
 
-#include <gdal/gdal_priv.h>
 #include <spdlog/spdlog.h>
 
 #include <atomic>
@@ -118,43 +118,94 @@ double calculateGSD(const MeasurementGraph &graph, const std::unordered_set<size
     return mean_gsd;
 }
 
-OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph)
+OrthoMosaicContext prepareOrthoMosaicContext(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph)
 {
-    OrthoMosaicBounds bounds = calculateBoundsAndMeanZ(surfaces);
-    double min_x = bounds.min_x, max_x = bounds.max_x, min_y = bounds.min_y, max_y = bounds.max_y;
-    double mean_surface_z = bounds.mean_surface_z;
+    OrthoMosaicContext context;
 
-    spdlog::info("x range [{}; {}]  y range [{}; {}]  mean surface {}", min_x, max_x, min_y, max_y, mean_surface_z);
+    // Calculate bounds
+    context.bounds = calculateBoundsAndMeanZ(surfaces);
 
-    std::unordered_set<size_t> involved_nodes;
+    // Collect involved nodes (nodes with finite orientation)
     for (auto iter = graph.cnodebegin(); iter != graph.cnodeend(); ++iter)
     {
         if (iter->second.payload.orientation.coeffs().allFinite())
         {
-            involved_nodes.insert(iter->first);
+            context.involved_nodes.insert(iter->first);
         }
     }
 
-    double mean_gsd = calculateGSD(graph, involved_nodes, mean_surface_z);
+    // Calculate GSD
+    context.gsd = calculateGSD(graph, context.involved_nodes, context.bounds.mean_surface_z);
 
-    // calculate gsd size based on thumbnail resolution at average mesh/keypoint height
-    jk::tree::KDTree<size_t, 3> imageGPSLocations;
-    double mean_camera_z = 0;
+    // Build KDTree and calculate mean camera Z
+    context.mean_camera_z = 0;
     size_t count = 0;
-    for (size_t node_id : involved_nodes)
+    for (size_t node_id : context.involved_nodes)
     {
         const auto *node = graph.getNode(node_id);
-        imageGPSLocations.addPoint(to_array(node->payload.position), node_id, false);
-        mean_camera_z = (mean_camera_z * count + node->payload.position.z()) / (count + 1);
+        context.imageGPSLocations.addPoint(to_array(node->payload.position), node_id, false);
+        context.mean_camera_z = (context.mean_camera_z * count + node->payload.position.z()) / (count + 1);
         count++;
     }
-    imageGPSLocations.splitOutstanding();
+    context.imageGPSLocations.splitOutstanding();
 
-    const double average_camera_elevation = mean_camera_z - mean_surface_z;
+    context.average_camera_elevation = context.mean_camera_z - context.bounds.mean_surface_z;
+
+    return context;
+}
+
+double rayTraceHeight(double x, double y, double mean_camera_z, const std::vector<surface_model> &surfaces)
+{
+    const ray_d intersectionRay{{0, 0, -1}, {x, y, mean_camera_z}};
+
+    // Note: This function needs thread-local MeshIntersectionSearchers in practice
+    // For single-threaded use or when called from a context with searchers
+    static thread_local std::vector<MeshIntersectionSearcher> searchers;
+
+    // Initialize searchers if not already done
+    if (searchers.empty())
+    {
+        for (const auto &surface : surfaces)
+        {
+            searchers.emplace_back();
+            if (!searchers.back().init(surface.mesh))
+            {
+                searchers.pop_back();
+            }
+        }
+    }
+
+    for (auto &searcher : searchers)
+    {
+        if (searcher.lastResult().type != MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
+        {
+            if (!searcher.reinit())
+            {
+                continue;
+            }
+        }
+
+        auto intersection = searcher.triangleIntersect(intersectionRay);
+        if (intersection.type == MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
+        {
+            return intersection.intersectionLocation.z();
+        }
+    }
+
+    return NAN;
+}
+
+OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph)
+{
+    // Prepare common context
+    OrthoMosaicContext context = prepareOrthoMosaicContext(surfaces, graph);
+
+    spdlog::info("x range [{}; {}]  y range [{}; {}]  mean surface {}", context.bounds.min_x, context.bounds.max_x,
+                 context.bounds.min_y, context.bounds.max_y, context.bounds.mean_surface_z);
 
     // from bounds and gsd, calculate image resolution
-    double image_width = (max_x - min_x) / mean_gsd;
-    double image_height = (max_y - min_y) / mean_gsd;
+    double image_width = (context.bounds.max_x - context.bounds.min_x) / context.gsd;
+    double image_height = (context.bounds.max_y - context.bounds.min_y) / context.gsd;
 
     if (!std::isfinite(image_width) || image_width <= 0)
         image_width = 100;
@@ -162,14 +213,15 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
         image_height = 100;
 
     spdlog::info("requested image_width: {} image_height: {}", image_width, image_height);
-    spdlog::info("max_x: {} min_x: {} max_y: {} min_y: {}", max_x, min_x, max_y, min_y);
+    spdlog::info("max_x: {} min_x: {} max_y: {} min_y: {}", context.bounds.max_x, context.bounds.min_x,
+                 context.bounds.max_y, context.bounds.min_y);
 
     cv::Size image_dimensions(static_cast<int>(image_width), static_cast<int>(image_height));
 
-    spdlog::info("gsd {}  img dims {}x{}", mean_gsd, image_dimensions.width, image_dimensions.height);
+    spdlog::info("gsd {}  img dims {}x{}", context.gsd, image_dimensions.width, image_dimensions.height);
 
     OrthoMosaic result;
-    result.gsd = mean_gsd;
+    result.gsd = context.gsd;
     MultiLayerRaster<uint8_t> pixelValues(image_dimensions.height, image_dimensions.width, 4);
     // result.pixelValues; // assign at end
     result.cameraUUID.pixels.resize(image_dimensions.height, image_dimensions.width);
@@ -199,11 +251,11 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
         {
             for (int col = 0; col < image_dimensions.width; col++)
             {
-                const double x = col * mean_gsd + min_x;
-                const double y = max_y - row * mean_gsd;
+                const double x = col * context.gsd + context.bounds.min_x;
+                const double y = context.bounds.max_y - row * context.gsd;
 
                 // get height of pixel from mesh or nearest keypoint
-                const ray_d intersectionRay{{0, 0, -1}, {x, y, mean_camera_z}};
+                const ray_d intersectionRay{{0, 0, -1}, {x, y, context.mean_camera_z}};
                 double z = NAN;
                 for (auto &searcher : searchers)
                 {
@@ -235,7 +287,7 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
                 color.fill(0);
                 uint32_t pixelSource = std::numeric_limits<uint32_t>::max();
 
-                auto closest5 = imageGPSLocations.searchKnn({x, y, average_camera_elevation}, 5);
+                auto closest5 = context.imageGPSLocations.searchKnn({x, y, context.average_camera_elevation}, 5);
 
                 // get image vertically closest
                 for (const auto &closest : closest5)
@@ -304,8 +356,8 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
 namespace
 {
 // Helper: Create GDAL GeoTIFF dataset
-GDALDataset *createGeoTIFF(const std::string &path, int width, int height, double min_x, double max_y, double gsd,
-                           const std::string &wkt)
+GDALDatasetPtr createGeoTIFF(const std::string &path, int width, int height, double min_x, double max_y, double gsd,
+                             const std::string &wkt)
 {
     GDALAllRegister();
 
@@ -348,7 +400,7 @@ GDALDataset *createGeoTIFF(const std::string &path, int width, int height, doubl
     dataset->GetRasterBand(3)->SetColorInterpretation(GCI_BlueBand);
     dataset->GetRasterBand(4)->SetColorInterpretation(GCI_AlphaBand);
 
-    return dataset;
+    return GDALDatasetPtr(dataset);
 }
 
 // Helper: Write tile data to GeoTIFF
@@ -608,52 +660,27 @@ void generateGeoTIFFOrthomosaic(const std::vector<surface_model> &surfaces, cons
 
     PerformanceMeasure p("Generate GeoTIFF orthomosaic");
 
-    // Calculate bounds and GSD
-    OrthoMosaicBounds bounds = calculateBoundsAndMeanZ(surfaces);
+    // Prepare common context
+    OrthoMosaicContext context = prepareOrthoMosaicContext(surfaces, graph);
 
-    spdlog::info("x range [{}; {}]  y range [{}; {}]  mean surface {}", bounds.min_x, bounds.max_x, bounds.min_y,
-                 bounds.max_y, bounds.mean_surface_z);
-
-    std::unordered_set<size_t> involved_nodes;
-    for (auto iter = graph.cnodebegin(); iter != graph.cnodeend(); ++iter)
-    {
-        if (iter->second.payload.orientation.coeffs().allFinite())
-        {
-            involved_nodes.insert(iter->first);
-        }
-    }
-
-    double gsd = calculateGSD(graph, involved_nodes, bounds.mean_surface_z);
-
-    // Build KDTree
-    jk::tree::KDTree<size_t, 3> imageGPSLocations;
-    double mean_camera_z = 0;
-    size_t count = 0;
-    for (size_t node_id : involved_nodes)
-    {
-        const auto *node = graph.getNode(node_id);
-        imageGPSLocations.addPoint(to_array(node->payload.position), node_id, false);
-        mean_camera_z = (mean_camera_z * count + node->payload.position.z()) / (count + 1);
-        count++;
-    }
-    imageGPSLocations.splitOutstanding();
-
-    const double average_camera_elevation = mean_camera_z - bounds.mean_surface_z;
+    spdlog::info("x range [{}; {}]  y range [{}; {}]  mean surface {}", context.bounds.min_x, context.bounds.max_x,
+                 context.bounds.min_y, context.bounds.max_y, context.bounds.mean_surface_z);
 
     // Calculate output dimensions
-    int width = static_cast<int>((bounds.max_x - bounds.min_x) / gsd);
-    int height = static_cast<int>((bounds.max_y - bounds.min_y) / gsd);
+    int width = static_cast<int>((context.bounds.max_x - context.bounds.min_x) / context.gsd);
+    int height = static_cast<int>((context.bounds.max_y - context.bounds.min_y) / context.gsd);
 
     if (width <= 0)
         width = 100;
     if (height <= 0)
         height = 100;
 
-    spdlog::info("GSD: {}  Output dimensions: {}x{} pixels", gsd, width, height);
+    spdlog::info("GSD: {}  Output dimensions: {}x{} pixels", context.gsd, width, height);
 
     // Create GeoTIFF dataset
     std::string wkt = coord_system.getWKT();
-    GDALDataset *dataset = createGeoTIFF(output_path, width, height, bounds.min_x, bounds.max_y, gsd, wkt);
+    GDALDatasetPtr dataset =
+        createGeoTIFF(output_path, width, height, context.bounds.min_x, context.bounds.max_y, context.gsd, wkt);
 
     // Create image cache
     FullResolutionImageCache image_cache(10);
@@ -673,8 +700,9 @@ void generateGeoTIFFOrthomosaic(const std::vector<surface_model> &surfaces, cons
     {
         for (int tile_x = 0; tile_x < num_tiles_x; tile_x++)
         {
-            processTile(dataset, tile_x, tile_y, tile_size, bounds, gsd, width, height, surfaces, graph, involved_nodes,
-                        imageGPSLocations, average_camera_elevation, mean_camera_z, image_cache);
+            processTile(dataset.get(), tile_x, tile_y, tile_size, context.bounds, context.gsd, width, height, surfaces,
+                        graph, context.involved_nodes, context.imageGPSLocations, context.average_camera_elevation,
+                        context.mean_camera_z, image_cache);
 
             // Clear cache after each tile to bound memory
             image_cache.clear();
@@ -691,9 +719,6 @@ void generateGeoTIFFOrthomosaic(const std::vector<surface_model> &surfaces, cons
             }
         }
     }
-
-    // Close dataset
-    GDALClose(dataset);
 
     spdlog::info("GeoTIFF orthomosaic generation complete: {}", output_path);
 }

@@ -4,7 +4,10 @@
 #include <opencalibration/types/raster.hpp>
 #include <opencalibration/types/surface_model.hpp>
 
+#include <jk/KDTree.h>
+
 #include <string>
+#include <unordered_set>
 
 namespace opencalibration
 {
@@ -29,9 +32,26 @@ struct OrthoMosaicBounds
     double mean_surface_z;
 };
 
+// Context containing common data for orthomosaic generation
+struct OrthoMosaicContext
+{
+    OrthoMosaicBounds bounds;
+    double gsd;
+    std::unordered_set<size_t> involved_nodes;
+    jk::tree::KDTree<size_t, 3> imageGPSLocations;
+    double mean_camera_z;
+    double average_camera_elevation;
+};
+
 OrthoMosaicBounds calculateBoundsAndMeanZ(const std::vector<surface_model> &surfaces);
 double calculateGSD(const MeasurementGraph &graph, const std::unordered_set<size_t> &involved_nodes,
                     double mean_surface_z);
+
+// Prepare common context for orthomosaic generation
+OrthoMosaicContext prepareOrthoMosaicContext(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph);
+
+// Ray-trace to find height at world position (x, y)
+double rayTraceHeight(double x, double y, double mean_camera_z, const std::vector<surface_model> &surfaces);
 
 OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph);
 

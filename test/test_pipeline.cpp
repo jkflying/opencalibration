@@ -1,6 +1,7 @@
 #include <opencalibration/pipeline/pipeline.hpp>
 
-#include <gdal/gdal_priv.h>
+#include <opencalibration/ortho/gdal_dataset.hpp>
+
 #include <gtest/gtest.h>
 
 #include <chrono>
@@ -94,8 +95,8 @@ TEST(pipeline, generates_geotiff_when_requested)
     EXPECT_TRUE(std::filesystem::exists(output_path));
 
     // AND: it should be a valid GeoTIFF with proper properties
-    GDALAllRegister();
-    GDALDataset *dataset = (GDALDataset *)GDALOpen(output_path.c_str(), GA_ReadOnly);
+    using namespace opencalibration::orthomosaic;
+    GDALDatasetPtr dataset = openGDALDataset(output_path);
     ASSERT_NE(dataset, nullptr) << "Failed to open GeoTIFF file";
 
     // Verify dimensions
@@ -128,8 +129,6 @@ TEST(pipeline, generates_geotiff_when_requested)
     dataset->GetRasterBand(1)->GetBlockSize(&block_x, &block_y);
     EXPECT_EQ(block_x, 512) << "GeoTIFF should have 512×512 internal tile blocks";
     EXPECT_EQ(block_y, 512);
-
-    GDALClose(dataset);
 
     // Output saved to TEST_DATA_OUTPUT_DIR for inspection
 }
