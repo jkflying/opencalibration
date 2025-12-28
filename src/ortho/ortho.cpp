@@ -151,31 +151,36 @@ OrthoMosaicContext prepareOrthoMosaicContext(const std::vector<surface_model> &s
 
     context.average_camera_elevation = context.mean_camera_z - context.bounds.mean_surface_z;
 
+    // Initialize ray trace context
+    context.rayTraceContext.init(surfaces);
+
     return context;
 }
 
-double rayTraceHeight(double x, double y, double mean_camera_z, const std::vector<surface_model> &surfaces)
+// RayTraceContext implementation
+RayTraceContext::RayTraceContext(const std::vector<surface_model> &surfaces)
+{
+    init(surfaces);
+}
+
+void RayTraceContext::init(const std::vector<surface_model> &surfaces)
+{
+    _searchers.clear();
+    for (const auto &surface : surfaces)
+    {
+        _searchers.emplace_back();
+        if (!_searchers.back().init(surface.mesh))
+        {
+            _searchers.pop_back();
+        }
+    }
+}
+
+double RayTraceContext::traceHeight(double x, double y, double mean_camera_z)
 {
     const ray_d intersectionRay{{0, 0, -1}, {x, y, mean_camera_z}};
 
-    // Note: This function needs thread-local MeshIntersectionSearchers in practice
-    // For single-threaded use or when called from a context with searchers
-    static thread_local std::vector<MeshIntersectionSearcher> searchers;
-
-    // Initialize searchers if not already done
-    if (searchers.empty())
-    {
-        for (const auto &surface : surfaces)
-        {
-            searchers.emplace_back();
-            if (!searchers.back().init(surface.mesh))
-            {
-                searchers.pop_back();
-            }
-        }
-    }
-
-    for (auto &searcher : searchers)
+    for (auto &searcher : _searchers)
     {
         if (searcher.lastResult().type != MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
         {
@@ -193,6 +198,18 @@ double rayTraceHeight(double x, double y, double mean_camera_z, const std::vecto
     }
 
     return NAN;
+}
+
+double rayTraceHeight(double x, double y, double mean_camera_z, RayTraceContext &context)
+{
+    return context.traceHeight(x, y, mean_camera_z);
+}
+
+double rayTraceHeight(double x, double y, double mean_camera_z, const std::vector<surface_model> &surfaces)
+{
+    // Convenience overload - creates temporary context for simple use cases
+    RayTraceContext context(surfaces);
+    return context.traceHeight(x, y, mean_camera_z);
 }
 
 OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph)

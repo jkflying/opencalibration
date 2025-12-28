@@ -1,5 +1,6 @@
 #pragma once
 
+#include <opencalibration/surface/intersect.hpp>
 #include <opencalibration/types/measurement_graph.hpp>
 #include <opencalibration/types/raster.hpp>
 #include <opencalibration/types/surface_model.hpp>
@@ -8,6 +9,7 @@
 
 #include <string>
 #include <unordered_set>
+#include <vector>
 
 namespace opencalibration
 {
@@ -16,6 +18,28 @@ class GeoCoord;
 
 namespace opencalibration::orthomosaic
 {
+
+// RAII context for ray tracing operations - manages mesh intersection searchers
+class RayTraceContext
+{
+  public:
+    RayTraceContext() = default;
+    explicit RayTraceContext(const std::vector<surface_model> &surfaces);
+
+    // Reinitialize with new surfaces
+    void init(const std::vector<surface_model> &surfaces);
+
+    // Ray-trace to find height at world position (x, y)
+    double traceHeight(double x, double y, double mean_camera_z);
+
+    bool isValid() const
+    {
+        return !_searchers.empty();
+    }
+
+  private:
+    std::vector<MeshIntersectionSearcher> _searchers;
+};
 
 struct OrthoMosaic
 {
@@ -41,6 +65,7 @@ struct OrthoMosaicContext
     jk::tree::KDTree<size_t, 3> imageGPSLocations;
     double mean_camera_z;
     double average_camera_elevation;
+    RayTraceContext rayTraceContext;
 };
 
 OrthoMosaicBounds calculateBoundsAndMeanZ(const std::vector<surface_model> &surfaces);
@@ -50,7 +75,11 @@ double calculateGSD(const MeasurementGraph &graph, const std::unordered_set<size
 // Prepare common context for orthomosaic generation
 OrthoMosaicContext prepareOrthoMosaicContext(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph);
 
-// Ray-trace to find height at world position (x, y)
+// Ray-trace to find height at world position (x, y) using a context (preferred - RAII)
+double rayTraceHeight(double x, double y, double mean_camera_z, RayTraceContext &context);
+
+// Ray-trace to find height - convenience overload that creates temporary context
+// Note: Less efficient for repeated calls; prefer using RayTraceContext directly
 double rayTraceHeight(double x, double y, double mean_camera_z, const std::vector<surface_model> &surfaces);
 
 OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph);
