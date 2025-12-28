@@ -39,7 +39,7 @@ template <> class Serializer<MeshGraph>
         out << "property double x" << newline;
         out << "property double y" << newline;
         out << "property double z" << newline;
-        out << "property double nodeIndex" << newline;
+        out << "property int nodeIndex" << newline;
 
         auto nodes_anticlockwise = [&graph](const std::array<size_t, 3> &face) {
             std::array<Eigen::Vector3d, 3> corners;
@@ -110,14 +110,16 @@ template <> class Serializer<MeshGraph>
             out << loc[0] << " " << loc[1] << " " << loc[2] << " " << node_id << newline;
         }
 
-        for (auto iter = faces.cbegin(); iter != faces.cend(); ++iter)
+        std::vector<std::array<size_t, 3>> sortedFaces(faces.begin(), faces.end());
+        std::sort(sortedFaces.begin(), sortedFaces.end());
+        for (const auto &face : sortedFaces)
         {
-            auto face = *iter;
+            std::array<size_t, 3> mappedFace;
             for (size_t i = 0; i < face.size(); i++)
             {
-                face[i] = nodeSequenceLookup[face[i]];
+                mappedFace[i] = nodeSequenceLookup[face[i]];
             }
-            out << "3 " << face[0] << " " << face[1] << " " << face[2] << newline;
+            out << "3 " << mappedFace[0] << " " << mappedFace[1] << " " << mappedFace[2] << newline;
         }
 
         for (size_t edge_id : sortedEdges)

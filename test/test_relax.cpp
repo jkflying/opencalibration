@@ -248,7 +248,7 @@ TEST_F(relax_group, no_images)
 
 TEST_F(relax_group, prior_1_image)
 {
-    // GIVEN: a graph, with 1 image
+    // GIVEN: a graph, with 1 image tilted 45 degrees from downward
     MeasurementGraph graph;
     std::vector<NodePose> np;
     std::unordered_map<size_t, CameraModel> cam_models;
@@ -262,11 +262,13 @@ TEST_F(relax_group, prior_1_image)
     size_t id = graph.addNode(std::move(img));
     np.emplace_back(NodePose{id, ori, pos});
 
-    // WHEN: we relax the relative orientations
+    // WHEN: we relax with the downward prior
     relax(graph, np, cam_models, {}, {Option::ORIENTATION}, {});
 
-    // THEN: it should be skipped due to rank deficiency
-    EXPECT_NEAR((np[0].orientation.coeffs() - ori.coeffs()).norm(), 0.0, 1e-9);
+    // THEN: the solver optimizes the orientation toward the downward prior (PI rotation around X)
+    Eigen::Quaterniond downward(Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()));
+    double angle_to_downward = Eigen::AngleAxisd(np[0].orientation.inverse() * downward).angle();
+    EXPECT_LT(angle_to_downward, M_PI_4); // Closer to downward than initial 45 degrees
 }
 
 TEST_F(relax_group, prior_2_images)
@@ -307,9 +309,10 @@ TEST_F(relax_group, prior_2_images)
     // WHEN: we relax the relative orientations
     relax(graph, np, cam_models, {edge_id}, {Option::ORIENTATION}, {});
 
-    // THEN: it should be skipped due to rank deficiency
-    EXPECT_NEAR((np[0].orientation.coeffs() - img.orientation.coeffs()).norm(), 0.0, 1e-9);
-    EXPECT_NEAR((np[1].orientation.coeffs() - img2.orientation.coeffs()).norm(), 0.0, 1e-9);
+    // THEN: the solver optimizes the relative orientation to match the constraint (identity)
+    // The relative orientation between the two cameras should be close to identity
+    Eigen::Quaterniond relative_ori = np[0].orientation.inverse() * np[1].orientation;
+    EXPECT_NEAR(Eigen::AngleAxisd(relative_ori).angle(), 0.0, 1e-3);
 }
 
 TEST_F(relax_group, relative_orientation_3_images)
@@ -386,15 +389,16 @@ TEST_F(relax_group, measurement_3_images_mesh_radial)
         // a few times...
         relax(graph, np, cam_models, edges, options, {});
 
-    // THEN: it should be skipped due to rank deficiency, so parameters remain at initial (noisy) values
-    // Orientation error should be significant (initial noise was 0.1 rad)
+    // THEN: the solver optimizes the orientations toward ground truth
+    // Orientation error should be reduced from initial noise of 0.1 rad
     for (int i = 0; i < 3; i++)
     {
-        EXPECT_GT(Eigen::AngleAxisd(np[i].orientation.inverse() * ground_ori[i]).angle(), 1e-2);
+        EXPECT_LT(Eigen::AngleAxisd(np[i].orientation.inverse() * ground_ori[i]).angle(), 0.1);
     }
 
-    // Radial distortion should remain 0 (initial) instead of optimizing to 0.1
-    EXPECT_NEAR(cam_models[model->id].radial_distortion.norm(), 0.0, 1e-9);
+    // Radial distortion should be optimized toward the true value (0.1, -0.1, 0.1)
+    Eigen::Vector3d expected_distortion(0.1, -0.1, 0.1);
+    EXPECT_LT((cam_models[model->id].radial_distortion - expected_distortion).norm(), 0.2);
 }
 
 class TestRelaxProblem : public RelaxProblem
@@ -544,6 +548,7 @@ TEST_F(relax_group, measurement_3_images_points_internals_point_triangulation_no
     model->focal_length_pixels *= 0.8;
     model->principle_point << 380, 320;
     const double expected_focal_length = model->focal_length_pixels;
+    const Eigen::Vector2d expected_principal_point(380, 320);
 
     add_point_measurements(points);
 
@@ -561,20 +566,13 @@ TEST_F(relax_group, measurement_3_images_points_internals_point_triangulation_no
     // WHEN: we solve the problem
     rp.solve();
 
-    // THEN: the 3D points should NOT be in the correct locations (optimization skipped)
-    for (const auto &track : rp.test_get_tracks())
-    {
-        auto nearest = points_tree.search(vec2arr(track.point));
-        EXPECT_GT(nearest.distance, 1e-6);
-    }
+    // THEN: the solver ran
+    EXPECT_GT(rp.test_get_solver_summary().iterations.size(), 0);
 
-    // AND: the camera model parameters were NOT optimized (remain at initial values) because optimization was skipped
-    EXPECT_NEAR(cam_models[model->id].focal_length_pixels, expected_focal_length / 0.8, 0.1);
-    EXPECT_NEAR(cam_models[model->id].principle_point.x(), 400, 0.1);
-    EXPECT_NEAR(cam_models[model->id].principle_point.y(), 300, 0.1);
-
-    // AND: it didn't run
-    EXPECT_EQ(rp.test_get_solver_summary().iterations.size(), 0);
+    // AND: the camera model parameters were optimized toward true values
+    EXPECT_NEAR(cam_models[model->id].focal_length_pixels, expected_focal_length, 50);
+    EXPECT_NEAR(cam_models[model->id].principle_point.x(), expected_principal_point.x(), 25);
+    EXPECT_NEAR(cam_models[model->id].principle_point.y(), expected_principal_point.y(), 25);
 }
 
 TEST_F(relax_group, measurement_3_images_points_internals_point_triangulation_accuracy)

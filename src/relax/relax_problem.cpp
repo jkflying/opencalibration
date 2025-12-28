@@ -819,35 +819,6 @@ void RelaxProblem::solve()
         return;
     }
 
-    ceres::Problem::EvaluateOptions eval_options;
-    ceres::CRSMatrix jacobian;
-    if (_problem->Evaluate(eval_options, nullptr, nullptr, nullptr, &jacobian))
-    {
-        std::vector<Eigen::Triplet<double>> triplets;
-        triplets.reserve(jacobian.values.size());
-
-        for (int r = 0; r < jacobian.num_rows; ++r)
-        {
-            for (int i = jacobian.rows[r]; i < jacobian.rows[r + 1]; ++i)
-            {
-                triplets.emplace_back(r, jacobian.cols[i], jacobian.values[i]);
-            }
-        }
-
-        Eigen::SparseMatrix<double> mat(jacobian.num_rows, jacobian.num_cols);
-        mat.setFromTriplets(triplets.begin(), triplets.end());
-
-        Eigen::SparseQR<Eigen::SparseMatrix<double>, Eigen::COLAMDOrdering<int>> solver;
-        solver.compute(mat);
-
-        if (solver.rank() < jacobian.num_cols)
-        {
-            spdlog::warn("Thread {} skipping relax: rank deficient Jacobian (rank {} < cols {})", thread_stream.str(),
-                         solver.rank(), jacobian.num_cols);
-            return;
-        }
-    }
-
     _solver.Solve(_solver_options, _problem.get(), &_summary);
     spdlog::info("Thread {} end relax: iterations {}, cost ratio {}, time {}s", thread_stream.str(),
                  _summary.iterations.size(), static_cast<float>(_summary.final_cost / _summary.initial_cost),
