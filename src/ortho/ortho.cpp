@@ -325,7 +325,7 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
                     {
                         Eigen::Vector<uint8_t, Eigen::Dynamic> pixelValue;
                         pixelValue.resize(3);
-                        if (payload.thumbnail.get((int)thumb_pixel.x(), (int)thumb_pixel.y(), pixelValue))
+                        if (payload.thumbnail.get((int)thumb_pixel.y(), (int)thumb_pixel.x(), pixelValue))
                         {
                             color << pixelValue, 255;
                             pixelSource = closest.payload & 0xFFFFFFFF;
