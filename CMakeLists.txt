@@ -58,6 +58,12 @@ if ("${CMAKE_BUILD_TYPE}" STREQUAL "Release")
 endif()
 
 include_directories(include)
+
+# Camera database bundled resource
+set(CAMERA_DATABASE_SOURCE "${CMAKE_SOURCE_DIR}/data/camera_database.json")
+set(CAMERA_DATABASE_DEST "${CMAKE_BINARY_DIR}/camera_database.json")
+configure_file(${CAMERA_DATABASE_SOURCE} ${CAMERA_DATABASE_DEST} COPYONLY)
+
 add_subdirectory(src)
 
 message("-- OPENCALIBRATION_TESTING: ${OPENCALIBRATION_TESTING}")

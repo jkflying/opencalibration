@@ -1,8 +1,11 @@
 #include <opencalibration/extract/extract_image.hpp>
 
+#include <opencalibration/extract/camera_database.hpp>
 #include <opencalibration/extract/extract_features.hpp>
 #include <opencalibration/extract/extract_metadata.hpp>
 #include <opencalibration/performance/performance.hpp>
+
+#include <spdlog/spdlog.h>
 
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
@@ -60,6 +63,19 @@ std::optional<image> extract_image(const std::string &path)
     img.model->pixels_cols = img.metadata.camera_info.width_px;
     img.model->pixels_rows = img.metadata.camera_info.height_px;
     img.model->principle_point = Eigen::Vector2d(img.model->pixels_cols, img.model->pixels_rows) / 2;
+
+    // Load camera database on first call and apply calibration if available
+    static bool db_loaded = CameraDatabase::instance().load(CAMERA_DATABASE_PATH);
+    (void)db_loaded;
+
+    auto db_entry = CameraDatabase::instance().lookup(img.metadata.camera_info);
+    if (db_entry.has_value())
+    {
+        applyDatabaseEntry(*db_entry, img.metadata.camera_info, *img.model);
+        spdlog::debug("Applied camera database calibration for {} {}", img.metadata.camera_info.make,
+                      img.metadata.camera_info.model);
+    }
+
     img.model->id = 0;
 
     return img;

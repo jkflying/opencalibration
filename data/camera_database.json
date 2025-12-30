@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "cameras": [
+    {
+      "make": "Parrot",
+      "model": "Anafi",
+      "lens_model": "",
+      "sensor_width_px": 5344,
+      "sensor_height_px": 4016,
+      "radial_distortion": [0.0, 0.0, 0.0],
+      "tangential_distortion": [0.0, 0.0],
+      "principal_point_offset": [0.0, 0.0],
+      "notes": "Parrot Anafi 21MP. No factory calibration available - will be optimized."
+    },
+    {
+      "make": "DJI",
+      "model": "FC6310",
+      "lens_model": "",
+      "sensor_width_px": 5472,
+      "sensor_height_px": 3648,
+      "radial_distortion": [-0.27, 0.11, -0.035],
+      "tangential_distortion": [0.00002, -0.00005],
+      "principal_point_offset": [10.0, 27.0],
+      "notes": "DJI Phantom 4 Pro. From DJI EXIF DewarpData."
+    },
+    {
+      "make": "DJI",
+      "model": "FC6310R",
+      "lens_model": "",
+      "sensor_width_px": 5472,
+      "sensor_height_px": 3648,
+      "radial_distortion": [-0.27, 0.11, -0.035],
+      "tangential_distortion": [0.00002, -0.00005],
+      "principal_point_offset": [10.0, 27.0],
+      "notes": "DJI Phantom 4 RTK. From DJI EXIF DewarpData: cx=10.1, cy=27.29, k1=-0.268652, k2=0.114663, k3=-0.035026"
+    }
+  ]
+}

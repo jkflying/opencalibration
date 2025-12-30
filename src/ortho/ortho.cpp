@@ -911,8 +911,8 @@ void generateDSMGeoTIFF(const std::vector<surface_model> &surfaces, const Measur
 
     // Create GeoTIFF dataset
     std::string wkt = coord_system.getWKT();
-    GDALDatasetPtr dataset = createDSMGeoTIFF(output_path, width, height, context.bounds.min_x, context.bounds.max_y,
-                                              context.gsd, wkt);
+    GDALDatasetPtr dataset =
+        createDSMGeoTIFF(output_path, width, height, context.bounds.min_x, context.bounds.max_y, context.gsd, wkt);
 
     // Process tiles
     int num_tiles_x = (width + tile_size - 1) / tile_size;

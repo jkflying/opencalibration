@@ -5,6 +5,7 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test_data/LICENSE")
 endif()
 
 add_executable(functional_tests gtest_main.cpp
+                                test_camera_database.cpp
                                 test_extract_features.cpp
                                 test_extract_metadata.cpp
                                 test_match.cpp
@@ -24,6 +25,7 @@ target_link_libraries(functional_tests PUBLIC gtest pthread oc_distort
 
 target_compile_definitions(functional_tests PUBLIC TEST_DATA_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/test_data/\"
                                                    TEST_DATA_OUTPUT_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/test_output/\"
+                                                   CAMERA_DATABASE_PATH=\"${CMAKE_BINARY_DIR}/camera_database.json\"
                                                    VISUAL_INSPECTION=1)
 
 add_executable(unit_tests gtest_main.cpp
