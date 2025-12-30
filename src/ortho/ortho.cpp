@@ -247,6 +247,26 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
 
     PerformanceMeasure p("Generate thumbnail");
 
+    // Precompute inverse rotation matrices to avoid quaternion.inverse() per pixel
+    struct CameraCache
+    {
+        Eigen::Matrix3d inv_rotation;
+        double thumb_scale;
+        Eigen::Vector2i thumb_size;
+    };
+    std::unordered_map<size_t, CameraCache> camera_cache;
+    for (size_t node_id : context.involved_nodes)
+    {
+        const auto *node = graph.getNode(node_id);
+        const auto &payload = node->payload;
+        CameraCache cc;
+        cc.inv_rotation = payload.orientation.inverse().toRotationMatrix();
+        Eigen::Vector2i sz = size(payload.thumbnail);
+        cc.thumb_size = sz;
+        cc.thumb_scale = payload.model->pixels_rows > 0 ? static_cast<double>(sz[0]) / payload.model->pixels_rows : 1.0;
+        camera_cache[node_id] = cc;
+    }
+
     std::atomic<int> completed_rows{0};
     auto last_log_time = std::chrono::steady_clock::now();
 
@@ -311,21 +331,21 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
                 {
                     const auto *closestNode = graph.getNode(closest.payload);
                     const auto &payload = closestNode->payload;
+                    const auto &cc = camera_cache.at(closest.payload);
 
-                    // backproject 3D point onto thumbnail image, get color
+                    // Use overload with precomputed inverse rotation matrix
                     Eigen::Vector2d pixel =
-                        image_from_3d(sample_point, *payload.model, payload.position, payload.orientation);
+                        image_from_3d(sample_point, *payload.model, payload.position, cc.inv_rotation);
+                    Eigen::Vector2d thumb_pixel = pixel * cc.thumb_scale;
 
-                    Eigen::Vector2i imageSize = size(payload.thumbnail);
-                    const double thumb_scale = static_cast<double>(imageSize[0]) / payload.model->pixels_rows;
-                    Eigen::Vector2d thumb_pixel = pixel * thumb_scale;
-                    cv::Point2i cvPixel(thumb_pixel.x(), thumb_pixel.y());
+                    int px = static_cast<int>(thumb_pixel.x());
+                    int py = static_cast<int>(thumb_pixel.y());
 
-                    if (0 < cvPixel.x && cvPixel.x < imageSize[1] && 0 < cvPixel.y && cvPixel.y < imageSize[0])
+                    if (px > 0 && px < cc.thumb_size[1] && py > 0 && py < cc.thumb_size[0])
                     {
                         Eigen::Vector<uint8_t, Eigen::Dynamic> pixelValue;
                         pixelValue.resize(3);
-                        if (payload.thumbnail.get((int)thumb_pixel.y(), (int)thumb_pixel.x(), pixelValue))
+                        if (payload.thumbnail.get(py, px, pixelValue))
                         {
                             color << pixelValue, 255;
                             pixelSource = closest.payload & 0xFFFFFFFF;

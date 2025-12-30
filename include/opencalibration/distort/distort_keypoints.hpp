@@ -75,6 +75,16 @@ Eigen::Matrix<T, 2, 1> image_from_3d(const Eigen::Matrix<T, 3, 1> &point, const 
     return image_from_3d(rotated_ray, model);
 }
 
+// Overload accepting precomputed inverse rotation matrix (avoids quaternion.inverse() per call)
+template <typename T = double>
+Eigen::Matrix<T, 2, 1> image_from_3d(const Eigen::Matrix<T, 3, 1> &point, const DifferentiableCameraModel<T> &model,
+                                     const Eigen::Matrix<T, 3, 1> &camera_location,
+                                     const Eigen::Matrix<T, 3, 3> &camera_orientation_inverse)
+{
+    const Eigen::Matrix<T, 3, 1> rotated_ray = camera_orientation_inverse * (point - camera_location);
+    return image_from_3d(rotated_ray, model);
+}
+
 inline Eigen::Vector2d image_from_3d(const Eigen::Vector3d &point,
                                      const InverseDifferentiableCameraModel<double> &model,
                                      const Eigen::Vector3d &camera_location,
