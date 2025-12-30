@@ -88,4 +88,8 @@ void generateGeoTIFFOrthomosaic(const std::vector<surface_model> &surfaces, cons
                                 const opencalibration::GeoCoord &coord_system, const std::string &output_path,
                                 int tile_size = 1024);
 
+void generateDSMGeoTIFF(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph,
+                        const opencalibration::GeoCoord &coord_system, const std::string &output_path,
+                        int tile_size = 1024);
+
 } // namespace opencalibration::orthomosaic

@@ -760,4 +760,192 @@ void generateGeoTIFFOrthomosaic(const std::vector<surface_model> &surfaces, cons
     spdlog::info("GeoTIFF orthomosaic generation complete: {}", output_path);
 }
 
+namespace
+{
+// Helper: Create GDAL GeoTIFF dataset for DSM (single float32 band)
+GDALDatasetPtr createDSMGeoTIFF(const std::string &path, int width, int height, double min_x, double max_y, double gsd,
+                                const std::string &wkt)
+{
+    GDALAllRegister();
+
+    GDALDriver *driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    if (!driver)
+    {
+        throw std::runtime_error("GTiff driver not available");
+    }
+
+    char **options = nullptr;
+    options = CSLSetNameValue(options, "TILED", "YES");
+    options = CSLSetNameValue(options, "BLOCKXSIZE", "512");
+    options = CSLSetNameValue(options, "BLOCKYSIZE", "512");
+    options = CSLSetNameValue(options, "COMPRESS", "LZW");
+    options = CSLSetNameValue(options, "BIGTIFF", "IF_SAFER");
+
+    GDALDataset *dataset = driver->Create(path.c_str(), width, height, 1, GDT_Float32, options);
+
+    CSLDestroy(options);
+
+    if (!dataset)
+    {
+        throw std::runtime_error("Failed to create DSM GeoTIFF: " + path);
+    }
+
+    // Set geotransform: [min_x, gsd, 0, max_y, 0, -gsd]
+    double geotransform[6] = {min_x, gsd, 0, max_y, 0, -gsd};
+    dataset->SetGeoTransform(geotransform);
+
+    // Set projection
+    if (!wkt.empty())
+    {
+        dataset->SetProjection(wkt.c_str());
+    }
+
+    // Set nodata value for DSM
+    dataset->GetRasterBand(1)->SetNoDataValue(std::numeric_limits<float>::quiet_NaN());
+
+    return GDALDatasetPtr(dataset);
+}
+
+// Helper: Process a single tile for DSM generation
+void processDSMTile(GDALDataset *dataset, int tile_x, int tile_y, int tile_size, const OrthoMosaicBounds &bounds,
+                    double gsd, int output_width, int output_height, const std::vector<surface_model> &surfaces,
+                    double mean_camera_z)
+{
+    // Calculate tile bounds in pixels
+    int x_offset = tile_x * tile_size;
+    int y_offset = tile_y * tile_size;
+    int tile_width = std::min(tile_size, output_width - x_offset);
+    int tile_height = std::min(tile_size, output_height - y_offset);
+
+    // Allocate tile buffer
+    std::vector<float> tile_buffer(tile_width * tile_height, std::numeric_limits<float>::quiet_NaN());
+
+    // Process pixels in tile
+#pragma omp parallel
+    {
+        std::vector<MeshIntersectionSearcher> searchers;
+        for (const auto &surface : surfaces)
+        {
+            searchers.emplace_back();
+            if (!searchers.back().init(surface.mesh))
+            {
+                spdlog::error("Could not initialize searcher on mesh surface");
+                searchers.pop_back();
+            }
+        }
+
+#pragma omp for schedule(dynamic)
+        for (int local_row = 0; local_row < tile_height; local_row++)
+        {
+            for (int local_col = 0; local_col < tile_width; local_col++)
+            {
+                int global_col = x_offset + local_col;
+                int global_row = y_offset + local_row;
+
+                // World coordinates
+                const double x = global_col * gsd + bounds.min_x;
+                const double y = bounds.max_y - global_row * gsd;
+
+                // Ray-trace to get height
+                const ray_d intersectionRay{{0, 0, -1}, {x, y, mean_camera_z}};
+                double z = NAN;
+                for (auto &searcher : searchers)
+                {
+                    if (searcher.lastResult().type != MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
+                    {
+                        if (!searcher.reinit())
+                        {
+                            continue;
+                        }
+                    }
+
+                    auto intersection = searcher.triangleIntersect(intersectionRay);
+                    if (intersection.type == MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
+                    {
+                        z = intersection.intersectionLocation.z();
+                        break;
+                    }
+                }
+
+                int idx = local_row * tile_width + local_col;
+                tile_buffer[idx] = static_cast<float>(z);
+            }
+        }
+    }
+
+    // Write tile to GeoTIFF
+    CPLErr err = dataset->GetRasterBand(1)->RasterIO(GF_Write, x_offset, y_offset, tile_width, tile_height,
+                                                     tile_buffer.data(), tile_width, tile_height, GDT_Float32, 0, 0);
+
+    if (err != CE_None)
+    {
+        throw std::runtime_error("Failed to write DSM tile to GeoTIFF");
+    }
+}
+
+} // namespace
+
+void generateDSMGeoTIFF(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph,
+                        const opencalibration::GeoCoord &coord_system, const std::string &output_path, int tile_size)
+{
+    spdlog::info("Generating DSM GeoTIFF: {}", output_path);
+
+    PerformanceMeasure p("Generate DSM GeoTIFF");
+
+    // Prepare common context
+    OrthoMosaicContext context = prepareOrthoMosaicContext(surfaces, graph);
+
+    spdlog::info("DSM: x range [{}; {}]  y range [{}; {}]  mean surface {}", context.bounds.min_x, context.bounds.max_x,
+                 context.bounds.min_y, context.bounds.max_y, context.bounds.mean_surface_z);
+
+    // Calculate output dimensions
+    int width = static_cast<int>((context.bounds.max_x - context.bounds.min_x) / context.gsd);
+    int height = static_cast<int>((context.bounds.max_y - context.bounds.min_y) / context.gsd);
+
+    if (width <= 0)
+        width = 100;
+    if (height <= 0)
+        height = 100;
+
+    spdlog::info("DSM GSD: {}  Output dimensions: {}x{} pixels", context.gsd, width, height);
+
+    // Create GeoTIFF dataset
+    std::string wkt = coord_system.getWKT();
+    GDALDatasetPtr dataset = createDSMGeoTIFF(output_path, width, height, context.bounds.min_x, context.bounds.max_y,
+                                              context.gsd, wkt);
+
+    // Process tiles
+    int num_tiles_x = (width + tile_size - 1) / tile_size;
+    int num_tiles_y = (height + tile_size - 1) / tile_size;
+    int total_tiles = num_tiles_x * num_tiles_y;
+
+    spdlog::info("DSM: Processing {} tiles ({}x{} grid, tile size: {}x{})", total_tiles, num_tiles_x, num_tiles_y,
+                 tile_size, tile_size);
+
+    int completed_tiles = 0;
+    auto start_time = std::chrono::steady_clock::now();
+
+    for (int tile_y = 0; tile_y < num_tiles_y; tile_y++)
+    {
+        for (int tile_x = 0; tile_x < num_tiles_x; tile_x++)
+        {
+            processDSMTile(dataset.get(), tile_x, tile_y, tile_size, context.bounds, context.gsd, width, height,
+                           surfaces, context.mean_camera_z);
+
+            completed_tiles++;
+
+            if (completed_tiles % 10 == 0 || completed_tiles == total_tiles)
+            {
+                auto now = std::chrono::steady_clock::now();
+                auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - start_time).count();
+                double progress = 100.0 * completed_tiles / total_tiles;
+                spdlog::info("DSM Progress: {:.1f}% ({}/{} tiles, {} seconds)", progress, completed_tiles, total_tiles,
+                             elapsed);
+            }
+        }
+    }
+
+    spdlog::info("DSM GeoTIFF generation complete: {}", output_path);
+}
+
 } // namespace opencalibration::orthomosaic

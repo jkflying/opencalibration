@@ -36,6 +36,7 @@ int main(int argc, char *argv[])
     std::string source_file = "";
     std::string overlap_file = "";
     std::string geotiff_file = "";
+    std::string dsm_file = "";
     bool printHelp = false;
 
     CommandLine args("Run the opencalibration pipeline from the command line");
@@ -52,6 +53,7 @@ int main(int argc, char *argv[])
     args.addArgument({"--source-file"}, &source_file, "Output source index image file");
     args.addArgument({"--overlap-file"}, &overlap_file, "Output overlap count image file");
     args.addArgument({"--ortho-geotiff"}, &geotiff_file, "Output full-resolution georeferenced GeoTIFF orthomosaic");
+    args.addArgument({"--dsm-geotiff"}, &dsm_file, "Output Digital Surface Model (DSM) GeoTIFF");
     args.addArgument({"-h", "--help"}, &printHelp, "You must specify at least an input file");
 
     try
@@ -113,6 +115,7 @@ int main(int argc, char *argv[])
     p.set_generate_thumbnails(generate_thumbnails);
     p.set_thumbnail_filenames(thumbnail_file, source_file, overlap_file);
     p.set_geotiff_filename(geotiff_file);
+    p.set_dsm_filename(dsm_file);
 
     p.set_callback([](const Pipeline::StepCompletionInfo &info) {
         std::cout << Pipeline::toString(info.state);

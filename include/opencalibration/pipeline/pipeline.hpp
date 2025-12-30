@@ -100,6 +100,15 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
         }
     }
 
+    void set_dsm_filename(const std::string &dsm)
+    {
+        _dsm_filename = dsm;
+        if (!dsm.empty())
+        {
+            _generate_geotiff = true; // DSM generation uses the same pipeline stage
+        }
+    }
+
     static std::string toString(PipelineState state);
 
   protected:
@@ -142,5 +151,6 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
     std::string _overlap_filename = "";
     bool _generate_geotiff = false;
     std::string _geotiff_filename = "";
+    std::string _dsm_filename = "";
 };
 } // namespace opencalibration

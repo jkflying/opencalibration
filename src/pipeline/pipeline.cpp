@@ -245,12 +245,20 @@ Pipeline::Transition Pipeline::generate_thumbnail()
 
 Pipeline::Transition Pipeline::generate_geotiff()
 {
-    if (_geotiff_filename.empty())
+    if (_geotiff_filename.empty() && _dsm_filename.empty())
     {
         USM_DECISION_TABLE(Transition::NEXT, );
     }
 
-    orthomosaic::generateGeoTIFFOrthomosaic(_surfaces, _graph, _coordinate_system, _geotiff_filename);
+    if (!_geotiff_filename.empty())
+    {
+        orthomosaic::generateGeoTIFFOrthomosaic(_surfaces, _graph, _coordinate_system, _geotiff_filename);
+    }
+
+    if (!_dsm_filename.empty())
+    {
+        orthomosaic::generateDSMGeoTIFF(_surfaces, _graph, _coordinate_system, _dsm_filename);
+    }
 
     USM_DECISION_TABLE(Transition::NEXT, );
 }
