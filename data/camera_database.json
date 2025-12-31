@@ -7,10 +7,10 @@
       "lens_model": "",
       "sensor_width_px": 5344,
       "sensor_height_px": 4016,
-      "radial_distortion": [0.0, 0.0, 0.0],
-      "tangential_distortion": [0.0, 0.0],
+      "radial_distortion": [-0.205, 0.023, 0.005],
+      "tangential_distortion": [0.01, -0.06],
       "principal_point_offset": [0.0, 0.0],
-      "notes": "Parrot Anafi 21MP. No factory calibration available - will be optimized."
+      "notes": "Parrot Anafi 21MP"
     },
     {
       "make": "DJI",
