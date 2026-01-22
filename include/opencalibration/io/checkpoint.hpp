@@ -1,7 +1,7 @@
 #pragma once
 
-#include <opencalibration/types/pipeline_state.hpp>
 #include <opencalibration/types/measurement_graph.hpp>
+#include <opencalibration/types/pipeline_state.hpp>
 #include <opencalibration/types/surface_model.hpp>
 
 #include <string>
