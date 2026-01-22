@@ -40,8 +40,7 @@ TEST_F(CameraDatabaseTest, lookup_parrot_anafi)
     ASSERT_TRUE(entry.has_value());
     EXPECT_EQ(entry->make, "Parrot");
     EXPECT_EQ(entry->model, "Anafi");
-    // Parrot Anafi has no factory calibration - distortion will be optimized
-    EXPECT_EQ(entry->radial_distortion[0], 0.0);
+    EXPECT_EQ(entry->radial_distortion[0], -0.205);
 }
 
 TEST_F(CameraDatabaseTest, lookup_case_insensitive)

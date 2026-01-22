@@ -37,6 +37,9 @@ int main(int argc, char *argv[])
     std::string overlap_file = "";
     std::string geotiff_file = "";
     std::string dsm_file = "";
+    std::string checkpoint_save = "";
+    std::string checkpoint_load = "";
+    std::string resume_from = "";
     bool printHelp = false;
 
     CommandLine args("Run the opencalibration pipeline from the command line");
@@ -54,6 +57,11 @@ int main(int argc, char *argv[])
     args.addArgument({"--overlap-file"}, &overlap_file, "Output overlap count image file");
     args.addArgument({"--ortho-geotiff"}, &geotiff_file, "Output full-resolution georeferenced GeoTIFF orthomosaic");
     args.addArgument({"--dsm-geotiff"}, &dsm_file, "Output Digital Surface Model (DSM) GeoTIFF");
+    args.addArgument({"-cs", "--checkpoint-save"}, &checkpoint_save, "Save checkpoint to directory after processing");
+    args.addArgument({"-cl", "--checkpoint-load"}, &checkpoint_load, "Load and resume from checkpoint directory");
+    args.addArgument({"--resume-from"}, &resume_from,
+                     "Resume from specific stage (INITIAL_GLOBAL_RELAX, CAMERA_PARAMETER_RELAX, FINAL_GLOBAL_RELAX, "
+                     "GENERATE_THUMBNAIL, GENERATE_GEOTIFF)");
     args.addArgument({"-h", "--help"}, &printHelp, "You must specify at least an input file");
 
     try
@@ -117,6 +125,27 @@ int main(int argc, char *argv[])
     p.set_geotiff_filename(geotiff_file);
     p.set_dsm_filename(dsm_file);
 
+    if (!checkpoint_load.empty())
+    {
+        spdlog::info("Loading checkpoint from {}", checkpoint_load);
+        if (!p.loadCheckpoint(checkpoint_load))
+        {
+            spdlog::error("Failed to load checkpoint from {}", checkpoint_load);
+            return -1;
+        }
+        spdlog::info("Loaded checkpoint, current state: {}", Pipeline::toString(p.getState()));
+
+        if (!resume_from.empty())
+        {
+            PipelineState target_state = Pipeline::fromString(resume_from);
+            if (!p.resumeFromState(target_state))
+            {
+                spdlog::error("Failed to resume from state {}", resume_from);
+                return -1;
+            }
+        }
+    }
+
     p.set_callback([](const Pipeline::StepCompletionInfo &info) {
         std::cout << Pipeline::toString(info.state);
         size_t total_relaxed = 0;
@@ -146,21 +175,52 @@ int main(int argc, char *argv[])
         }
     });
 
-    std::vector<std::string> files;
-    if (input_dir.size() > 0)
+    if (checkpoint_load.empty())
     {
-        for (const auto &entry : std::filesystem::directory_iterator(input_dir))
+        std::vector<std::string> files;
+        if (input_dir.size() > 0)
         {
-            files.push_back(entry.path());
+            for (const auto &entry : std::filesystem::directory_iterator(input_dir))
+            {
+                files.push_back(entry.path());
+            }
         }
+
+        std::sort(files.begin(), files.end());
+        p.add(files);
+    }
+    else if (input_dir.size() > 0)
+    {
+        spdlog::warn("Input directory ignored when loading from checkpoint");
     }
 
-    std::sort(files.begin(), files.end());
-    p.add(files);
-
+    PipelineState previous_state = p.getState();
     while (p.getState() != PipelineState::COMPLETE)
     {
         p.iterateOnce();
+
+        if (!checkpoint_save.empty() && p.getState() != previous_state)
+        {
+            spdlog::info("Saving checkpoint to {} (state: {})", checkpoint_save, Pipeline::toString(p.getState()));
+            if (!p.saveCheckpoint(checkpoint_save))
+            {
+                spdlog::error("Failed to save checkpoint to {}", checkpoint_save);
+            }
+            previous_state = p.getState();
+        }
+    }
+
+    if (!checkpoint_save.empty())
+    {
+        spdlog::info("Saving final checkpoint to {}", checkpoint_save);
+        if (!p.saveCheckpoint(checkpoint_save))
+        {
+            spdlog::error("Failed to save checkpoint to {}", checkpoint_save);
+        }
+        else
+        {
+            std::cout << "Checkpoint saved to " << checkpoint_save << std::endl;
+        }
     }
 
     if (output_file.size() > 0)

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <opencalibration/geo_coord/geo_coord.hpp>
+#include <opencalibration/pipeline/pipeline_state.hpp>
 #include <opencalibration/types/measurement_graph.hpp>
 #include <opencalibration/types/surface_model.hpp>
 
@@ -20,17 +21,6 @@ namespace opencalibration
 class LoadStage;
 class LinkStage;
 class RelaxStage;
-
-enum class PipelineState
-{
-    INITIAL_PROCESSING,
-    INITIAL_GLOBAL_RELAX,
-    CAMERA_PARAMETER_RELAX,
-    FINAL_GLOBAL_RELAX,
-    GENERATE_THUMBNAIL,
-    GENERATE_GEOTIFF,
-    COMPLETE
-};
 
 enum class PipelineTransition
 {
@@ -109,7 +99,12 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
         }
     }
 
+    bool saveCheckpoint(const std::string &checkpoint_dir);
+    bool loadCheckpoint(const std::string &checkpoint_dir);
+    bool resumeFromState(PipelineState target_state);
+
     static std::string toString(PipelineState state);
+    static PipelineState fromString(const std::string &str);
 
   protected:
     PipelineState chooseNextState(PipelineState currentState, PipelineTransition transition) override;
@@ -123,6 +118,8 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
     PipelineTransition generate_thumbnail();
     PipelineTransition generate_geotiff();
     PipelineTransition complete();
+
+    void rebuildGPSLocationsTree();
 
     std::vector<size_t> _previous_loaded_ids, _previous_linked_ids, _next_loaded_ids, _next_linked_ids;
 

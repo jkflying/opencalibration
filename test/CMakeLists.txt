@@ -6,6 +6,7 @@ endif()
 
 add_executable(functional_tests gtest_main.cpp
                                 test_camera_database.cpp
+                                test_checkpoint.cpp
                                 test_extract_features.cpp
                                 test_extract_metadata.cpp
                                 test_match.cpp

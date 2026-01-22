@@ -57,6 +57,9 @@ class StateMachine {
   virtual Transition runCurrentState(State currentState) = 0;  // a big switch
   virtual State chooseNextState(State currentState, Transition transition) = 0;  // nested switches
 
+  void setCurrentState(State state) { m_currentState = state; }
+  void setStateRunCount(uint64_t count) { m_stateRunCount = count; }
+
  private:
   StateEnum m_currentState;
   uint64_t m_stateRunCount;

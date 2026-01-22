@@ -6,6 +6,9 @@
 
 #include <opencalibration/combinatorics/interleave.hpp>
 #include <opencalibration/distort/distort_keypoints.hpp>
+#include <opencalibration/io/checkpoint.hpp>
+#include <opencalibration/io/cv_raster_conversion.hpp>
+#include <opencalibration/ortho/ortho.hpp>
 #include <opencalibration/performance/performance.hpp>
 #include <opencalibration/surface/intersect.hpp>
 
@@ -15,8 +18,6 @@
 #include <chrono>
 #include <iostream>
 #include <omp.h>
-#include <opencalibration/io/cv_raster_conversion.hpp>
-#include <opencalibration/ortho/ortho.hpp>
 
 using namespace std::chrono_literals;
 using fvec = std::vector<std::function<void()>>;
@@ -289,6 +290,99 @@ std::string Pipeline::toString(PipelineState state)
     };
 
     return "Error";
+}
+
+PipelineState Pipeline::fromString(const std::string &str)
+{
+    if (str == "INITIAL_PROCESSING" || str == "Initial Processing")
+        return State::INITIAL_PROCESSING;
+    if (str == "INITIAL_GLOBAL_RELAX" || str == "Initial global Relax")
+        return State::INITIAL_GLOBAL_RELAX;
+    if (str == "CAMERA_PARAMETER_RELAX" || str == "Camera Parameter Relax")
+        return State::CAMERA_PARAMETER_RELAX;
+    if (str == "FINAL_GLOBAL_RELAX" || str == "Final Global Relax")
+        return State::FINAL_GLOBAL_RELAX;
+    if (str == "GENERATE_THUMBNAIL" || str == "Generate Thumbnail")
+        return State::GENERATE_THUMBNAIL;
+    if (str == "GENERATE_GEOTIFF" || str == "Generate GeoTIFF")
+        return State::GENERATE_GEOTIFF;
+    if (str == "COMPLETE" || str == "Complete")
+        return State::COMPLETE;
+
+    spdlog::warn("Unknown pipeline state: {}, defaulting to INITIAL_PROCESSING", str);
+    return State::INITIAL_PROCESSING;
+}
+
+void Pipeline::rebuildGPSLocationsTree()
+{
+    _imageGPSLocations = jk::tree::KDTree<size_t, 3>();
+
+    for (auto it = _graph.cnodebegin(); it != _graph.cnodeend(); ++it)
+    {
+        const auto &node = it->second;
+        std::array<double, 3> gps_pos = {node.payload.position.x(), node.payload.position.y(),
+                                         node.payload.position.z()};
+        _imageGPSLocations.addPoint(gps_pos, it->first);
+    }
+}
+
+bool Pipeline::saveCheckpoint(const std::string &checkpoint_dir)
+{
+    CheckpointData data;
+    data.graph = _graph;
+    data.surfaces = _surfaces;
+    data.origin_latitude = _coordinate_system.getOriginLatitude();
+    data.origin_longitude = _coordinate_system.getOriginLongitude();
+    data.state = getState();
+    data.state_run_count = stateRunCount();
+
+    return opencalibration::saveCheckpoint(data, checkpoint_dir);
+}
+
+bool Pipeline::loadCheckpoint(const std::string &checkpoint_dir)
+{
+    CheckpointData data;
+
+    if (!opencalibration::loadCheckpoint(checkpoint_dir, data))
+    {
+        return false;
+    }
+
+    _graph = std::move(data.graph);
+    _surfaces = std::move(data.surfaces);
+
+    if (data.origin_latitude != 0.0 || data.origin_longitude != 0.0)
+    {
+        _coordinate_system.setOrigin(data.origin_latitude, data.origin_longitude);
+    }
+
+    setCurrentState(data.state);
+    setStateRunCount(data.state_run_count);
+
+    rebuildGPSLocationsTree();
+
+    spdlog::info("Loaded checkpoint with state: {}, run_count: {}", toString(data.state), data.state_run_count);
+
+    return true;
+}
+
+bool Pipeline::resumeFromState(PipelineState target_state)
+{
+    PipelineState current = getState();
+
+    if (static_cast<int>(target_state) > static_cast<int>(current))
+    {
+        spdlog::error("Cannot resume to state {} from {}: target state is later than current", toString(target_state),
+                      toString(current));
+        return false;
+    }
+
+    setCurrentState(target_state);
+    setStateRunCount(0);
+
+    spdlog::info("Resuming from state: {}", toString(target_state));
+
+    return true;
 }
 
 } // namespace opencalibration

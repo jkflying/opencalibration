@@ -19,9 +19,21 @@ bool GeoCoord::isInitialized() const
     return _to_local != nullptr && _to_wgs84 != nullptr;
 }
 
+double GeoCoord::getOriginLatitude() const
+{
+    return _origin_latitude;
+}
+
+double GeoCoord::getOriginLongitude() const
+{
+    return _origin_longitude;
+}
+
 bool GeoCoord::setOrigin(double latitude, double longitude)
 {
     _to_local.reset();
+    _origin_latitude = latitude;
+    _origin_longitude = longitude;
 
     OGRSpatialReference source, dest;
     const OGRErr errS = source.SetGeogCS("Standard WGS84", "World Geodetic System 1984", "WGS84 Spheroid",
