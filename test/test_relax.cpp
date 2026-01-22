@@ -2,6 +2,7 @@
 #include <opencalibration/distort/distort_keypoints.hpp>
 #include <opencalibration/relax/relax.hpp>
 #include <opencalibration/relax/relax_cost_function.hpp>
+#include <opencalibration/relax/relax_group.hpp>
 #include <opencalibration/relax/relax_problem.hpp>
 #include <opencalibration/types/measurement_graph.hpp>
 #include <opencalibration/types/node_pose.hpp>
@@ -10,6 +11,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <random>
 
 using namespace opencalibration;
 using namespace std::chrono_literals;
@@ -617,4 +619,372 @@ TEST_F(relax_group, measurement_3_images_points_internals_point_triangulation_ac
             moved_count++;
     }
     EXPECT_LT(moved_count, 30);
+}
+
+// Test fixture for incremental optimization with multiple cameras
+struct incremental_relax : public ::testing::Test
+{
+    static constexpr size_t NUM_CAMERAS = 25; // 5x5 grid to test connection limiting (max 10)
+    static constexpr size_t GRID_WIDTH = 5;
+    static constexpr size_t GRID_HEIGHT = 5;
+    std::vector<size_t> camera_ids;
+    MeasurementGraph graph;
+    std::shared_ptr<CameraModel> model;
+    std::vector<Eigen::Quaterniond> ground_ori;
+    std::vector<Eigen::Vector3d> ground_pos;
+    jk::tree::KDTree<size_t, 3> imageGPSLocations;
+
+    void init_cameras()
+    {
+        camera_ids.resize(NUM_CAMERAS);
+        ground_ori.resize(NUM_CAMERAS);
+        ground_pos.resize(NUM_CAMERAS);
+
+        auto down = Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX());
+
+        // Create a 5x5 grid of cameras looking downward with slight variations
+        for (size_t i = 0; i < NUM_CAMERAS; i++)
+        {
+            double x = 10 + (i % GRID_WIDTH) * 2; // x: 10, 12, 14, 16, 18
+            double y = 10 + (i / GRID_WIDTH) * 2; // y: 10, 12, 14, 16, 18
+            double angle_offset = 0.05 * (static_cast<double>(i) - NUM_CAMERAS / 2.0);
+
+            ground_ori[i] = Eigen::Quaterniond(Eigen::AngleAxisd(angle_offset, Eigen::Vector3d::UnitZ()) * down);
+            ground_pos[i] = Eigen::Vector3d(x, y, 10);
+        }
+
+        model = std::make_shared<CameraModel>();
+        model->focal_length_pixels = 600;
+        model->principle_point << 400, 300;
+        model->pixels_cols = 800;
+        model->pixels_rows = 600;
+        model->projection_type = opencalibration::ProjectionType::PLANAR;
+        model->id = 42;
+
+        for (size_t i = 0; i < NUM_CAMERAS; i++)
+        {
+            image img;
+            img.orientation = ground_ori[i];
+            img.position = ground_pos[i];
+            img.model = model;
+            camera_ids[i] = graph.addNode(std::move(img));
+
+            // Add to KD-tree for neighbor lookups
+            imageGPSLocations.addPoint({ground_pos[i].x(), ground_pos[i].y(), ground_pos[i].z()}, camera_ids[i]);
+        }
+    }
+
+    point_cloud generate_planar_points()
+    {
+        point_cloud vec3d;
+        vec3d.reserve(400); // More points for larger camera grid
+        for (int i = 0; i < 20; i++)
+        {
+            for (int j = 0; j < 20; j++)
+            {
+                // Points on a nearly flat plane below the cameras, covering the whole grid
+                vec3d.emplace_back(9 + i * 0.5, 9 + j * 0.5, -5 + 1e-3 * i + 1e-2 * j);
+            }
+        }
+        return vec3d;
+    }
+
+    void add_point_measurements_between_cameras(const point_cloud &points, size_t cam_a, size_t cam_b)
+    {
+        // Project points into both cameras and create correspondences
+        auto *node_a = graph.getNode(camera_ids[cam_a]);
+        auto *node_b = graph.getNode(camera_ids[cam_b]);
+
+        camera_relations relation;
+
+        for (size_t p_idx = 0; p_idx < points.size(); p_idx++)
+        {
+            const Eigen::Vector3d &p = points[p_idx];
+
+            // Project into camera A
+            Eigen::Vector3d ray_a = ground_ori[cam_a].inverse() * (p - ground_pos[cam_a]).normalized();
+            Eigen::Vector2d pixel_a = image_from_3d(ray_a, *model);
+
+            // Project into camera B
+            Eigen::Vector3d ray_b = ground_ori[cam_b].inverse() * (p - ground_pos[cam_b]).normalized();
+            Eigen::Vector2d pixel_b = image_from_3d(ray_b, *model);
+
+            // Check if both projections are within image bounds
+            if (pixel_a.x() >= 0 && pixel_a.x() < model->pixels_cols && pixel_a.y() >= 0 &&
+                pixel_a.y() < model->pixels_rows && pixel_b.x() >= 0 && pixel_b.x() < model->pixels_cols &&
+                pixel_b.y() >= 0 && pixel_b.y() < model->pixels_rows)
+            {
+                // Add features to both nodes
+                feature_2d feat_a, feat_b;
+                feat_a.location = pixel_a;
+                feat_b.location = pixel_b;
+
+                size_t feat_idx_a = node_a->payload.features.size();
+                size_t feat_idx_b = node_b->payload.features.size();
+                node_a->payload.features.push_back(feat_a);
+                node_b->payload.features.push_back(feat_b);
+
+                relation.inlier_matches.emplace_back(
+                    feature_match_denormalized{pixel_a, pixel_b, feat_idx_a, feat_idx_b, p_idx});
+            }
+        }
+
+        if (!relation.inlier_matches.empty())
+        {
+            graph.addEdge(std::move(relation), camera_ids[cam_a], camera_ids[cam_b]);
+        }
+    }
+
+    void add_all_neighbor_measurements(const point_cloud &points)
+    {
+        // Create edges between adjacent cameras in the grid (8-connected neighborhood)
+        for (size_t i = 0; i < NUM_CAMERAS; i++)
+        {
+            for (size_t j = i + 1; j < NUM_CAMERAS; j++)
+            {
+                double dist = (ground_pos[i] - ground_pos[j]).norm();
+                if (dist < 3.5) // Connect cameras within ~sqrt(8) units (diagonal neighbors)
+                {
+                    add_point_measurements_between_cameras(points, i, j);
+                }
+            }
+        }
+    }
+
+    void disturb_camera_orientation(size_t cam_idx, double noise_rad)
+    {
+        graph.getNode(camera_ids[cam_idx])->payload.orientation *=
+            Eigen::Quaterniond(Eigen::AngleAxisd(noise_rad, Eigen::Vector3d::UnitY()));
+    }
+
+    // Get the center camera index (has the most neighbors)
+    size_t get_center_camera_idx() const
+    {
+        return (GRID_HEIGHT / 2) * GRID_WIDTH + (GRID_WIDTH / 2); // Center of 5x5 grid = index 12
+    }
+
+    // Count how many edges a camera has
+    size_t count_camera_edges(size_t cam_idx) const
+    {
+        return graph.getNode(camera_ids[cam_idx])->getEdges().size();
+    }
+};
+
+TEST_F(incremental_relax, synthetic_planar_points_incremental_optimization)
+{
+    // GIVEN: A set of 25 calibrated cameras (5x5 grid) with synthetic measurements on a plane
+    init_cameras();
+    auto points = generate_planar_points();
+    add_all_neighbor_measurements(points);
+
+    // AND: The center camera (which has 8 neighbors) is treated as "newly added" with a disturbed orientation
+    const size_t new_camera_idx = get_center_camera_idx();
+    const double noise_rad = 0.2; // Add 0.2 radians of noise
+    disturb_camera_orientation(new_camera_idx, noise_rad);
+
+    // Verify setup: center camera should have multiple edges
+    EXPECT_GE(count_camera_edges(new_camera_idx), 8) << "Center camera should have at least 8 neighbors";
+
+    // Record the initial error for the new camera
+    double initial_error = Eigen::AngleAxisd(graph.getNode(camera_ids[new_camera_idx])->payload.orientation.inverse() *
+                                             ground_ori[new_camera_idx])
+                               .angle();
+    EXPECT_GT(initial_error, 0.1); // Should have significant initial error
+
+    // WHEN: We run incremental optimization using RelaxGroup with the new camera as the primary node
+    std::vector<size_t> new_camera_ids = {camera_ids[new_camera_idx]};
+    RelaxGroup group;
+    group.init(graph, new_camera_ids, imageGPSLocations, 2 /* graph_connection_depth */,
+               {Option::ORIENTATION, Option::GROUND_PLANE});
+
+    // Run the optimization (this includes both phase 1 and phase 2)
+    group.run(graph, {});
+
+    // Finalize to write results back to the graph
+    auto optimized_ids = group.finalize(graph);
+
+    // THEN: The new camera's orientation should converge toward the ground truth
+    double final_error = Eigen::AngleAxisd(graph.getNode(camera_ids[new_camera_idx])->payload.orientation.inverse() *
+                                           ground_ori[new_camera_idx])
+                             .angle();
+
+    // The error should be significantly reduced
+    EXPECT_LT(final_error, initial_error * 0.5) << "Expected error reduction from " << initial_error << " to less than "
+                                                << initial_error * 0.5 << ", got " << final_error;
+    EXPECT_LT(final_error, 0.05) << "Expected final error < 0.05 rad, got " << final_error;
+
+    // AND: The optimized IDs should include the new camera
+    EXPECT_TRUE(std::find(optimized_ids.begin(), optimized_ids.end(), camera_ids[new_camera_idx]) !=
+                optimized_ids.end());
+}
+
+TEST_F(incremental_relax, synthetic_planar_points_convergence_with_measurement_noise)
+{
+    // GIVEN: A set of 25 calibrated cameras with synthetic measurements on a plane
+    init_cameras();
+    auto points = generate_planar_points();
+
+    // Add measurement noise by slightly shifting points before projection
+    std::mt19937 gen(42);                                    // Fixed seed for reproducibility
+    std::normal_distribution<double> noise_dist(0.0, 0.001); // Small position noise
+
+    point_cloud noisy_points;
+    noisy_points.reserve(points.size());
+    for (const auto &p : points)
+    {
+        noisy_points.emplace_back(p.x() + noise_dist(gen), p.y() + noise_dist(gen), p.z() + noise_dist(gen));
+    }
+
+    add_all_neighbor_measurements(noisy_points);
+
+    // AND: The center camera has a disturbed orientation
+    const size_t new_camera_idx = get_center_camera_idx();
+    const double noise_rad = 0.15;
+    disturb_camera_orientation(new_camera_idx, noise_rad);
+
+    double initial_error = Eigen::AngleAxisd(graph.getNode(camera_ids[new_camera_idx])->payload.orientation.inverse() *
+                                             ground_ori[new_camera_idx])
+                               .angle();
+
+    // WHEN: We run incremental optimization
+    std::vector<size_t> new_camera_ids = {camera_ids[new_camera_idx]};
+    RelaxGroup group;
+    group.init(graph, new_camera_ids, imageGPSLocations, 2, {Option::ORIENTATION, Option::GROUND_PLANE});
+    group.run(graph, {});
+    group.finalize(graph);
+
+    // THEN: The optimization should still converge despite measurement noise
+    double final_error = Eigen::AngleAxisd(graph.getNode(camera_ids[new_camera_idx])->payload.orientation.inverse() *
+                                           ground_ori[new_camera_idx])
+                             .angle();
+
+    EXPECT_LT(final_error, initial_error) << "Optimization should reduce error";
+    EXPECT_LT(final_error, 0.1) << "Expected final error < 0.1 rad with noise, got " << final_error;
+}
+
+TEST_F(incremental_relax, multiple_new_cameras_incremental)
+{
+    // GIVEN: A set of 25 calibrated cameras
+    init_cameras();
+    auto points = generate_planar_points();
+    add_all_neighbor_measurements(points);
+
+    // AND: Multiple cameras in a row are treated as "newly added" with disturbed orientations
+    // Use cameras in the middle row: indices 10, 11, 12, 13, 14
+    std::vector<size_t> new_camera_indices = {10, 11, 12, 13, 14};
+    for (size_t idx : new_camera_indices)
+    {
+        disturb_camera_orientation(idx, 0.15);
+    }
+
+    std::vector<double> initial_errors;
+    for (size_t idx : new_camera_indices)
+    {
+        initial_errors.push_back(
+            Eigen::AngleAxisd(graph.getNode(camera_ids[idx])->payload.orientation.inverse() * ground_ori[idx]).angle());
+    }
+
+    // WHEN: We run incremental optimization with multiple new cameras
+    std::vector<size_t> new_camera_ids;
+    for (size_t idx : new_camera_indices)
+    {
+        new_camera_ids.push_back(camera_ids[idx]);
+    }
+
+    RelaxGroup group;
+    group.init(graph, new_camera_ids, imageGPSLocations, 2, {Option::ORIENTATION, Option::GROUND_PLANE});
+    group.run(graph, {});
+    group.finalize(graph);
+
+    // THEN: All new cameras should converge
+    for (size_t i = 0; i < new_camera_indices.size(); i++)
+    {
+        size_t idx = new_camera_indices[i];
+        double final_error =
+            Eigen::AngleAxisd(graph.getNode(camera_ids[idx])->payload.orientation.inverse() * ground_ori[idx]).angle();
+
+        EXPECT_LT(final_error, initial_errors[i]) << "Camera " << idx << " should improve";
+        EXPECT_LT(final_error, 0.1) << "Camera " << idx << " final error should be < 0.1 rad";
+    }
+}
+
+TEST_F(incremental_relax, connection_limiting_with_many_neighbors)
+{
+    // GIVEN: A set of 25 calibrated cameras where the center camera has many neighbors
+    init_cameras();
+    auto points = generate_planar_points();
+    add_all_neighbor_measurements(points);
+
+    // The center camera should have 8 direct neighbors (8-connected in a 5x5 grid)
+    const size_t center_idx = get_center_camera_idx();
+    size_t num_edges = count_camera_edges(center_idx);
+    EXPECT_EQ(num_edges, 8) << "Center camera should have exactly 8 neighbors in 5x5 grid";
+
+    // Disturb the center camera
+    disturb_camera_orientation(center_idx, 0.2);
+
+    double initial_error =
+        Eigen::AngleAxisd(graph.getNode(camera_ids[center_idx])->payload.orientation.inverse() * ground_ori[center_idx])
+            .angle();
+
+    // WHEN: We run incremental optimization with high graph_connection_depth
+    // This should trigger the connection limiting (max 10 connected cameras)
+    // Even though many cameras are included in _local_poses for measurements,
+    // only primary + top 10 connected are actually optimized (free to move)
+    std::vector<size_t> new_camera_ids = {camera_ids[center_idx]};
+    RelaxGroup group;
+    group.init(graph, new_camera_ids, imageGPSLocations, 3 /* high depth to get many connections */,
+               {Option::ORIENTATION, Option::GROUND_PLANE});
+    group.run(graph, {});
+    auto all_node_ids = group.finalize(graph);
+
+    // THEN: The optimization should converge
+    double final_error =
+        Eigen::AngleAxisd(graph.getNode(camera_ids[center_idx])->payload.orientation.inverse() * ground_ori[center_idx])
+            .angle();
+
+    EXPECT_LT(final_error, initial_error) << "Optimization should reduce error";
+    EXPECT_LT(final_error, 0.05) << "Expected final error < 0.05 rad, got " << final_error;
+
+    // AND: Many nodes should be included in the optimization graph (for measurements)
+    // but the connection limiting ensures only a subset are actually optimized.
+    // finalize() returns all nodes that were part of the problem (including fixed ones).
+    EXPECT_GT(all_node_ids.size(), 11) << "With depth 3, many nodes should be in the problem";
+
+    // The key test is that convergence still works even with the limiting,
+    // and that the primary camera was definitely optimized
+    EXPECT_TRUE(std::find(all_node_ids.begin(), all_node_ids.end(), camera_ids[center_idx]) != all_node_ids.end());
+}
+
+TEST_F(incremental_relax, two_phase_optimization_improves_convergence)
+{
+    // GIVEN: A set of 25 calibrated cameras
+    init_cameras();
+    auto points = generate_planar_points();
+    add_all_neighbor_measurements(points);
+
+    // AND: The center camera has a large disturbance (harder to converge)
+    const size_t center_idx = get_center_camera_idx();
+    const double large_noise_rad = 0.3; // 0.3 radians = ~17 degrees
+    disturb_camera_orientation(center_idx, large_noise_rad);
+
+    double initial_error =
+        Eigen::AngleAxisd(graph.getNode(camera_ids[center_idx])->payload.orientation.inverse() * ground_ori[center_idx])
+            .angle();
+    EXPECT_GT(initial_error, 0.25); // Confirm large initial error
+
+    // WHEN: We run incremental optimization (which uses two-phase approach)
+    std::vector<size_t> new_camera_ids = {camera_ids[center_idx]};
+    RelaxGroup group;
+    group.init(graph, new_camera_ids, imageGPSLocations, 2, {Option::ORIENTATION, Option::GROUND_PLANE});
+    group.run(graph, {});
+    group.finalize(graph);
+
+    // THEN: Even with large initial error, the optimization should converge
+    double final_error =
+        Eigen::AngleAxisd(graph.getNode(camera_ids[center_idx])->payload.orientation.inverse() * ground_ori[center_idx])
+            .angle();
+
+    EXPECT_LT(final_error, initial_error * 0.3) << "Should achieve at least 70% error reduction";
+    EXPECT_LT(final_error, 0.1) << "Expected final error < 0.1 rad even with large initial disturbance";
 }
