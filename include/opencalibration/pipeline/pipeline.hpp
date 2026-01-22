@@ -1,8 +1,8 @@
 #pragma once
 
 #include <opencalibration/geo_coord/geo_coord.hpp>
-#include <opencalibration/pipeline/pipeline_state.hpp>
 #include <opencalibration/types/measurement_graph.hpp>
+#include <opencalibration/types/pipeline_state.hpp>
 #include <opencalibration/types/surface_model.hpp>
 
 #include <jk/KDTree.h>
