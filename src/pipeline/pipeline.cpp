@@ -232,6 +232,12 @@ Pipeline::Transition Pipeline::generate_thumbnail()
         USM_DECISION_TABLE(Transition::NEXT, );
     }
 
+    if (_surfaces.empty())
+    {
+        spdlog::warn("No surfaces available for thumbnail generation");
+        USM_DECISION_TABLE(Transition::NEXT, );
+    }
+
     auto thumbnail = orthomosaic::generateOrthomosaic(_surfaces, _graph);
 
     if (!_thumbnail_filename.empty())

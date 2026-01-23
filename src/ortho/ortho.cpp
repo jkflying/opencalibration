@@ -224,9 +224,9 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
     double image_width = (context.bounds.max_x - context.bounds.min_x) / context.gsd;
     double image_height = (context.bounds.max_y - context.bounds.min_y) / context.gsd;
 
-    if (!std::isfinite(image_width) || image_width <= 0)
+    if (!std::isfinite(image_width) || image_width < 1)
         image_width = 100;
-    if (!std::isfinite(image_height) || image_height <= 0)
+    if (!std::isfinite(image_height) || image_height < 1)
         image_height = 100;
 
     spdlog::info("requested image_width: {} image_height: {}", image_width, image_height);
