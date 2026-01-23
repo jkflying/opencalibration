@@ -39,8 +39,7 @@ OrthoMosaicBounds calculateBoundsAndMeanZ(const std::vector<surface_model> &surf
 {
     const double inf = std::numeric_limits<double>::infinity();
     double min_x = inf, min_y = inf, max_x = -inf, max_y = -inf;
-    double mean_surface_z = 0;
-    size_t count_z = 0;
+    std::vector<double> z_values;
 
     for (const auto &surface : surfaces)
     {
@@ -50,12 +49,14 @@ OrthoMosaicBounds calculateBoundsAndMeanZ(const std::vector<surface_model> &surf
         {
             const auto &loc = iter->second.payload.location;
 
-            mean_surface_z = (loc.z() + mean_surface_z * count_z) / (count_z + 1);
+            if (std::isfinite(loc.z()))
+            {
+                z_values.push_back(loc.z());
+            }
             s_min_x = std::min(s_min_x, loc.x());
             s_max_x = std::max(s_max_x, loc.x());
             s_min_y = std::min(s_min_y, loc.y());
             s_max_y = std::max(s_max_y, loc.y());
-            count_z++;
 
             has_mesh = true;
         }
@@ -65,12 +66,14 @@ OrthoMosaicBounds calculateBoundsAndMeanZ(const std::vector<surface_model> &surf
             {
                 for (const auto &loc : points)
                 {
-                    mean_surface_z = (loc.z() + mean_surface_z * count_z) / (count_z + 1);
+                    if (std::isfinite(loc.z()))
+                    {
+                        z_values.push_back(loc.z());
+                    }
                     s_min_x = std::min(s_min_x, loc.x());
                     s_max_x = std::max(s_max_x, loc.x());
                     s_min_y = std::min(s_min_y, loc.y());
                     s_max_y = std::max(s_max_y, loc.y());
-                    count_z++;
                 }
             }
 
@@ -78,6 +81,16 @@ OrthoMosaicBounds calculateBoundsAndMeanZ(const std::vector<surface_model> &surf
         max_x = std::max(max_x, s_max_x);
         min_y = std::min(min_y, s_min_y);
         max_y = std::max(max_y, s_max_y);
+    }
+
+    double mean_surface_z = 0;
+    for (double z : z_values)
+    {
+        mean_surface_z += z;
+    }
+    if (!z_values.empty())
+    {
+        mean_surface_z /= z_values.size();
     }
 
     return {min_x, max_x, min_y, max_y, mean_surface_z};
@@ -112,7 +125,7 @@ double calculateGSD(const MeasurementGraph &graph, const std::unordered_set<size
         thumb_count++;
     }
 
-    const double average_camera_elevation = mean_camera_z - mean_surface_z;
+    double average_camera_elevation = mean_camera_z - mean_surface_z;
     double mean_gsd = std::abs(average_camera_elevation * thumb_arc_pixel);
     mean_gsd = std::max(mean_gsd, 0.001);
     return mean_gsd;

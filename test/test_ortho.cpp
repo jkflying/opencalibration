@@ -208,7 +208,7 @@ TEST_F(ortho, prepare_context)
     // AND: it should have calculated mean camera z
     EXPECT_DOUBLE_EQ(context.mean_camera_z, 9);
 
-    // AND: it should have calculated average camera elevation
+    // AND: it should have calculated average camera elevation (9 - (-7.5) = 16.5)
     EXPECT_DOUBLE_EQ(context.average_camera_elevation, 16.5);
 }
 

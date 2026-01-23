@@ -788,8 +788,6 @@ void RelaxProblem::addDownwardsPrior()
 
 void RelaxProblem::addMeshFlatPrior()
 {
-    // for each edge in the graph
-    // add a cost for the nodes on each side being different heights
     for (auto iter = _mesh.edgebegin(); iter != _mesh.edgeend(); ++iter)
     {
         const size_t sourceId = iter->second.getSource();
@@ -802,6 +800,21 @@ void RelaxProblem::addMeshFlatPrior()
         double *h2 = &destNode->payload.location.z();
 
         _problem->AddResidualBlock(newAutoDiffDifferenceCost(1e-4), nullptr, h1, h2);
+    }
+
+    // Anchor to initial z to prevent gauge freedom drift
+    _mesh_initial_z.clear();
+    _mesh_initial_z.reserve(_mesh.size_nodes());
+    for (auto iter = _mesh.nodebegin(); iter != _mesh.nodeend(); ++iter)
+    {
+        _mesh_initial_z.push_back(iter->second.payload.location.z());
+    }
+    size_t i = 0;
+    for (auto iter = _mesh.nodebegin(); iter != _mesh.nodeend(); ++iter, ++i)
+    {
+        double *h = &iter->second.payload.location.z();
+        _problem->AddResidualBlock(newAutoDiffDifferenceCost(1e-5), nullptr, h, &_mesh_initial_z[i]);
+        _problem->SetParameterBlockConstant(&_mesh_initial_z[i]);
     }
 }
 
@@ -841,15 +854,22 @@ surface_model RelaxProblem::getSurfaceModel()
 {
     surface_model s;
     s.cloud.reserve(_edge_tracks.size());
+
     for (const auto &tv : _edge_tracks)
     {
         point_cloud points;
         points.reserve(tv.second.size());
         for (const auto &t : tv.second)
         {
-            points.push_back(t.point);
+            if (t.point.allFinite())
+            {
+                points.push_back(t.point);
+            }
         }
-        s.cloud.emplace_back(std::move(points));
+        if (!points.empty())
+        {
+            s.cloud.emplace_back(std::move(points));
+        }
     }
 
     s.mesh = _mesh;

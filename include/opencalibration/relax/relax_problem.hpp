@@ -112,6 +112,7 @@ class RelaxProblem
     using track_vec = std::vector<FeatureTrack, Eigen::aligned_allocator<FeatureTrack>>;
     std::unordered_map<size_t, track_vec> _edge_tracks;
     MeshGraph _mesh;
+    std::vector<double> _mesh_initial_z;
 };
 
 } // namespace opencalibration
