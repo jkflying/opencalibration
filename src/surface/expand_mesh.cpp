@@ -237,4 +237,146 @@ MeshGraph rebuildMesh(const point_cloud &cameraLocations, const std::vector<surf
     return newGraph;
 }
 
+MeshGraph buildMinimalMesh(const point_cloud &cameraLocations, const std::vector<surface_model> &previousSurfaces)
+{
+    if (cameraLocations.size() < 2)
+    {
+        return MeshGraph();
+    }
+
+    constexpr double HEIGHT_MARGIN = 2;
+
+    Eigen::Vector2d cameraMin = Eigen::Vector2d::Constant(std::numeric_limits<double>::max());
+    Eigen::Vector2d cameraMax = -cameraMin;
+
+    jk::tree::KDTree<double, 2> vertexTree, cameraTree;
+
+    for (const auto &surface : previousSurfaces)
+    {
+        for (auto nodeIter = surface.mesh.cnodebegin(); nodeIter != surface.mesh.cnodeend(); ++nodeIter)
+        {
+            const Eigen::Vector3d p = nodeIter->second.payload.location;
+            vertexTree.addPoint(toArray(p.topRows<2>()), p.z(), false);
+        }
+        for (const auto &cloud : surface.cloud)
+        {
+            for (const auto &p : cloud)
+            {
+                vertexTree.addPoint(toArray(p.topRows<2>()), p.z(), false);
+            }
+        }
+    }
+    vertexTree.splitOutstanding();
+
+    std::vector<double> heights;
+    heights.reserve(cameraLocations.size());
+
+    for (const auto &p : cameraLocations)
+    {
+        cameraMin = cameraMin.cwiseMin(p.topRows<2>());
+        cameraMax = cameraMax.cwiseMax(p.topRows<2>());
+        cameraTree.addPoint(toArray(p.topRows<2>()), p.z(), false);
+
+        if (vertexTree.size() > 0)
+        {
+            auto nearest = vertexTree.search(toArray(p.topRows<2>()));
+            double agl = p.z() - nearest.payload;
+            if (agl > -500 && agl < 5000)
+            {
+                heights.push_back(agl);
+            }
+        }
+    }
+    cameraTree.splitOutstanding();
+
+    // Calculate median nearest camera distance for height estimation
+    std::vector<double> nearestCameraDistances;
+    nearestCameraDistances.reserve(cameraLocations.size());
+    for (const auto &p : cameraLocations)
+    {
+        auto nn2 = cameraTree.searchKnn(toArray(p.topRows<2>()), 2);
+        nearestCameraDistances.push_back(nn2.back().distance);
+    }
+    std::sort(nearestCameraDistances.begin(), nearestCameraDistances.end());
+
+    double gridDistance =
+        nearestCameraDistances.size() < 2 ? 10.0 : std::sqrt(nearestCameraDistances[nearestCameraDistances.size() / 2]);
+
+    if (heights.size() == 0)
+        heights.push_back(std::isfinite(gridDistance) ? gridDistance : 10.0);
+    std::sort(heights.begin(), heights.end());
+    const double medianHeight = heights[heights.size() / 2];
+    const double minBorderWidth = std::max(0.0, std::min(1000.0, medianHeight * HEIGHT_MARGIN));
+
+    // Calculate the 4 corners of our minimal mesh
+    double xMin = cameraMin.x() - minBorderWidth;
+    double xMax = cameraMax.x() + minBorderWidth;
+    double yMin = cameraMin.y() - minBorderWidth;
+    double yMax = cameraMax.y() + minBorderWidth;
+
+    // Estimate z at each corner
+    auto getZ = [&](double x, double y) -> double {
+        if (vertexTree.size() > 0)
+        {
+            return vertexTree.search(toArray(Eigen::Vector2d(x, y))).payload;
+        }
+        return cameraTree.search(toArray(Eigen::Vector2d(x, y))).payload - medianHeight;
+    };
+
+    MeshGraph mesh;
+
+    // Create 4 corner vertices
+    // Layout:
+    //   2 -------- 3
+    //   | \        |
+    //   |   \      |
+    //   |     \    |
+    //   |       \  |
+    //   0 -------- 1
+    //
+    // Triangles: (0, 1, 3) and (0, 3, 2)
+
+    size_t v0 = mesh.addNode(MeshNode{Eigen::Vector3d(xMin, yMin, getZ(xMin, yMin))});
+    size_t v1 = mesh.addNode(MeshNode{Eigen::Vector3d(xMax, yMin, getZ(xMax, yMin))});
+    size_t v2 = mesh.addNode(MeshNode{Eigen::Vector3d(xMin, yMax, getZ(xMin, yMax))});
+    size_t v3 = mesh.addNode(MeshNode{Eigen::Vector3d(xMax, yMax, getZ(xMax, yMax))});
+
+    // Create edges
+    // Bottom edge: v0 - v1 (border, triangle is v0-v1-v3)
+    MeshEdge bottomEdge;
+    bottomEdge.border = true;
+    bottomEdge.triangleOppositeNodes[0] = v3;
+    size_t e_bottom = mesh.addEdge(std::move(bottomEdge), v0, v1);
+
+    // Right edge: v1 - v3 (border, triangle is v0-v1-v3)
+    MeshEdge rightEdge;
+    rightEdge.border = true;
+    rightEdge.triangleOppositeNodes[0] = v0;
+    size_t e_right = mesh.addEdge(std::move(rightEdge), v1, v3);
+
+    // Top edge: v2 - v3 (border, triangle is v0-v3-v2)
+    MeshEdge topEdge;
+    topEdge.border = true;
+    topEdge.triangleOppositeNodes[0] = v0;
+    size_t e_top = mesh.addEdge(std::move(topEdge), v2, v3);
+
+    // Left edge: v0 - v2 (border, triangle is v0-v3-v2)
+    MeshEdge leftEdge;
+    leftEdge.border = true;
+    leftEdge.triangleOppositeNodes[0] = v3;
+    size_t e_left = mesh.addEdge(std::move(leftEdge), v0, v2);
+
+    // Diagonal edge: v0 - v3 (internal, two triangles)
+    MeshEdge diagEdge;
+    diagEdge.border = false;
+    diagEdge.triangleOppositeNodes[0] = v1; // Triangle v0-v1-v3
+    diagEdge.triangleOppositeNodes[1] = v2; // Triangle v0-v3-v2
+    size_t e_diag = mesh.addEdge(std::move(diagEdge), v0, v3);
+
+    spdlog::info("Built minimal mesh with bounds [{}, {}] x [{}, {}]", xMin, xMax, yMin, yMax);
+    spdlog::debug("Added edges {} {} {} {} {}", e_bottom, e_right, e_top, e_left, e_diag);
+
+    return mesh;
+}
+
 } // namespace opencalibration

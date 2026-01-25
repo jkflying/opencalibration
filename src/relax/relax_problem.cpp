@@ -83,7 +83,7 @@ void RelaxProblem::setupGroundMeshProblem(const MeasurementGraph &graph, std::ve
                                           const std::vector<surface_model> &previousSurfaces)
 {
     initialize(nodes, cam_models);
-    initializeGroundMesh(previousSurfaces);
+    initializeGroundMesh(previousSurfaces, options.get(Option::MINIMAL_MESH));
     _loss.Reset(new ceres::HuberLoss(1 * M_PI / 180), ceres::TAKE_OWNERSHIP);
     gridFilterMatchesPerImage(graph, edges_to_optimize, 0.1);
 
@@ -762,7 +762,7 @@ void RelaxProblem::initializeGroundPlane()
     }
 }
 
-void RelaxProblem::initializeGroundMesh(const std::vector<surface_model> &previousSurfaces)
+void RelaxProblem::initializeGroundMesh(const std::vector<surface_model> &previousSurfaces, bool useMinimalMesh)
 {
     point_cloud cameraLocations;
     cameraLocations.reserve(_nodes_to_optimize.size());
@@ -770,7 +770,28 @@ void RelaxProblem::initializeGroundMesh(const std::vector<surface_model> &previo
     {
         cameraLocations.push_back(value->position);
     }
-    _mesh = rebuildMesh(cameraLocations, previousSurfaces);
+
+    // Check if we have a previous mesh to use
+    bool hasPreviousMesh = false;
+    for (const auto &s : previousSurfaces)
+    {
+        if (s.mesh.size_nodes() > 0)
+        {
+            hasPreviousMesh = true;
+            break;
+        }
+    }
+
+    // Use minimal mesh for first iteration or when explicitly requested
+    if (useMinimalMesh && !hasPreviousMesh)
+    {
+        _mesh = buildMinimalMesh(cameraLocations, previousSurfaces);
+        spdlog::info("Using minimal 2-triangle mesh with {} nodes, {} edges", _mesh.size_nodes(), _mesh.size_edges());
+    }
+    else
+    {
+        _mesh = rebuildMesh(cameraLocations, previousSurfaces);
+    }
 }
 
 void RelaxProblem::addDownwardsPrior()

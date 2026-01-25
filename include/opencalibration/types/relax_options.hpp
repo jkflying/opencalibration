@@ -25,6 +25,9 @@ enum class Option : int32_t
 
     LENS_DISTORTIONS_TANGENTIAL,
 
+    MINIMAL_MESH,
+    ADAPTIVE_REFINE,
+
     __NUM_ENTRIES
 };
 
@@ -110,6 +113,10 @@ inline std::string toString(Option o)
         return "LENS_DISTORTIONS_RADIAL_BROWN246_PARAMETERIZATION";
     case Option::LENS_DISTORTIONS_TANGENTIAL:
         return "LENS_DISTORTIONS_TANGENTIAL";
+    case Option::MINIMAL_MESH:
+        return "MINIMAL_MESH";
+    case Option::ADAPTIVE_REFINE:
+        return "ADAPTIVE_REFINE";
     case Option::__NUM_ENTRIES:
         return "__NUM_ENTRIES";
     }

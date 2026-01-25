@@ -2,6 +2,7 @@
 
 #include <opencalibration/types/measurement_graph.hpp>
 #include <opencalibration/types/mesh_graph.hpp>
+#include <opencalibration/types/point_cloud.hpp>
 
 #include <functional>
 #include <vector>
@@ -30,6 +31,18 @@ struct TriangleId
     bool operator==(const TriangleId &other) const
     {
         return edgeId == other.edgeId && side == other.side;
+    }
+};
+
+/**
+ * @brief Hash function for TriangleId to use in unordered containers
+ */
+struct TriangleIdHash
+{
+    size_t operator()(const TriangleId &tri) const
+    {
+        // Combine edgeId and side using a simple hash combination
+        return std::hash<size_t>()(tri.edgeId) ^ (std::hash<int>()(tri.side) << 1);
     }
 };
 
@@ -121,6 +134,34 @@ size_t refineAtPoint(MeshGraph &mesh, double x, double y, int levels = 1);
 size_t refineWhere(MeshGraph &mesh, std::function<bool(double x, double y, double z)> shouldRefine,
                    int maxIterations = 10);
 
+/**
+ * @brief Count the number of 3D points falling within each triangle
+ *
+ * @param mesh The mesh graph
+ * @param points Vector of point clouds containing 3D points to count
+ * @return Map from TriangleId to point count
+ */
+std::unordered_map<TriangleId, size_t, TriangleIdHash> countPointsPerTriangle(const MeshGraph &mesh,
+                                                                              const std::vector<point_cloud> &points);
+
+/**
+ * @brief Refine triangles that have more than maxPointsPerTriangle points
+ *
+ * Uses newest vertex bisection to split triangles with too many points,
+ * ensuring a conforming mesh (no hanging nodes).
+ *
+ * @param mesh The mesh graph to modify
+ * @param points Vector of point clouds containing 3D points
+ * @param maxPointsPerTriangle Maximum points allowed per triangle before refinement
+ * @param maxIterations Maximum refinement iterations
+ * @return Number of triangles created
+ */
+size_t refineByPointDensity(MeshGraph &mesh, const std::vector<point_cloud> &points, size_t maxPointsPerTriangle = 20,
+                            int maxIterations = 20);
+
+/**
+ * @brief Legacy refineMesh function signature for compatibility
+ */
 void refineMesh(const MeasurementGraph &measurementGraph, MeshGraph &meshGraph);
 
 } // namespace opencalibration

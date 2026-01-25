@@ -81,7 +81,7 @@ class RelaxProblem
                                        const MeasurementGraph::Edge &edge, const RelaxOptionSet &options);
 
     void initializeGroundPlane();
-    void initializeGroundMesh(const std::vector<surface_model> &previousSurfaces);
+    void initializeGroundMesh(const std::vector<surface_model> &previousSurfaces, bool useMinimalMesh = false);
 
     void addDownwardsPrior();
     void addMeshFlatPrior();

@@ -369,12 +369,19 @@ size_t refineTriangle(MeshGraph &mesh, const TriangleId &tri, int maxDepth)
     // Verify triangle exists
     auto vertices = getTriangleVertices(mesh, tri);
     if (vertices[0] == 0 && vertices[1] == 0 && vertices[2] == 0)
+    {
+        spdlog::debug("refineTriangle: triangle (edge={}, side={}) has invalid vertices", tri.edgeId, tri.side);
         return 0;
+    }
 
     // Find the longest edge (hypotenuse)
     size_t longestEdgeId = findLongestEdge(mesh, tri);
     if (longestEdgeId == 0)
+    {
+        spdlog::debug("refineTriangle: could not find longest edge for triangle (edge={}, side={})", tri.edgeId,
+                      tri.side);
         return 0;
+    }
 
     const auto *longestEdge = mesh.getEdge(longestEdgeId);
     if (!longestEdge)
@@ -568,10 +575,95 @@ size_t refineWhere(MeshGraph &mesh, std::function<bool(double x, double y, doubl
     return totalCreated;
 }
 
+std::unordered_map<TriangleId, size_t, TriangleIdHash> countPointsPerTriangle(const MeshGraph &mesh,
+                                                                              const std::vector<point_cloud> &points)
+{
+    std::unordered_map<TriangleId, size_t, TriangleIdHash> counts;
+
+    spdlog::debug("countPointsPerTriangle: mesh has {} nodes, {} edges", mesh.size_nodes(), mesh.size_edges());
+
+    // Count points in each triangle - triangles are identified by the edge returned by findTriangleContainingPoint
+    for (const auto &cloud : points)
+    {
+        for (const auto &p : cloud)
+        {
+            TriangleId tri = findTriangleContainingPoint(mesh, p.x(), p.y());
+            if (tri.edgeId != 0)
+            {
+                counts[tri]++;
+            }
+        }
+    }
+
+    spdlog::debug("countPointsPerTriangle: found {} unique triangles with points", counts.size());
+
+    return counts;
+}
+
+size_t refineByPointDensity(MeshGraph &mesh, const std::vector<point_cloud> &points, size_t maxPointsPerTriangle,
+                            int maxIterations)
+{
+    size_t totalCreated = 0;
+
+    for (int iter = 0; iter < maxIterations; iter++)
+    {
+        // Count points per triangle
+        auto counts = countPointsPerTriangle(mesh, points);
+
+        // Find triangles exceeding the threshold
+        std::vector<TriangleId> toRefine;
+        for (const auto &[tri, count] : counts)
+        {
+            if (count > maxPointsPerTriangle)
+            {
+                toRefine.push_back(tri);
+                spdlog::debug("refineByPointDensity: triangle (edge={}, side={}) has {} points", tri.edgeId, tri.side,
+                              count);
+            }
+        }
+
+        if (toRefine.empty())
+        {
+            spdlog::info("refineByPointDensity: converged after {} iterations, {} triangles created", iter,
+                         totalCreated);
+            break;
+        }
+
+        spdlog::info("refineByPointDensity: iteration {}, refining {} triangles exceeding {} points", iter,
+                     toRefine.size(), maxPointsPerTriangle);
+
+        size_t createdThisIter = 0;
+        for (const auto &tri : toRefine)
+        {
+            // Triangle may have been invalidated by previous refinement
+            auto verts = getTriangleVertices(mesh, tri);
+            if (verts[0] == 0 && verts[1] == 0 && verts[2] == 0)
+            {
+                spdlog::debug("refineByPointDensity: skipping invalidated triangle (edge={}, side={})", tri.edgeId,
+                              tri.side);
+                continue;
+            }
+
+            size_t created = refineTriangle(mesh, tri);
+            spdlog::debug("refineByPointDensity: refineTriangle returned {} for (edge={}, side={})", created,
+                          tri.edgeId, tri.side);
+            createdThisIter += created;
+        }
+
+        if (createdThisIter == 0)
+        {
+            spdlog::info("refineByPointDensity: no triangles created in iteration {}, stopping", iter);
+            break;
+        }
+
+        totalCreated += createdThisIter;
+    }
+
+    return totalCreated;
+}
+
 void refineMesh(const MeasurementGraph & /*measurementGraph*/, MeshGraph & /*meshGraph*/)
 {
-    // find polygons on the mesh with a high number of measurements in them and split the polygon by adding new edges
-    // and/or vertexes
-    // TODO: Implement measurement-density-based refinement using the new adaptive mesh functions
+    // Legacy function - use refineByPointDensity directly with the point clouds from surface_model
 }
 } // namespace opencalibration
