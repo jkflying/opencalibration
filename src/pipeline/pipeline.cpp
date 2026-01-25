@@ -11,6 +11,7 @@
 #include <opencalibration/ortho/ortho.hpp>
 #include <opencalibration/performance/performance.hpp>
 #include <opencalibration/surface/intersect.hpp>
+#include <opencalibration/surface/refine_mesh.hpp>
 
 #include <opencv2/imgcodecs.hpp>
 #include <spdlog/spdlog.h>
@@ -64,6 +65,8 @@ PipelineState Pipeline::chooseNextState(PipelineState currentState, Transition t
     // clang-format off
     USM_TABLE(currentState, State::COMPLETE, s,
         USM_STATE(transition, State::INITIAL_PROCESSING,
+                  USM_MAP(Transition::NEXT, State::MESH_REFINEMENT, s));
+        USM_STATE(transition, State::MESH_REFINEMENT,
                   USM_MAP(Transition::NEXT, State::INITIAL_GLOBAL_RELAX, s));
         USM_STATE(transition, State::INITIAL_GLOBAL_RELAX,
                   USM_MAP(Transition::NEXT, State::CAMERA_PARAMETER_RELAX, s));
@@ -93,6 +96,7 @@ Pipeline::Transition Pipeline::runCurrentState(PipelineState currentState)
               USM_MAP(State::INITIAL_GLOBAL_RELAX, initial_global_relax(), t);
               USM_MAP(State::CAMERA_PARAMETER_RELAX, camera_parameter_relax(), t);
               USM_MAP(State::FINAL_GLOBAL_RELAX, final_global_relax(), t);
+              USM_MAP(State::MESH_REFINEMENT, mesh_refinement(), t);
               USM_MAP(State::COMPLETE, complete(), t);
               USM_MAP(State::GENERATE_THUMBNAIL, generate_thumbnail(), t);
               USM_MAP(State::GENERATE_GEOTIFF, generate_geotiff(), t)
@@ -225,6 +229,56 @@ Pipeline::Transition Pipeline::final_global_relax()
     USM_DECISION_TABLE(Transition::REPEAT, USM_MAKE_DECISION(stateRunCount() >= 3, Transition::NEXT));
 }
 
+Pipeline::Transition Pipeline::mesh_refinement()
+{
+    PerformanceMeasure p("Mesh refinement");
+
+    const size_t maxPointsPerTriangle = 20;
+    const int maxIterations = 10;
+
+    // First iteration: create initial mesh with GROUND_MESH optimization
+    if (stateRunCount() == 0)
+    {
+        spdlog::info("Mesh refinement: creating initial mesh with GROUND_MESH optimization");
+        _relax_stage->init(_graph, {}, _imageGPSLocations, true, true,
+                           {Option::ORIENTATION, Option::GROUND_MESH, Option::MINIMAL_MESH});
+
+        fvec relax_funcs = _relax_stage->get_runners(_graph);
+        run_parallel(relax_funcs, _parallelism);
+        _next_relaxed_ids = _relax_stage->finalize(_graph);
+        _surfaces = _relax_stage->getSurfaceModels();
+
+        if (_surfaces.empty())
+        {
+            spdlog::warn("No surfaces created during initial mesh optimization");
+            USM_DECISION_TABLE(Transition::NEXT, );
+        }
+
+        // Now refine the mesh based on point density
+        size_t totalRefined = 0;
+        for (auto &surface : _surfaces)
+        {
+            if (surface.mesh.size_nodes() == 0)
+            {
+                continue;
+            }
+
+            size_t initialNodes = surface.mesh.size_nodes();
+            size_t initialEdges = surface.mesh.size_edges();
+
+            size_t created = refineByPointDensity(surface.mesh, surface.cloud, maxPointsPerTriangle, maxIterations);
+            totalRefined += created;
+
+            spdlog::info("Mesh refinement: {} -> {} nodes, {} -> {} edges, {} triangles created", initialNodes,
+                         surface.mesh.size_nodes(), initialEdges, surface.mesh.size_edges(), created);
+        }
+
+        spdlog::info("Total mesh refinement: {} triangles created across {} surfaces", totalRefined, _surfaces.size());
+    }
+
+    USM_DECISION_TABLE(Transition::NEXT, );
+}
+
 Pipeline::Transition Pipeline::generate_thumbnail()
 {
     if (_thumbnail_filename.empty() && _source_filename.empty() && _overlap_filename.empty())
@@ -287,6 +341,8 @@ std::string Pipeline::toString(PipelineState state)
         return "Camera Parameter Relax";
     case State::FINAL_GLOBAL_RELAX:
         return "Final Global Relax";
+    case State::MESH_REFINEMENT:
+        return "Mesh Refinement";
     case State::GENERATE_THUMBNAIL:
         return "Generate Thumbnail";
     case State::GENERATE_GEOTIFF:
@@ -308,6 +364,8 @@ PipelineState Pipeline::fromString(const std::string &str)
         return State::CAMERA_PARAMETER_RELAX;
     if (str == "FINAL_GLOBAL_RELAX" || str == "Final Global Relax")
         return State::FINAL_GLOBAL_RELAX;
+    if (str == "MESH_REFINEMENT" || str == "Mesh Refinement")
+        return State::MESH_REFINEMENT;
     if (str == "GENERATE_THUMBNAIL" || str == "Generate Thumbnail")
         return State::GENERATE_THUMBNAIL;
     if (str == "GENERATE_GEOTIFF" || str == "Generate GeoTIFF")

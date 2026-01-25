@@ -666,4 +666,102 @@ void refineMesh(const MeasurementGraph & /*measurementGraph*/, MeshGraph & /*mes
 {
     // Legacy function - use refineByPointDensity directly with the point clouds from surface_model
 }
+
+surface_model mergeSurfaceModels(const std::vector<surface_model> &surfaces)
+{
+    if (surfaces.empty())
+    {
+        return surface_model{};
+    }
+
+    if (surfaces.size() == 1)
+    {
+        return surfaces[0];
+    }
+
+    // Use the first surface's mesh as the base structure
+    surface_model result;
+    result.mesh = surfaces[0].mesh;
+
+    // For each surface, count points per vertex (sum of points in adjacent triangles)
+    // vertex_id -> (weighted_position_sum, total_weight)
+    std::unordered_map<size_t, std::pair<Eigen::Vector3d, double>> vertexWeights;
+
+    // Initialize with zero weights
+    for (auto it = result.mesh.cnodebegin(); it != result.mesh.cnodeend(); ++it)
+    {
+        vertexWeights[it->first] = {Eigen::Vector3d::Zero(), 0.0};
+    }
+
+    for (size_t surfIdx = 0; surfIdx < surfaces.size(); surfIdx++)
+    {
+        const auto &surf = surfaces[surfIdx];
+
+        if (surf.mesh.size_nodes() == 0)
+        {
+            continue;
+        }
+
+        // Count points per triangle for this surface
+        auto triangleCounts = countPointsPerTriangle(surf.mesh, surf.cloud);
+
+        // For each vertex, accumulate weights from adjacent triangles
+        std::unordered_map<size_t, size_t> vertexPointCounts;
+
+        for (const auto &[tri, count] : triangleCounts)
+        {
+            auto verts = getTriangleVertices(surf.mesh, tri);
+            if (verts[0] == 0 && verts[1] == 0 && verts[2] == 0)
+            {
+                continue;
+            }
+
+            // Add this triangle's point count to each of its vertices
+            for (int i = 0; i < 3; i++)
+            {
+                vertexPointCounts[verts[i]] += count;
+            }
+        }
+
+        // Now weight each vertex position by its point count
+        for (auto nodeIt = surf.mesh.cnodebegin(); nodeIt != surf.mesh.cnodeend(); ++nodeIt)
+        {
+            size_t nodeId = nodeIt->first;
+            const Eigen::Vector3d &pos = nodeIt->second.payload.location;
+
+            double weight = static_cast<double>(vertexPointCounts[nodeId]);
+            if (weight > 0)
+            {
+                auto &[sumPos, sumWeight] = vertexWeights[nodeId];
+                sumPos += pos * weight;
+                sumWeight += weight;
+            }
+        }
+
+        // Merge point clouds
+        for (const auto &cloud : surf.cloud)
+        {
+            result.cloud.push_back(cloud);
+        }
+    }
+
+    // Apply weighted average positions to result mesh
+    for (auto nodeIt = result.mesh.nodebegin(); nodeIt != result.mesh.nodeend(); ++nodeIt)
+    {
+        size_t nodeId = nodeIt->first;
+        auto &[sumPos, sumWeight] = vertexWeights[nodeId];
+
+        if (sumWeight > 0)
+        {
+            nodeIt->second.payload.location = sumPos / sumWeight;
+        }
+        // If no weight (no points nearby), keep original position from first surface
+    }
+
+    spdlog::info("Merged {} surface models into one with {} nodes, {} edges, {} point clouds", surfaces.size(),
+                 result.mesh.size_nodes(), result.mesh.size_edges(), result.cloud.size());
+
+    return result;
+}
+
 } // namespace opencalibration

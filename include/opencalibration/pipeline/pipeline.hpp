@@ -115,6 +115,7 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
     PipelineTransition initial_global_relax();
     PipelineTransition camera_parameter_relax();
     PipelineTransition final_global_relax();
+    PipelineTransition mesh_refinement();
     PipelineTransition generate_thumbnail();
     PipelineTransition generate_geotiff();
     PipelineTransition complete();

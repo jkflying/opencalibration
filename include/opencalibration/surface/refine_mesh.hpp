@@ -3,6 +3,7 @@
 #include <opencalibration/types/measurement_graph.hpp>
 #include <opencalibration/types/mesh_graph.hpp>
 #include <opencalibration/types/point_cloud.hpp>
+#include <opencalibration/types/surface_model.hpp>
 
 #include <functional>
 #include <vector>
@@ -158,6 +159,19 @@ std::unordered_map<TriangleId, size_t, TriangleIdHash> countPointsPerTriangle(co
  */
 size_t refineByPointDensity(MeshGraph &mesh, const std::vector<point_cloud> &points, size_t maxPointsPerTriangle = 20,
                             int maxIterations = 20);
+
+/**
+ * @brief Merge multiple surface models with the same mesh structure
+ *
+ * When the optimization problem is split across multiple groups, each group
+ * produces its own surface_model with optimized vertex positions. This function
+ * merges them by weighting each vertex position by the number of points that
+ * group has in triangles adjacent to that vertex.
+ *
+ * @param surfaces Vector of surface models to merge (must have same mesh topology)
+ * @return Merged surface model with weighted vertex positions and combined point clouds
+ */
+surface_model mergeSurfaceModels(const std::vector<surface_model> &surfaces);
 
 /**
  * @brief Legacy refineMesh function signature for compatibility

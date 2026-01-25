@@ -771,26 +771,34 @@ void RelaxProblem::initializeGroundMesh(const std::vector<surface_model> &previo
         cameraLocations.push_back(value->position);
     }
 
-    // Check if we have a previous mesh to use
-    bool hasPreviousMesh = false;
+    // Check if we have a previous mesh to reuse
+    const MeshGraph *previousMesh = nullptr;
     for (const auto &s : previousSurfaces)
     {
         if (s.mesh.size_nodes() > 0)
         {
-            hasPreviousMesh = true;
+            previousMesh = &s.mesh;
             break;
         }
     }
 
-    // Use minimal mesh for first iteration or when explicitly requested
-    if (useMinimalMesh && !hasPreviousMesh)
+    if (previousMesh != nullptr)
     {
+        // Reuse the previous mesh structure (preserves refinement)
+        _mesh = *previousMesh;
+        spdlog::info("Reusing previous mesh with {} nodes, {} edges", _mesh.size_nodes(), _mesh.size_edges());
+    }
+    else if (useMinimalMesh)
+    {
+        // Build minimal 2-triangle mesh for first iteration
         _mesh = buildMinimalMesh(cameraLocations, previousSurfaces);
         spdlog::info("Using minimal 2-triangle mesh with {} nodes, {} edges", _mesh.size_nodes(), _mesh.size_edges());
     }
     else
     {
+        // Build grid mesh (legacy behavior)
         _mesh = rebuildMesh(cameraLocations, previousSurfaces);
+        spdlog::info("Built grid mesh with {} nodes, {} edges", _mesh.size_nodes(), _mesh.size_edges());
     }
 }
 

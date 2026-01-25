@@ -3,6 +3,7 @@
 #include <opencalibration/geometry/spectral_cluster.hpp>
 #include <opencalibration/performance/performance.hpp>
 #include <opencalibration/relax/relax_group.hpp>
+#include <opencalibration/surface/refine_mesh.hpp>
 
 #include <spdlog/spdlog.h>
 
@@ -147,6 +148,16 @@ std::vector<std::vector<size_t>> RelaxStage::finalize(MeasurementGraph &graph)
         optimized_ids.emplace_back(g.finalize(graph));
     }
     _groups.clear();
+
+    // Merge surface models from all groups if there are multiple
+    if (_surface_models.size() > 1)
+    {
+        spdlog::info("Merging {} surface models from parallel groups", _surface_models.size());
+        surface_model merged = mergeSurfaceModels(_surface_models);
+        _surface_models.clear();
+        _surface_models.push_back(std::move(merged));
+    }
+
     return optimized_ids;
 }
 

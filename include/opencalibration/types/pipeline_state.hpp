@@ -11,6 +11,7 @@ enum class PipelineState
     INITIAL_GLOBAL_RELAX,
     CAMERA_PARAMETER_RELAX,
     FINAL_GLOBAL_RELAX,
+    MESH_REFINEMENT,
     GENERATE_THUMBNAIL,
     GENERATE_GEOTIFF,
     COMPLETE
@@ -28,6 +29,8 @@ inline std::string pipelineStateToString(PipelineState state)
         return "CAMERA_PARAMETER_RELAX";
     case PipelineState::FINAL_GLOBAL_RELAX:
         return "FINAL_GLOBAL_RELAX";
+    case PipelineState::MESH_REFINEMENT:
+        return "MESH_REFINEMENT";
     case PipelineState::GENERATE_THUMBNAIL:
         return "GENERATE_THUMBNAIL";
     case PipelineState::GENERATE_GEOTIFF:
@@ -48,6 +51,8 @@ inline PipelineState stringToPipelineState(const std::string &str)
         return PipelineState::CAMERA_PARAMETER_RELAX;
     if (str == "FINAL_GLOBAL_RELAX")
         return PipelineState::FINAL_GLOBAL_RELAX;
+    if (str == "MESH_REFINEMENT")
+        return PipelineState::MESH_REFINEMENT;
     if (str == "GENERATE_THUMBNAIL")
         return PipelineState::GENERATE_THUMBNAIL;
     if (str == "GENERATE_GEOTIFF")

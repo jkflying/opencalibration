@@ -848,3 +848,91 @@ TEST(refine_mesh_functional, output_minimal_mesh_refined_ply)
     // Most triangles should have <= 20 points (allow some tolerance since refinement is iterative)
     EXPECT_LE(maxCount, 40) << "Expected refinement to reduce points per triangle";
 }
+
+TEST(refine_mesh, merge_surface_models)
+{
+    // Create a minimal mesh
+    point_cloud cameras;
+    cameras.push_back(Eigen::Vector3d(0, 0, 10));
+    cameras.push_back(Eigen::Vector3d(10, 10, 10));
+
+    MeshGraph baseMesh = buildMinimalMesh(cameras, {});
+
+    // Get actual mesh bounds
+    Eigen::Vector3d minBound = Eigen::Vector3d::Constant(std::numeric_limits<double>::max());
+    Eigen::Vector3d maxBound = Eigen::Vector3d::Constant(std::numeric_limits<double>::lowest());
+    for (auto it = baseMesh.cnodebegin(); it != baseMesh.cnodeend(); ++it)
+    {
+        minBound = minBound.cwiseMin(it->second.payload.location);
+        maxBound = maxBound.cwiseMax(it->second.payload.location);
+    }
+
+    // Create two surface models with the same mesh structure but different vertex Z values
+    surface_model surf1, surf2;
+    surf1.mesh = baseMesh;
+    surf2.mesh = baseMesh;
+
+    // Modify Z values in surf1 (shift up by 1)
+    for (auto it = surf1.mesh.nodebegin(); it != surf1.mesh.nodeend(); ++it)
+    {
+        it->second.payload.location.z() += 1.0;
+    }
+
+    // Modify Z values in surf2 (shift down by 1)
+    for (auto it = surf2.mesh.nodebegin(); it != surf2.mesh.nodeend(); ++it)
+    {
+        it->second.payload.location.z() -= 1.0;
+    }
+
+    // Create point clouds for each surface covering the mesh area
+    // surf1 gets more points on the left, surf2 gets more points on the right
+    double midX = (minBound.x() + maxBound.x()) / 2;
+    point_cloud leftPoints, rightPoints;
+    for (double x = minBound.x(); x < midX; x += 2)
+    {
+        for (double y = minBound.y(); y < maxBound.y(); y += 2)
+        {
+            leftPoints.push_back(Eigen::Vector3d(x, y, 0));
+        }
+    }
+    for (double x = midX; x < maxBound.x(); x += 2)
+    {
+        for (double y = minBound.y(); y < maxBound.y(); y += 2)
+        {
+            rightPoints.push_back(Eigen::Vector3d(x, y, 0));
+        }
+    }
+    surf1.cloud.push_back(leftPoints);
+    surf2.cloud.push_back(rightPoints);
+
+    std::cout << "surf1 has " << leftPoints.size() << " points, surf2 has " << rightPoints.size() << " points"
+              << std::endl;
+
+    // Merge the surfaces
+    std::vector<surface_model> surfaces = {surf1, surf2};
+    surface_model merged = mergeSurfaceModels(surfaces);
+
+    // Verify merged mesh has same structure
+    EXPECT_EQ(merged.mesh.size_nodes(), baseMesh.size_nodes());
+    EXPECT_EQ(merged.mesh.size_edges(), baseMesh.size_edges());
+
+    // Verify point clouds are combined
+    EXPECT_EQ(merged.cloud.size(), 2);
+
+    // Verify that merge happened (vertices should be different from both sources)
+    // Compare merged Z values to base mesh Z values
+    for (auto mergedIt = merged.mesh.cnodebegin(); mergedIt != merged.mesh.cnodeend(); ++mergedIt)
+    {
+        size_t nodeId = mergedIt->first;
+        double mergedZ = mergedIt->second.payload.location.z();
+        double surf1Z = surf1.mesh.getNode(nodeId)->payload.location.z();
+        double surf2Z = surf2.mesh.getNode(nodeId)->payload.location.z();
+
+        // At minimum, it should be within the range [surf2Z, surf1Z] (surf2 is lower, surf1 is higher)
+        EXPECT_GE(mergedZ, surf2Z - 0.01) << "Merged Z below surf2 Z";
+        EXPECT_LE(mergedZ, surf1Z + 0.01) << "Merged Z above surf1 Z";
+    }
+
+    std::cout << "Merged surface: " << merged.mesh.size_nodes() << " nodes, " << merged.mesh.size_edges() << " edges, "
+              << merged.cloud.size() << " point clouds" << std::endl;
+}

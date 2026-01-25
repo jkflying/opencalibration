@@ -166,6 +166,10 @@ int main(int argc, char *argv[])
             std::cout << ": iteration: " << info.state_iteration << " relaxed: " << total_relaxed << std::endl;
             break;
         }
+        case PipelineState::MESH_REFINEMENT: {
+            std::cout << ": refining mesh based on point density" << std::endl;
+            break;
+        }
         case PipelineState::GENERATE_THUMBNAIL:
         case PipelineState::GENERATE_GEOTIFF:
         case PipelineState::COMPLETE: {
