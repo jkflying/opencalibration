@@ -1,5 +1,5 @@
 add_library(oc_surface expand_mesh.cpp
-                       #refine_mesh.cpp
+                       refine_mesh.cpp
                        intersect.cpp
                        )
 target_link_libraries(oc_surface PUBLIC spdlog::spdlog

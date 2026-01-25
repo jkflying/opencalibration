@@ -13,6 +13,7 @@ add_executable(functional_tests gtest_main.cpp
                                 test_ortho_functional.cpp
                                 test_pipeline.cpp
                                 test_ransac_functional.cpp
+                                test_refine_mesh.cpp
                                 test_serialize_deserialize.cpp)
 
 target_link_libraries(functional_tests PUBLIC gtest pthread oc_distort

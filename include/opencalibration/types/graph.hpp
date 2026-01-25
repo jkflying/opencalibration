@@ -161,8 +161,56 @@ template <typename NodePayload, typename EdgePayload> class DirectedGraph
         return nullptr;
     }
 
-    bool removeNode(size_t identifier);
-    bool removeEdge(size_t identifier);
+    bool removeNode(size_t identifier)
+    {
+        auto nodeIter = _nodes.find(identifier);
+        if (nodeIter == _nodes.end())
+        {
+            return false;
+        }
+
+        // Remove all edges connected to this node
+        std::vector<size_t> edgesToRemove(nodeIter->second._edges.begin(), nodeIter->second._edges.end());
+        for (size_t edgeId : edgesToRemove)
+        {
+            removeEdge(edgeId);
+        }
+
+        _nodes.erase(nodeIter);
+        return true;
+    }
+
+    bool removeEdge(size_t identifier)
+    {
+        auto edgeIter = _edges.find(identifier);
+        if (edgeIter == _edges.end())
+        {
+            return false;
+        }
+
+        size_t source = edgeIter->second.getSource();
+        size_t dest = edgeIter->second.getDest();
+
+        // Remove edge ID from source and destination nodes
+        auto srcNodeIter = _nodes.find(source);
+        if (srcNodeIter != _nodes.end())
+        {
+            srcNodeIter->second._edges.erase(identifier);
+        }
+
+        auto dstNodeIter = _nodes.find(dest);
+        if (dstNodeIter != _nodes.end())
+        {
+            dstNodeIter->second._edges.erase(identifier);
+        }
+
+        // Remove from lookup
+        _edge_id_from_nodes_lookup.erase(SourceDestIndex{source, dest});
+
+        // Remove the edge
+        _edges.erase(edgeIter);
+        return true;
+    }
 
     using NodeIterator = typename std::unordered_map<size_t, Node>::iterator;
     NodeIterator nodebegin()
