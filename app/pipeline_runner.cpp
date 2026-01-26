@@ -40,6 +40,10 @@ int main(int argc, char *argv[])
     std::string checkpoint_save = "";
     std::string checkpoint_load = "";
     std::string resume_from = "";
+    bool skip_mesh_refinement = false;
+    bool skip_initial_global_relax = false;
+    bool skip_camera_intrinsics = false;
+    bool skip_final_global_relax = false;
     bool printHelp = false;
 
     CommandLine args("Run the opencalibration pipeline from the command line");
@@ -62,6 +66,13 @@ int main(int argc, char *argv[])
     args.addArgument({"--resume-from"}, &resume_from,
                      "Resume from specific stage (INITIAL_GLOBAL_RELAX, CAMERA_PARAMETER_RELAX, FINAL_GLOBAL_RELAX, "
                      "GENERATE_THUMBNAIL, GENERATE_GEOTIFF)");
+    args.addArgument({"--skip-mesh-refinement"}, &skip_mesh_refinement,
+                     "Skip the mesh refinement stage (uses grid mesh instead of adaptive refinement)");
+    args.addArgument({"--skip-initial-global-relax"}, &skip_initial_global_relax,
+                     "Skip the initial global relaxation stage");
+    args.addArgument({"--skip-camera-intrinsics"}, &skip_camera_intrinsics,
+                     "Skip camera intrinsics optimization (focal length, distortion, principal point)");
+    args.addArgument({"--skip-final-global-relax"}, &skip_final_global_relax, "Skip the final global relaxation stage");
     args.addArgument({"-h", "--help"}, &printHelp, "You must specify at least an input file");
 
     try
@@ -124,6 +135,10 @@ int main(int argc, char *argv[])
     p.set_thumbnail_filenames(thumbnail_file, source_file, overlap_file);
     p.set_geotiff_filename(geotiff_file);
     p.set_dsm_filename(dsm_file);
+    p.set_skip_mesh_refinement(skip_mesh_refinement);
+    p.set_skip_initial_global_relax(skip_initial_global_relax);
+    p.set_skip_camera_param_relax(skip_camera_intrinsics);
+    p.set_skip_final_global_relax(skip_final_global_relax);
 
     if (!checkpoint_load.empty())
     {

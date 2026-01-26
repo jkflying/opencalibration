@@ -67,13 +67,18 @@ PipelineState Pipeline::chooseNextState(PipelineState currentState, Transition t
         USM_STATE(transition, State::INITIAL_PROCESSING,
                   USM_MAP(Transition::NEXT, State::MESH_REFINEMENT, s));
         USM_STATE(transition, State::MESH_REFINEMENT,
-                  USM_MAP(Transition::NEXT, State::INITIAL_GLOBAL_RELAX, s));
+                  USM_MAP(Transition::NEXT, State::INITIAL_GLOBAL_RELAX, s);
+                  USM_MAP(Transition::SKIP, State::INITIAL_GLOBAL_RELAX, s));
         USM_STATE(transition, State::INITIAL_GLOBAL_RELAX,
-                  USM_MAP(Transition::NEXT, State::CAMERA_PARAMETER_RELAX, s));
+                  USM_MAP(Transition::NEXT, State::CAMERA_PARAMETER_RELAX, s);
+                  USM_MAP(Transition::SKIP, State::CAMERA_PARAMETER_RELAX, s));
         USM_STATE(transition, State::CAMERA_PARAMETER_RELAX,
-                  USM_MAP(Transition::NEXT, State::FINAL_GLOBAL_RELAX, s));
+                  USM_MAP(Transition::NEXT, State::FINAL_GLOBAL_RELAX, s);
+                  USM_MAP(Transition::SKIP, State::FINAL_GLOBAL_RELAX, s));
         USM_STATE(transition, State::FINAL_GLOBAL_RELAX,
                   USM_MAP(Transition::NEXT, _generate_thumbnails ? State::GENERATE_THUMBNAIL :
+                                           _generate_geotiff ? State::GENERATE_GEOTIFF : State::COMPLETE, s);
+                  USM_MAP(Transition::SKIP, _generate_thumbnails ? State::GENERATE_THUMBNAIL :
                                            _generate_geotiff ? State::GENERATE_GEOTIFF : State::COMPLETE, s));
         USM_STATE(transition, State::GENERATE_THUMBNAIL,
                   USM_MAP(Transition::NEXT, _generate_geotiff ? State::GENERATE_GEOTIFF : State::COMPLETE, s));
@@ -158,6 +163,12 @@ Pipeline::Transition Pipeline::initial_processing()
 
 Pipeline::Transition Pipeline::initial_global_relax()
 {
+    if (_skip_initial_global_relax)
+    {
+        spdlog::info("Skipping initial global relax stage");
+        return Transition::SKIP;
+    }
+
     _relax_stage->init(_graph, {}, _imageGPSLocations, true, false, {Option::ORIENTATION, Option::GROUND_MESH});
 
     fvec relax_funcs = _relax_stage->get_runners(_graph);
@@ -171,6 +182,12 @@ Pipeline::Transition Pipeline::initial_global_relax()
 
 Pipeline::Transition Pipeline::camera_parameter_relax()
 {
+    if (_skip_camera_param_relax)
+    {
+        spdlog::info("Skipping camera parameter relax stage");
+        return Transition::SKIP;
+    }
+
     RelaxOptionSet options;
     switch (stateRunCount())
     {
@@ -217,6 +234,12 @@ Pipeline::Transition Pipeline::camera_parameter_relax()
 
 Pipeline::Transition Pipeline::final_global_relax()
 {
+    if (_skip_final_global_relax)
+    {
+        spdlog::info("Skipping final global relax stage");
+        return Transition::SKIP;
+    }
+
     const bool lastIteration = stateRunCount() >= 3;
 
     _relax_stage->init(_graph, {}, _imageGPSLocations, true, lastIteration, {Option::ORIENTATION, Option::GROUND_MESH});
@@ -231,6 +254,12 @@ Pipeline::Transition Pipeline::final_global_relax()
 
 Pipeline::Transition Pipeline::mesh_refinement()
 {
+    if (_skip_mesh_refinement)
+    {
+        spdlog::info("Skipping mesh refinement stage");
+        return Transition::SKIP;
+    }
+
     PerformanceMeasure p("Mesh refinement");
 
     const size_t maxPointsPerTriangle = 20;

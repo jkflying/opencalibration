@@ -26,6 +26,7 @@ enum class PipelineTransition
 {
     REPEAT,
     NEXT,
+    SKIP,
     ERROR
 };
 
@@ -99,6 +100,24 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
         }
     }
 
+    // Stage configuration - allows skipping pipeline stages
+    void set_skip_mesh_refinement(bool skip)
+    {
+        _skip_mesh_refinement = skip;
+    }
+    void set_skip_initial_global_relax(bool skip)
+    {
+        _skip_initial_global_relax = skip;
+    }
+    void set_skip_camera_param_relax(bool skip)
+    {
+        _skip_camera_param_relax = skip;
+    }
+    void set_skip_final_global_relax(bool skip)
+    {
+        _skip_final_global_relax = skip;
+    }
+
     bool saveCheckpoint(const std::string &checkpoint_dir);
     bool loadCheckpoint(const std::string &checkpoint_dir);
     bool resumeFromState(PipelineState target_state);
@@ -150,5 +169,11 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
     bool _generate_geotiff = false;
     std::string _geotiff_filename = "";
     std::string _dsm_filename = "";
+
+    // Stage skip flags
+    bool _skip_mesh_refinement = false;
+    bool _skip_initial_global_relax = false;
+    bool _skip_camera_param_relax = false;
+    bool _skip_final_global_relax = false;
 };
 } // namespace opencalibration
