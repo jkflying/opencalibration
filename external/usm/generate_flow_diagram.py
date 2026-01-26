@@ -114,10 +114,11 @@ def extract_functions(file_string):
 
         f_string = function_f_strings[0]
 
-        decision_table_string,_,_ = extract_first_wrapped(f_string, "USM_DECISION_TABLE");
+        # Find all USM_DECISION_TABLE calls in the function
+        decision_table_strings = extract_all_wrapped(f_string, "USM_DECISION_TABLE")
 
-        if decision_table_string:
-            decision_strings = extract_all_wrapped(decision_table_string, "USM_MAKE_DECISION");
+        for decision_table_string in decision_table_strings:
+            decision_strings = extract_all_wrapped(decision_table_string, "USM_MAKE_DECISION")
 
             for decision_string in decision_strings:
                 condition,transition = decision_string[1:-1].split(",")
@@ -159,8 +160,10 @@ def make_dot_file_string(transitions, functions):
             func = start_function_candidates[0]
             start_extension = f"\\n{func.function_name}"
             decision_candidates = [d for d in func.decisions if d.transition == t.edge_name]
-            if len(decision_candidates) == 1:
-                name_extension = f"\\n{decision_candidates[0].condition}"
+            if len(decision_candidates) >= 1:
+                # Merge multiple conditions with ||
+                merged_condition = " || ".join([d.condition for d in decision_candidates])
+                name_extension = f"\\n{merged_condition}"
 
         end_function_candidates = [f for f in functions if f.state_name == t.end]
         end_extension = ""

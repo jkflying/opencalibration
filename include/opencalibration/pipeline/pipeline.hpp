@@ -26,7 +26,6 @@ enum class PipelineTransition
 {
     REPEAT,
     NEXT,
-    SKIP,
     ERROR
 };
 

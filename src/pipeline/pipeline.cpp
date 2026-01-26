@@ -67,21 +67,15 @@ PipelineState Pipeline::chooseNextState(PipelineState currentState, Transition t
         USM_STATE(transition, State::INITIAL_PROCESSING,
                   USM_MAP(Transition::NEXT, State::MESH_REFINEMENT, s));
         USM_STATE(transition, State::MESH_REFINEMENT,
-                  USM_MAP(Transition::NEXT, State::INITIAL_GLOBAL_RELAX, s);
-                  USM_MAP(Transition::SKIP, State::INITIAL_GLOBAL_RELAX, s));
+                  USM_MAP(Transition::NEXT, State::INITIAL_GLOBAL_RELAX, s));
         USM_STATE(transition, State::INITIAL_GLOBAL_RELAX,
-                  USM_MAP(Transition::NEXT, State::CAMERA_PARAMETER_RELAX, s);
-                  USM_MAP(Transition::SKIP, State::CAMERA_PARAMETER_RELAX, s));
+                  USM_MAP(Transition::NEXT, State::CAMERA_PARAMETER_RELAX, s));
         USM_STATE(transition, State::CAMERA_PARAMETER_RELAX,
-                  USM_MAP(Transition::NEXT, State::FINAL_GLOBAL_RELAX, s);
-                  USM_MAP(Transition::SKIP, State::FINAL_GLOBAL_RELAX, s));
+                  USM_MAP(Transition::NEXT, State::FINAL_GLOBAL_RELAX, s));
         USM_STATE(transition, State::FINAL_GLOBAL_RELAX,
-                  USM_MAP(Transition::NEXT, _generate_thumbnails ? State::GENERATE_THUMBNAIL :
-                                           _generate_geotiff ? State::GENERATE_GEOTIFF : State::COMPLETE, s);
-                  USM_MAP(Transition::SKIP, _generate_thumbnails ? State::GENERATE_THUMBNAIL :
-                                           _generate_geotiff ? State::GENERATE_GEOTIFF : State::COMPLETE, s));
+                  USM_MAP(Transition::NEXT, State::GENERATE_THUMBNAIL, s));
         USM_STATE(transition, State::GENERATE_THUMBNAIL,
-                  USM_MAP(Transition::NEXT, _generate_geotiff ? State::GENERATE_GEOTIFF : State::COMPLETE, s));
+                  USM_MAP(Transition::NEXT, State::GENERATE_GEOTIFF, s));
         USM_STATE(transition, State::GENERATE_GEOTIFF,
                   USM_MAP(Transition::NEXT, State::COMPLETE, s));
     );
@@ -166,7 +160,7 @@ Pipeline::Transition Pipeline::initial_global_relax()
     if (_skip_initial_global_relax)
     {
         spdlog::info("Skipping initial global relax stage");
-        return Transition::SKIP;
+        USM_DECISION_TABLE(Transition::NEXT, USM_MAKE_DECISION(_skip_initial_global_relax, Transition::NEXT));
     }
 
     _relax_stage->init(_graph, {}, _imageGPSLocations, true, false, {Option::ORIENTATION, Option::GROUND_MESH});
@@ -185,7 +179,7 @@ Pipeline::Transition Pipeline::camera_parameter_relax()
     if (_skip_camera_param_relax)
     {
         spdlog::info("Skipping camera parameter relax stage");
-        return Transition::SKIP;
+        USM_DECISION_TABLE(Transition::NEXT, USM_MAKE_DECISION(_skip_camera_param_relax, Transition::NEXT));
     }
 
     RelaxOptionSet options;
@@ -237,7 +231,7 @@ Pipeline::Transition Pipeline::final_global_relax()
     if (_skip_final_global_relax)
     {
         spdlog::info("Skipping final global relax stage");
-        return Transition::SKIP;
+        USM_DECISION_TABLE(Transition::NEXT, USM_MAKE_DECISION(_skip_final_global_relax, Transition::NEXT));
     }
 
     const bool lastIteration = stateRunCount() >= 3;
@@ -257,7 +251,7 @@ Pipeline::Transition Pipeline::mesh_refinement()
     if (_skip_mesh_refinement)
     {
         spdlog::info("Skipping mesh refinement stage");
-        return Transition::SKIP;
+        USM_DECISION_TABLE(Transition::NEXT, USM_MAKE_DECISION(_skip_mesh_refinement, Transition::NEXT));
     }
 
     PerformanceMeasure p("Mesh refinement");
@@ -310,15 +304,15 @@ Pipeline::Transition Pipeline::mesh_refinement()
 
 Pipeline::Transition Pipeline::generate_thumbnail()
 {
-    if (_thumbnail_filename.empty() && _source_filename.empty() && _overlap_filename.empty())
+    if (!_generate_thumbnails || (_thumbnail_filename.empty() && _source_filename.empty() && _overlap_filename.empty()))
     {
-        USM_DECISION_TABLE(Transition::NEXT, );
+        USM_DECISION_TABLE(Transition::NEXT, USM_MAKE_DECISION(!_generate_thumbnails, Transition::NEXT));
     }
 
     if (_surfaces.empty())
     {
         spdlog::warn("No surfaces available for thumbnail generation");
-        USM_DECISION_TABLE(Transition::NEXT, );
+        USM_DECISION_TABLE(Transition::NEXT, USM_MAKE_DECISION(_surfaces.empty(), Transition::NEXT));
     }
 
     auto thumbnail = orthomosaic::generateOrthomosaic(_surfaces, _graph);
@@ -335,9 +329,9 @@ Pipeline::Transition Pipeline::generate_thumbnail()
 
 Pipeline::Transition Pipeline::generate_geotiff()
 {
-    if (_geotiff_filename.empty() && _dsm_filename.empty())
+    if (!_generate_geotiff || (_geotiff_filename.empty() && _dsm_filename.empty()))
     {
-        USM_DECISION_TABLE(Transition::NEXT, );
+        USM_DECISION_TABLE(Transition::NEXT, USM_MAKE_DECISION(!_generate_geotiff, Transition::NEXT));
     }
 
     if (!_geotiff_filename.empty())
