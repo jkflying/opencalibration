@@ -1,5 +1,6 @@
 #include <opencalibration/io/serialize.hpp>
 #include <opencalibration/surface/expand_mesh.hpp>
+#include <opencalibration/surface/intersect.hpp>
 #include <opencalibration/surface/refine_mesh.hpp>
 #include <opencalibration/types/mesh_graph.hpp>
 
@@ -730,6 +731,149 @@ TEST(refine_mesh, build_minimal_mesh)
     EXPECT_EQ(crossingError, "") << crossingError;
     std::string hangingError = validateMeshNoHangingNodes(mesh);
     EXPECT_EQ(hangingError, "") << hangingError;
+}
+
+TEST(refine_mesh, minimal_mesh_ray_intersection_covers_full_square)
+{
+    // Create cameras at corners of a square
+    point_cloud cameras;
+    cameras.push_back(Eigen::Vector3d(0, 0, 10));
+    cameras.push_back(Eigen::Vector3d(10, 0, 10));
+    cameras.push_back(Eigen::Vector3d(10, 10, 10));
+    cameras.push_back(Eigen::Vector3d(0, 10, 10));
+
+    MeshGraph mesh = buildMinimalMesh(cameras, {});
+
+    // Verify mesh structure
+    ASSERT_EQ(mesh.size_nodes(), 4);
+    ASSERT_EQ(mesh.size_edges(), 5);
+    ASSERT_EQ(countTriangles(mesh), 2);
+
+    // Print mesh structure for debugging
+    std::cout << "Mesh nodes:" << std::endl;
+    for (auto it = mesh.cnodebegin(); it != mesh.cnodeend(); ++it)
+    {
+        std::cout << "  Node " << it->first << ": " << it->second.payload.location.transpose() << std::endl;
+    }
+
+    std::cout << "Mesh edges:" << std::endl;
+    for (auto it = mesh.cedgebegin(); it != mesh.cedgeend(); ++it)
+    {
+        std::cout << "  Edge " << it->first << ": " << it->second.getSource() << " -> " << it->second.getDest()
+                  << " border=" << it->second.payload.border << " opp=[" << it->second.payload.triangleOppositeNodes[0]
+                  << ", " << it->second.payload.triangleOppositeNodes[1] << "]" << std::endl;
+    }
+
+    // Initialize intersection searcher
+    MeshIntersectionSearcher searcher;
+    ASSERT_TRUE(searcher.init(mesh));
+
+    // Test ray intersection across the entire mesh area
+    // The mesh should cover approximately [-20, 30] x [-20, 30] with the border margin
+    // But the actual mesh bounds depend on the height calculation
+    // Let's test within the camera bounds which should definitely be covered
+
+    int hitCount = 0;
+    int missCount = 0;
+    int totalTests = 0;
+
+    // Test a grid of points across the mesh
+    for (double x = 1; x <= 9; x += 1)
+    {
+        for (double y = 1; y <= 9; y += 1)
+        {
+            // Ray pointing downward from above
+            const ray_d r{{0, 0, -1}, {x, y, 100}};
+            auto intersection = searcher.triangleIntersect(r);
+
+            totalTests++;
+            if (intersection.type == MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
+            {
+                hitCount++;
+                // Verify the intersection point is at the expected x,y
+                EXPECT_NEAR(intersection.intersectionLocation.x(), x, 1e-6)
+                    << "At (" << x << ", " << y << ")";
+                EXPECT_NEAR(intersection.intersectionLocation.y(), y, 1e-6)
+                    << "At (" << x << ", " << y << ")";
+            }
+            else
+            {
+                missCount++;
+                std::cout << "MISS at (" << x << ", " << y << ") - type: " << static_cast<int>(intersection.type)
+                          << std::endl;
+            }
+        }
+    }
+
+    std::cout << "Ray intersection results: " << hitCount << " hits, " << missCount << " misses out of " << totalTests
+              << " tests" << std::endl;
+
+    // All points within the camera bounds should intersect
+    EXPECT_EQ(missCount, 0) << "Some rays within camera bounds did not intersect the mesh";
+    EXPECT_EQ(hitCount, totalTests);
+
+    // Specifically test points in both triangles:
+    // Triangle 1 (bottom-right): contains point (7, 3)
+    // Triangle 2 (top-left): contains point (3, 7)
+
+    {
+        const ray_d r{{0, 0, -1}, {7, 3, 100}};
+        auto intersection = searcher.triangleIntersect(r);
+        EXPECT_EQ(intersection.type, MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
+            << "Point (7,3) should be in bottom-right triangle";
+    }
+
+    {
+        const ray_d r{{0, 0, -1}, {3, 7, 100}};
+        auto intersection = searcher.triangleIntersect(r);
+        EXPECT_EQ(intersection.type, MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
+            << "Point (3,7) should be in top-left triangle";
+    }
+
+    // Test diagonal - should be in the mesh
+    {
+        const ray_d r{{0, 0, -1}, {5, 5, 100}};
+        auto intersection = searcher.triangleIntersect(r);
+        EXPECT_EQ(intersection.type, MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
+            << "Point (5,5) on diagonal should intersect";
+    }
+}
+
+TEST(refine_mesh, minimal_mesh_not_reused_from_ground_plane_triangle)
+{
+    // This test verifies the fix for the bug where a 3-node triangle from GROUND_PLANE
+    // was incorrectly reused when MINIMAL_MESH (4-node square) was requested.
+
+    // Create a 3-node triangle mesh (simulating what GROUND_PLANE creates)
+    MeshGraph triangleMesh;
+    size_t v0 = triangleMesh.addNode(MeshNode{Eigen::Vector3d(-100, -100, 0)});
+    size_t v1 = triangleMesh.addNode(MeshNode{Eigen::Vector3d(100, -100, 0)});
+    size_t v2 = triangleMesh.addNode(MeshNode{Eigen::Vector3d(0, 100, 0)});
+    triangleMesh.addEdge(MeshEdge{true, {v2, 0}}, v0, v1);
+    triangleMesh.addEdge(MeshEdge{true, {v0, 0}}, v1, v2);
+    triangleMesh.addEdge(MeshEdge{true, {v1, 0}}, v2, v0);
+
+    ASSERT_EQ(triangleMesh.size_nodes(), 3);
+    ASSERT_EQ(countTriangles(triangleMesh), 1);
+
+    // Create camera locations for the minimal mesh
+    point_cloud cameras;
+    cameras.push_back(Eigen::Vector3d(0, 0, 10));
+    cameras.push_back(Eigen::Vector3d(50, 0, 10));
+    cameras.push_back(Eigen::Vector3d(50, 50, 10));
+    cameras.push_back(Eigen::Vector3d(0, 50, 10));
+
+    // Wrap the triangle in a surface_model as previousSurfaces
+    std::vector<surface_model> previousSurfaces;
+    previousSurfaces.push_back(surface_model{{}, triangleMesh});
+
+    // Build minimal mesh - should NOT reuse the 3-node triangle
+    MeshGraph minimalMesh = buildMinimalMesh(cameras, previousSurfaces);
+
+    // The minimal mesh should have 4 nodes (square), not 3 (triangle)
+    EXPECT_EQ(minimalMesh.size_nodes(), 4) << "Minimal mesh should have 4 nodes, not reuse 3-node triangle";
+    EXPECT_EQ(minimalMesh.size_edges(), 5) << "Minimal mesh should have 5 edges";
+    EXPECT_EQ(countTriangles(minimalMesh), 2) << "Minimal mesh should have 2 triangles";
 }
 
 TEST(refine_mesh, count_points_per_triangle)

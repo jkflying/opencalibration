@@ -782,7 +782,13 @@ void RelaxProblem::initializeGroundMesh(const std::vector<surface_model> &previo
         }
     }
 
-    if (previousMesh != nullptr)
+    // Don't reuse if:
+    // - useMinimalMesh is requested AND previous mesh is just a 3-node triangle (from GROUND_PLANE)
+    // In that case, we want to build a proper 4-node minimal mesh instead
+    const bool previousIsGroundPlaneTriangle = previousMesh != nullptr && previousMesh->size_nodes() == 3;
+    const bool shouldReusePreviousMesh = previousMesh != nullptr && !(useMinimalMesh && previousIsGroundPlaneTriangle);
+
+    if (shouldReusePreviousMesh)
     {
         // Reuse the previous mesh structure (preserves refinement)
         _mesh = *previousMesh;
