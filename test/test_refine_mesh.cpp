@@ -791,10 +791,8 @@ TEST(refine_mesh, minimal_mesh_ray_intersection_covers_full_square)
             {
                 hitCount++;
                 // Verify the intersection point is at the expected x,y
-                EXPECT_NEAR(intersection.intersectionLocation.x(), x, 1e-6)
-                    << "At (" << x << ", " << y << ")";
-                EXPECT_NEAR(intersection.intersectionLocation.y(), y, 1e-6)
-                    << "At (" << x << ", " << y << ")";
+                EXPECT_NEAR(intersection.intersectionLocation.x(), x, 1e-6) << "At (" << x << ", " << y << ")";
+                EXPECT_NEAR(intersection.intersectionLocation.y(), y, 1e-6) << "At (" << x << ", " << y << ")";
             }
             else
             {
