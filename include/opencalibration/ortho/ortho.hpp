@@ -69,11 +69,18 @@ struct OrthoMosaicContext
 };
 
 OrthoMosaicBounds calculateBoundsAndMeanZ(const std::vector<surface_model> &surfaces);
-double calculateGSD(const MeasurementGraph &graph, const std::unordered_set<size_t> &involved_nodes,
-                    double mean_surface_z);
 
-// Prepare common context for orthomosaic generation
-OrthoMosaicContext prepareOrthoMosaicContext(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph);
+enum class ImageResolution
+{
+    Thumbnail,
+    FullResolution
+};
+
+double calculateGSD(const MeasurementGraph &graph, const std::unordered_set<size_t> &involved_nodes,
+                    double mean_surface_z, ImageResolution resolution = ImageResolution::Thumbnail);
+
+OrthoMosaicContext prepareOrthoMosaicContext(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph,
+                                             ImageResolution resolution = ImageResolution::Thumbnail);
 
 // Ray-trace to find height at world position (x, y) using a context (preferred - RAII)
 double rayTraceHeight(double x, double y, double mean_camera_z, RayTraceContext &context);

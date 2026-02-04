@@ -2,6 +2,7 @@
 
 #include <opencv2/imgcodecs.hpp>
 #include <spdlog/spdlog.h>
+#include <thread>
 
 namespace opencalibration
 {
@@ -14,20 +15,28 @@ FullResolutionImageCache::FullResolutionImageCache(size_t max_size) : max_cache_
 
 cv::Mat FullResolutionImageCache::getImage(size_t node_id, const std::string &path)
 {
-    std::lock_guard<std::mutex> lock(cache_mutex_);
-
-    // Check if image is in cache
-    auto it = cache_.find(node_id);
-    if (it != cache_.end())
+    while (true)
     {
-        // Update access time
-        it->second.last_access_time = access_counter_++;
-        cache_hits_++;
-        return it->second.image;
-    }
+        std::unique_lock<std::mutex> lock(cache_mutex_);
 
-    // Cache miss - load image from disk
-    cache_misses_++;
+        auto it = cache_.find(node_id);
+        if (it != cache_.end())
+        {
+            it->second.last_access_time = access_counter_++;
+            cache_hits_++;
+            return it->second.image;
+        }
+
+        if (loading_.count(node_id) == 0)
+        {
+            loading_.insert(node_id);
+            cache_misses_++;
+            break;
+        }
+
+        lock.unlock();
+        std::this_thread::yield();
+    }
 
     if (cv::getNumThreads() != 1)
     {
@@ -36,16 +45,18 @@ cv::Mat FullResolutionImageCache::getImage(size_t node_id, const std::string &pa
 
     cv::Mat image = cv::imread(path);
 
+    std::lock_guard<std::mutex> lock(cache_mutex_);
+
+    loading_.erase(node_id);
+
     if (image.empty())
     {
         spdlog::warn("Failed to load image: {}", path);
         return cv::Mat();
     }
 
-    // Evict oldest image if cache is full
     if (cache_.size() >= max_cache_size_)
     {
-        // Find least recently used entry
         size_t oldest_node_id = 0;
         size_t oldest_access_time = SIZE_MAX;
 
@@ -62,7 +73,6 @@ cv::Mat FullResolutionImageCache::getImage(size_t node_id, const std::string &pa
         spdlog::debug("Evicted image {} from cache", oldest_node_id);
     }
 
-    // Add to cache
     CachedImage cached{image, access_counter_++};
     cache_[node_id] = cached;
 
