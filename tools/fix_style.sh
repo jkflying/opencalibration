@@ -1,14 +1,11 @@
 #!/bin/bash
 
-if [ "$#" -eq 0 ]; then
-    echo "Usage: $0 <src_file | dir>"
-    echo ""
-    echo "ERROR: At least one source file or one directory must be provided!"
+DEFAULT_DIRS="include src test app"
 
-    exit 1
-fi
+# Use provided directories or defaults
+DIRS="${@:-$DEFAULT_DIRS}"
 
-for arg in "$@"
+for arg in $DIRS
 do
     if [ -f $arg ]; then
         clang-format-14 -i -style='{BasedOnStyle: Microsoft}' $arg

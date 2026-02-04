@@ -1,11 +1,36 @@
 #!/bin/bash
-set -e
 
-# Fix style recursively in all the repository
-bash tools/fix_style.sh include src test app
+DEFAULT_DIRS="include src test app"
 
-# Print the diff with the remote branch (empty if no diff)
-git --no-pager diff -U0 --color
+# Use provided directories or defaults
+DIRS="${@:-$DEFAULT_DIRS}"
 
-# Check if there are changes, and failed
-if ! git diff-index --quiet HEAD --; then echo "Code style check failed, please run clang-format (e.g. with tools/fix_style.sh)"; exit 1; fi
+# Find all source files
+FILES=""
+for dir in $DIRS; do
+    if [ -d "$dir" ]; then
+        FILES="$FILES $(find $dir -iname '*.h' -o -iname '*.cpp' -o -iname '*.hpp')"
+    elif [ -f "$dir" ]; then
+        FILES="$FILES $dir"
+    fi
+done
+
+# Check each file with clang-format dry-run
+NEEDS_FORMAT=0
+for file in $FILES; do
+    if [ -n "$file" ]; then
+        # --dry-run -Werror returns non-zero if the file would be changed
+        if ! clang-format-14 -style='{BasedOnStyle: Microsoft}' --dry-run -Werror "$file" 2>/dev/null; then
+            echo "Needs formatting: $file"
+            NEEDS_FORMAT=1
+        fi
+    fi
+done
+
+if [ $NEEDS_FORMAT -eq 1 ]; then
+    echo ""
+    echo "Code style check failed, please run clang-format (e.g. with tools/fix_style.sh)"
+    exit 1
+fi
+
+echo "Code style check passed"
