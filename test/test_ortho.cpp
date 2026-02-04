@@ -11,9 +11,12 @@
 #include <opencalibration/types/node_pose.hpp>
 #include <opencalibration/types/point_cloud.hpp>
 
+#include <ceres/jet.h>
+#include <eigen3/Eigen/Eigenvalues>
 #include <gdal/gdal_priv.h>
 #include <gtest/gtest.h>
 #include <opencv2/imgcodecs.hpp>
+#include <opencv2/imgproc.hpp>
 
 #include <chrono>
 #include <filesystem>
@@ -415,10 +418,351 @@ TEST_F(ortho_, measurement_3_images_mesh_radial)
         EXPECT_LT(Eigen::AngleAxisd(np[i].orientation.inverse() * ground_ori[i]).angle(), 1e-3)
             << i << ": " << np[i].orientation.coeffs().transpose() << std::endl
             << "g: " << ground_ori[i].coeffs().transpose();
-    }
+}
 
     EXPECT_LT((cam_models[model->id].radial_distortion - model->radial_distortion).norm(), 1e-4)
         << cam_models[model->id].radial_distortion;
     EXPECT_NEAR(cam_models[model->id].focal_length_pixels, model->focal_length_pixels, 1e-9);
 }
 */
+
+// Unit tests for LAB patch sampling helper functions
+namespace
+{
+// Test helper: these functions are in anonymous namespace in ortho.cpp,
+// so we reimplement minimal versions here for testing the algorithm
+
+double testCalculateArcPixel(const CameraModel &model)
+{
+    const double h = 0.001;
+    Eigen::Vector2d pixel = image_from_3d(Eigen::Vector3d{0, 0, 1}, model);
+    Eigen::Vector2d pixelShift = image_from_3d(Eigen::Vector3d{h, 0, 1}, model);
+    return h / (pixel - pixelShift).norm();
+}
+
+int testCalculatePatchRadius(double output_gsd, double arc_pixel, double camera_elevation, int max_radius = 16)
+{
+    double source_gsd = std::abs(camera_elevation * arc_pixel);
+    if (source_gsd <= 0 || !std::isfinite(source_gsd))
+        return 0;
+    double ratio = output_gsd / source_gsd;
+    if (ratio <= 1.0)
+        return 0;
+    return std::min(static_cast<int>(std::ceil(ratio / 2.0)), max_radius);
+}
+} // namespace
+
+TEST(ortho_patch, calculate_patch_radius_no_averaging_needed)
+{
+    // GIVEN: source GSD is larger than output GSD (lower resolution source)
+    double arc_pixel = 0.001;     // 1 mrad per pixel
+    double camera_elevation = 10; // 10m above ground
+    // source_gsd = 10 * 0.001 = 0.01m = 1cm
+
+    double output_gsd = 0.005; // 5mm output (higher res than source)
+
+    // WHEN: we calculate patch radius
+    int radius = testCalculatePatchRadius(output_gsd, arc_pixel, camera_elevation);
+
+    // THEN: radius should be 0 (no averaging needed, source is lower res)
+    EXPECT_EQ(radius, 0);
+}
+
+TEST(ortho_patch, calculate_patch_radius_averaging_needed)
+{
+    // GIVEN: source GSD is smaller than output GSD (higher resolution source)
+    double arc_pixel = 0.001;     // 1 mrad per pixel
+    double camera_elevation = 10; // 10m above ground
+    // source_gsd = 10 * 0.001 = 0.01m = 1cm
+
+    double output_gsd = 0.04; // 4cm output (lower res than source)
+    // ratio = 0.04 / 0.01 = 4
+    // patch_radius = ceil(4 / 2) = 2
+
+    // WHEN: we calculate patch radius
+    int radius = testCalculatePatchRadius(output_gsd, arc_pixel, camera_elevation);
+
+    // THEN: radius should be 2
+    EXPECT_EQ(radius, 2);
+}
+
+TEST(ortho_patch, calculate_patch_radius_max_clamp)
+{
+    // GIVEN: very large GSD ratio
+    double arc_pixel = 0.0001; // Very fine source
+    double camera_elevation = 10;
+    // source_gsd = 10 * 0.0001 = 0.001m = 1mm
+
+    double output_gsd = 1.0; // 1m output
+    // ratio = 1.0 / 0.001 = 1000
+    // patch_radius = ceil(1000 / 2) = 500, but clamped to 16
+
+    // WHEN: we calculate patch radius
+    int radius = testCalculatePatchRadius(output_gsd, arc_pixel, camera_elevation);
+
+    // THEN: radius should be clamped to 16
+    EXPECT_EQ(radius, 16);
+}
+
+TEST(ortho_patch, calculate_patch_radius_zero_arc_pixel)
+{
+    // GIVEN: zero arc_pixel (edge case)
+    double arc_pixel = 0;
+    double camera_elevation = 10;
+    double output_gsd = 0.04;
+
+    // WHEN: we calculate patch radius
+    int radius = testCalculatePatchRadius(output_gsd, arc_pixel, camera_elevation);
+
+    // THEN: radius should be 0 (fallback to single pixel)
+    EXPECT_EQ(radius, 0);
+}
+
+TEST(ortho_patch, calculate_arc_pixel)
+{
+    // GIVEN: a camera model with known focal length
+    CameraModel model;
+    model.focal_length_pixels = 600;
+    model.principle_point << 400, 300;
+    model.pixels_cols = 800;
+    model.pixels_rows = 600;
+    model.projection_type = ProjectionType::PLANAR;
+
+    // WHEN: we calculate arc_pixel
+    double arc_pixel = testCalculateArcPixel(model);
+
+    // THEN: arc_pixel should be approximately 1/focal_length
+    // For planar projection: pixel_shift = h * focal_length
+    // So arc_pixel = h / (h * focal_length) = 1 / focal_length
+    EXPECT_NEAR(arc_pixel, 1.0 / 600.0, 1e-9);
+}
+
+namespace
+{
+class TestPatchSampler
+{
+  public:
+    static constexpr int MAX_PATCH_RADIUS = 16;
+
+    TestPatchSampler() : _lab_pixel(1, 1, CV_8UC3), _bgr_pixel(1, 1, CV_8UC3)
+    {
+    }
+
+    Eigen::Matrix2d computeJacobian(const Eigen::Vector3d &world_point, const CameraModel &model,
+                                    const Eigen::Vector3d &camera_position,
+                                    const Eigen::Matrix3d &camera_orientation_inverse) const
+    {
+        using JetT = ceres::Jet<double, 2>;
+
+        Eigen::Matrix<JetT, 3, 1> world_point_jet;
+        world_point_jet[0] = JetT(world_point.x(), 0);
+        world_point_jet[1] = JetT(world_point.y(), 1);
+        world_point_jet[2] = JetT(world_point.z());
+
+        DifferentiableCameraModel<JetT> model_jet;
+        model_jet.focal_length_pixels = JetT(model.focal_length_pixels);
+        model_jet.principle_point = model.principle_point.cast<JetT>();
+        model_jet.radial_distortion = model.radial_distortion.cast<JetT>();
+        model_jet.tangential_distortion = model.tangential_distortion.cast<JetT>();
+        model_jet.pixels_cols = model.pixels_cols;
+        model_jet.pixels_rows = model.pixels_rows;
+        model_jet.projection_type = model.projection_type;
+
+        Eigen::Matrix<JetT, 3, 1> camera_position_jet = camera_position.cast<JetT>();
+        Eigen::Matrix<JetT, 3, 3> camera_orientation_inverse_jet = camera_orientation_inverse.cast<JetT>();
+
+        Eigen::Matrix<JetT, 2, 1> pixel_jet =
+            image_from_3d(world_point_jet, model_jet, camera_position_jet, camera_orientation_inverse_jet);
+
+        Eigen::Matrix2d J;
+        J(0, 0) = pixel_jet[0].v[0];
+        J(0, 1) = pixel_jet[0].v[1];
+        J(1, 0) = pixel_jet[1].v[0];
+        J(1, 1) = pixel_jet[1].v[1];
+
+        return J;
+    }
+
+    bool sampleWithJacobian(const cv::Mat &bgr_image, const Eigen::Vector3d &world_point, const CameraModel &model,
+                            const Eigen::Vector3d &camera_position, const Eigen::Matrix3d &camera_orientation_inverse,
+                            double output_gsd, cv::Vec3b &result)
+    {
+        Eigen::Vector2d pixel = image_from_3d(world_point, model, camera_position, camera_orientation_inverse);
+
+        if (pixel.x() < 0 || pixel.x() >= bgr_image.cols || pixel.y() < 0 || pixel.y() >= bgr_image.rows)
+        {
+            return false;
+        }
+
+        Eigen::Matrix2d J = computeJacobian(world_point, model, camera_position, camera_orientation_inverse);
+        Eigen::Matrix2d M = output_gsd * output_gsd * J * J.transpose();
+
+        Eigen::SelfAdjointEigenSolver<Eigen::Matrix2d> solver(M);
+        Eigen::Vector2d eigenvalues = solver.eigenvalues();
+
+        double a = std::sqrt(std::max(eigenvalues(1), 1e-6));
+        double b = std::sqrt(std::max(eigenvalues(0), 1e-6));
+
+        if (a < 1.0 && b < 1.0)
+        {
+            int px = static_cast<int>(pixel.x());
+            int py = static_cast<int>(pixel.y());
+            if (px >= 0 && px < bgr_image.cols && py >= 0 && py < bgr_image.rows)
+            {
+                result = bgr_image.at<cv::Vec3b>(py, px);
+                return true;
+            }
+            return false;
+        }
+
+        int radius = std::min(static_cast<int>(std::ceil(a)), MAX_PATCH_RADIUS);
+
+        int x_min = std::max(0, static_cast<int>(pixel.x()) - radius);
+        int y_min = std::max(0, static_cast<int>(pixel.y()) - radius);
+        int x_max = std::min(bgr_image.cols - 1, static_cast<int>(pixel.x()) + radius);
+        int y_max = std::min(bgr_image.rows - 1, static_cast<int>(pixel.y()) + radius);
+
+        if (x_min > x_max || y_min > y_max)
+        {
+            return false;
+        }
+
+        double det = M.determinant();
+        if (det < 1e-12)
+        {
+            int px = static_cast<int>(pixel.x());
+            int py = static_cast<int>(pixel.y());
+            result = bgr_image.at<cv::Vec3b>(py, px);
+            return true;
+        }
+        Eigen::Matrix2d M_inv = M.inverse();
+
+        double sum_L = 0, sum_a = 0, sum_b = 0;
+        int count = 0;
+
+        for (int py = y_min; py <= y_max; py++)
+        {
+            for (int px = x_min; px <= x_max; px++)
+            {
+                Eigen::Vector2d diff(px - pixel.x(), py - pixel.y());
+                double ellipse_dist = diff.transpose() * M_inv * diff;
+
+                if (ellipse_dist <= 1.0)
+                {
+                    cv::Vec3b bgr = bgr_image.at<cv::Vec3b>(py, px);
+
+                    _lab_pixel.at<cv::Vec3b>(0, 0) = bgr;
+                    cv::cvtColor(_lab_pixel, _bgr_pixel, cv::COLOR_BGR2Lab);
+                    cv::Vec3b lab = _bgr_pixel.at<cv::Vec3b>(0, 0);
+
+                    sum_L += lab[0];
+                    sum_a += lab[1];
+                    sum_b += lab[2];
+                    count++;
+                }
+            }
+        }
+
+        if (count == 0)
+        {
+            return false;
+        }
+
+        _lab_pixel.at<cv::Vec3b>(0, 0) =
+            cv::Vec3b(static_cast<uint8_t>(sum_L / count), static_cast<uint8_t>(sum_a / count),
+                      static_cast<uint8_t>(sum_b / count));
+        cv::cvtColor(_lab_pixel, _bgr_pixel, cv::COLOR_Lab2BGR);
+        result = _bgr_pixel.at<cv::Vec3b>(0, 0);
+
+        return true;
+    }
+
+  private:
+    mutable cv::Mat _lab_pixel;
+    mutable cv::Mat _bgr_pixel;
+};
+} // namespace
+
+TEST(ortho_patch, patch_sampler_jacobian)
+{
+    CameraModel model;
+    model.focal_length_pixels = 500;
+    model.principle_point << 50, 50;
+    model.pixels_cols = 100;
+    model.pixels_rows = 100;
+    model.projection_type = ProjectionType::PLANAR;
+
+    Eigen::Vector3d camera_position(0, 0, 10);
+    auto camera_orientation = Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX());
+    Eigen::Matrix3d inv_rotation = Eigen::Quaterniond(camera_orientation).inverse().toRotationMatrix();
+
+    Eigen::Vector3d world_point(0, 0, 0);
+
+    TestPatchSampler sampler;
+    Eigen::Matrix2d J = sampler.computeJacobian(world_point, model, camera_position, inv_rotation);
+
+    // For a camera at height 10 looking straight down with focal length 500:
+    // pixel = focal * (world - cam) / z_cam = 500 * world / 10 = 50 * world
+    // So J should be diag(50, 50) (with sign depending on orientation)
+    EXPECT_NEAR(std::abs(J(0, 0)), 50.0, 1e-6);
+    EXPECT_NEAR(std::abs(J(1, 1)), 50.0, 1e-6);
+    EXPECT_NEAR(J(0, 1), 0.0, 1e-6);
+    EXPECT_NEAR(J(1, 0), 0.0, 1e-6);
+}
+
+TEST(ortho_patch, patch_sampler_single_pixel)
+{
+    cv::Mat image(100, 100, CV_8UC3, cv::Scalar(100, 150, 200));
+
+    CameraModel model;
+    model.focal_length_pixels = 500;
+    model.principle_point << 50, 50;
+    model.pixels_cols = 100;
+    model.pixels_rows = 100;
+    model.projection_type = ProjectionType::PLANAR;
+
+    Eigen::Vector3d camera_position(0, 0, 10);
+    auto camera_orientation = Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX());
+    Eigen::Matrix3d inv_rotation = Eigen::Quaterniond(camera_orientation).inverse().toRotationMatrix();
+
+    Eigen::Vector3d world_point(0, 0, 0);
+    double gsd = 0.01; // Small GSD means ellipse < 1 pixel, so single pixel sample
+
+    TestPatchSampler sampler;
+    cv::Vec3b result;
+    bool success = sampler.sampleWithJacobian(image, world_point, model, camera_position, inv_rotation, gsd, result);
+
+    EXPECT_TRUE(success);
+    EXPECT_EQ(result[0], 100);
+    EXPECT_EQ(result[1], 150);
+    EXPECT_EQ(result[2], 200);
+}
+
+TEST(ortho_patch, patch_sampler_averaging)
+{
+    cv::Mat image(100, 100, CV_8UC3, cv::Scalar(0, 0, 0));
+    cv::circle(image, cv::Point(50, 50), 10, cv::Scalar(255, 255, 255), -1);
+
+    CameraModel model;
+    model.focal_length_pixels = 500;
+    model.principle_point << 50, 50;
+    model.pixels_cols = 100;
+    model.pixels_rows = 100;
+    model.projection_type = ProjectionType::PLANAR;
+
+    Eigen::Vector3d camera_position(0, 0, 10);
+    auto camera_orientation = Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX());
+    Eigen::Matrix3d inv_rotation = Eigen::Quaterniond(camera_orientation).inverse().toRotationMatrix();
+
+    Eigen::Vector3d world_point(0, 0, 0);
+    double gsd = 0.5; // Large GSD means ellipse covers multiple pixels
+
+    TestPatchSampler sampler;
+    cv::Vec3b result;
+    bool success = sampler.sampleWithJacobian(image, world_point, model, camera_position, inv_rotation, gsd, result);
+
+    EXPECT_TRUE(success);
+    // Result should be a gray value (mix of black background and white circle)
+    EXPECT_GT(result[0], 50);
+    EXPECT_LT(result[0], 255);
+}

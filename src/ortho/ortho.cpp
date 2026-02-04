@@ -1,5 +1,7 @@
 #include <opencalibration/ortho/ortho.hpp>
 
+#include <ceres/jet.h>
+#include <eigen3/Eigen/Eigenvalues>
 #include <jk/KDTree.h>
 #include <opencalibration/distort/distort_keypoints.hpp>
 #include <opencalibration/geo_coord/geo_coord.hpp>
@@ -29,6 +31,159 @@ Eigen::Vector2i size(const opencalibration::GenericRaster &raster)
     };
     return std::visit(getSize, raster);
 }
+
+class PatchSampler
+{
+  public:
+    static constexpr int MAX_PATCH_RADIUS = 16;
+    static constexpr int MAX_PATCH_SIZE = 2 * MAX_PATCH_RADIUS + 1;
+
+    PatchSampler() : _lab_pixel(1, 1, CV_8UC3), _bgr_pixel(1, 1, CV_8UC3)
+    {
+        _patch_buffer.create(MAX_PATCH_SIZE, MAX_PATCH_SIZE, CV_8UC3);
+        _lab_buffer.create(MAX_PATCH_SIZE, MAX_PATCH_SIZE, CV_8UC3);
+    }
+
+    Eigen::Matrix2d computeJacobian(const Eigen::Vector3d &world_point,
+                                    const opencalibration::DifferentiableCameraModel<double> &model,
+                                    const Eigen::Vector3d &camera_position,
+                                    const Eigen::Matrix3d &camera_orientation_inverse) const
+    {
+        using JetT = ceres::Jet<double, 2>;
+
+        Eigen::Matrix<JetT, 3, 1> world_point_jet;
+        world_point_jet[0] = JetT(world_point.x(), 0);
+        world_point_jet[1] = JetT(world_point.y(), 1);
+        world_point_jet[2] = JetT(world_point.z());
+
+        opencalibration::DifferentiableCameraModel<JetT> model_jet;
+        model_jet.focal_length_pixels = JetT(model.focal_length_pixels);
+        model_jet.principle_point = model.principle_point.cast<JetT>();
+        model_jet.radial_distortion = model.radial_distortion.cast<JetT>();
+        model_jet.tangential_distortion = model.tangential_distortion.cast<JetT>();
+        model_jet.pixels_cols = model.pixels_cols;
+        model_jet.pixels_rows = model.pixels_rows;
+        model_jet.projection_type = model.projection_type;
+
+        Eigen::Matrix<JetT, 3, 1> camera_position_jet = camera_position.cast<JetT>();
+        Eigen::Matrix<JetT, 3, 3> camera_orientation_inverse_jet = camera_orientation_inverse.cast<JetT>();
+
+        Eigen::Matrix<JetT, 2, 1> pixel_jet = opencalibration::image_from_3d(
+            world_point_jet, model_jet, camera_position_jet, camera_orientation_inverse_jet);
+
+        Eigen::Matrix2d J;
+        J(0, 0) = pixel_jet[0].v[0];
+        J(0, 1) = pixel_jet[0].v[1];
+        J(1, 0) = pixel_jet[1].v[0];
+        J(1, 1) = pixel_jet[1].v[1];
+
+        return J;
+    }
+
+    bool sampleWithJacobian(const cv::Mat &bgr_image, const Eigen::Vector3d &world_point,
+                            const opencalibration::DifferentiableCameraModel<double> &model,
+                            const Eigen::Vector3d &camera_position, const Eigen::Matrix3d &camera_orientation_inverse,
+                            double output_gsd, cv::Vec3b &result)
+    {
+        Eigen::Vector2d pixel =
+            opencalibration::image_from_3d(world_point, model, camera_position, camera_orientation_inverse);
+
+        if (pixel.x() < 0 || pixel.x() >= bgr_image.cols || pixel.y() < 0 || pixel.y() >= bgr_image.rows)
+        {
+            return false;
+        }
+
+        Eigen::Matrix2d J = computeJacobian(world_point, model, camera_position, camera_orientation_inverse);
+
+        // World-space gsd*gsd square maps to pixel-space ellipse: M = gsd^2 * J * J^T
+        Eigen::Matrix2d M = output_gsd * output_gsd * J * J.transpose();
+
+        Eigen::SelfAdjointEigenSolver<Eigen::Matrix2d> solver(M);
+        Eigen::Vector2d eigenvalues = solver.eigenvalues();
+
+        double a = std::sqrt(std::max(eigenvalues(1), 1e-6));
+        double b = std::sqrt(std::max(eigenvalues(0), 1e-6));
+
+        if (a < 1.0 && b < 1.0)
+        {
+            int px = static_cast<int>(pixel.x());
+            int py = static_cast<int>(pixel.y());
+            if (px >= 0 && px < bgr_image.cols && py >= 0 && py < bgr_image.rows)
+            {
+                result = bgr_image.at<cv::Vec3b>(py, px);
+                return true;
+            }
+            return false;
+        }
+
+        int radius = std::min(static_cast<int>(std::ceil(a)), MAX_PATCH_RADIUS);
+
+        int x_min = std::max(0, static_cast<int>(pixel.x()) - radius);
+        int y_min = std::max(0, static_cast<int>(pixel.y()) - radius);
+        int x_max = std::min(bgr_image.cols - 1, static_cast<int>(pixel.x()) + radius);
+        int y_max = std::min(bgr_image.rows - 1, static_cast<int>(pixel.y()) + radius);
+
+        if (x_min > x_max || y_min > y_max)
+        {
+            return false;
+        }
+
+        double det = M.determinant();
+        if (det < 1e-12)
+        {
+            int px = static_cast<int>(pixel.x());
+            int py = static_cast<int>(pixel.y());
+            result = bgr_image.at<cv::Vec3b>(py, px);
+            return true;
+        }
+        Eigen::Matrix2d M_inv = M.inverse();
+
+        double sum_L = 0, sum_a = 0, sum_b = 0;
+        int count = 0;
+
+        for (int py = y_min; py <= y_max; py++)
+        {
+            for (int px = x_min; px <= x_max; px++)
+            {
+                Eigen::Vector2d diff(px - pixel.x(), py - pixel.y());
+                double ellipse_dist = diff.transpose() * M_inv * diff;
+
+                if (ellipse_dist <= 1.0)
+                {
+                    cv::Vec3b bgr = bgr_image.at<cv::Vec3b>(py, px);
+
+                    _lab_pixel.at<cv::Vec3b>(0, 0) = bgr;
+                    cv::cvtColor(_lab_pixel, _bgr_pixel, cv::COLOR_BGR2Lab);
+                    cv::Vec3b lab = _bgr_pixel.at<cv::Vec3b>(0, 0);
+
+                    sum_L += lab[0];
+                    sum_a += lab[1];
+                    sum_b += lab[2];
+                    count++;
+                }
+            }
+        }
+
+        if (count == 0)
+        {
+            return false;
+        }
+
+        _lab_pixel.at<cv::Vec3b>(0, 0) =
+            cv::Vec3b(static_cast<uint8_t>(sum_L / count), static_cast<uint8_t>(sum_a / count),
+                      static_cast<uint8_t>(sum_b / count));
+        cv::cvtColor(_lab_pixel, _bgr_pixel, cv::COLOR_Lab2BGR);
+        result = _bgr_pixel.at<cv::Vec3b>(0, 0);
+
+        return true;
+    }
+
+  private:
+    cv::Mat _patch_buffer;
+    cv::Mat _lab_buffer;
+    mutable cv::Mat _lab_pixel;
+    mutable cv::Mat _bgr_pixel;
+};
 
 } // namespace
 
@@ -571,12 +726,22 @@ void processTile(GDALDataset *dataset, int tile_x, int tile_y, int tile_size, co
 
     spdlog::debug("Tile ({}, {}): {} contributing images", tile_x, tile_y, contributing.size());
 
-    // Allocate tile buffer
+    std::unordered_map<size_t, Eigen::Matrix3d> inv_rotation_cache;
+    for (size_t node_id : contributing)
+    {
+        const auto *node = graph.getNode(node_id);
+        if (node)
+        {
+            inv_rotation_cache[node_id] = node->payload.orientation.inverse().toRotationMatrix();
+        }
+    }
+
     std::vector<uint8_t> tile_buffer(tile_width * tile_height * 4);
 
-    // Process pixels in tile
 #pragma omp parallel
     {
+        PatchSampler sampler;
+
         std::vector<MeshIntersectionSearcher> searchers;
         for (const auto &surface : surfaces)
         {
@@ -645,18 +810,21 @@ void processTile(GDALDataset *dataset, int tile_x, int tile_y, int tile_size, co
                     const auto *closestNode = graph.getNode(closest.payload);
                     const auto &payload = closestNode->payload;
 
-                    // Backproject 3D point to image space
-                    Eigen::Vector2d pixel =
-                        image_from_3d(sample_point, *payload.model, payload.position, payload.orientation);
+                    auto inv_rot_it = inv_rotation_cache.find(closest.payload);
+                    if (inv_rot_it == inv_rotation_cache.end())
+                    {
+                        continue;
+                    }
+                    const Eigen::Matrix3d &inv_rotation = inv_rot_it->second;
 
-                    // Check if pixel is within image bounds
+                    Eigen::Vector2d pixel = image_from_3d(sample_point, *payload.model, payload.position, inv_rotation);
+
                     if (pixel.x() < 0 || pixel.x() >= payload.model->pixels_cols || pixel.y() < 0 ||
                         pixel.y() >= payload.model->pixels_rows)
                     {
                         continue;
                     }
 
-                    // Load full-resolution image
                     cv::Mat full_image = image_cache.getImage(closest.payload, payload.path);
 
                     if (full_image.empty())
@@ -664,19 +832,14 @@ void processTile(GDALDataset *dataset, int tile_x, int tile_y, int tile_size, co
                         continue;
                     }
 
-                    // Sample color at pixel location
-                    int px = static_cast<int>(pixel.x());
-                    int py = static_cast<int>(pixel.y());
-
-                    if (px >= 0 && px < full_image.cols && py >= 0 && py < full_image.rows)
+                    cv::Vec3b color_bgr;
+                    if (sampler.sampleWithJacobian(full_image, sample_point, *payload.model, payload.position,
+                                                   inv_rotation, gsd, color_bgr))
                     {
-                        cv::Vec3b color_bgr = full_image.at<cv::Vec3b>(py, px);
-
-                        // Convert BGR to RGB
-                        tile_buffer[idx + 0] = color_bgr[2]; // R
-                        tile_buffer[idx + 1] = color_bgr[1]; // G
-                        tile_buffer[idx + 2] = color_bgr[0]; // B
-                        tile_buffer[idx + 3] = 255;          // A
+                        tile_buffer[idx + 0] = color_bgr[2];
+                        tile_buffer[idx + 1] = color_bgr[1];
+                        tile_buffer[idx + 2] = color_bgr[0];
+                        tile_buffer[idx + 3] = 255;
 
                         found_color = true;
                         break;
