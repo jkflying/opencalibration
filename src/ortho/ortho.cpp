@@ -640,7 +640,6 @@ void writeTileToGeoTIFF(GDALDataset *dataset, int x_offset, int y_offset, int wi
     }
 }
 
-// Helper: Process a single tile
 void processTile(GDALDataset *dataset, int tile_x, int tile_y, int tile_size, const OrthoMosaicBounds &bounds,
                  double gsd, int output_width, int output_height, const std::vector<surface_model> &surfaces,
                  const MeasurementGraph &graph, const jk::tree::KDTree<size_t, 3> &imageGPSLocations,
@@ -655,21 +654,23 @@ void processTile(GDALDataset *dataset, int tile_x, int tile_y, int tile_size, co
 
     std::vector<uint8_t> tile_buffer(tile_width * tile_height * 4);
 
-    PatchSampler sampler;
-
-    std::vector<MeshIntersectionSearcher> searchers;
-    for (const auto &surface : surfaces)
+#pragma omp parallel
     {
-        searchers.emplace_back();
-        if (!searchers.back().init(surface.mesh))
+        PerformanceMeasure thread_perf("Ortho tile rows");
+
+        PatchSampler sampler;
+
+        std::vector<MeshIntersectionSearcher> searchers;
+        for (const auto &surface : surfaces)
         {
-            spdlog::error("Could not initialize searcher on mesh surface");
-            searchers.pop_back();
+            searchers.emplace_back();
+            if (!searchers.back().init(surface.mesh))
+            {
+                searchers.pop_back();
+            }
         }
-    }
 
-    for (int local_row = 0; local_row < tile_height; local_row++)
-    {
+#pragma omp for schedule(dynamic)
         for (int local_row = 0; local_row < tile_height; local_row++)
         {
             for (int local_col = 0; local_col < tile_width; local_col++)
@@ -768,9 +769,9 @@ void processTile(GDALDataset *dataset, int tile_x, int tile_y, int tile_size, co
                 }
             }
         }
-
-        writeTileToGeoTIFF(dataset, x_offset, y_offset, tile_width, tile_height, tile_buffer);
     }
+
+    writeTileToGeoTIFF(dataset, x_offset, y_offset, tile_width, tile_height, tile_buffer);
 }
 
 // Helper: Create GDAL GeoTIFF dataset for DSM (single float32 band)
@@ -817,12 +818,10 @@ GDALDatasetPtr createDSMGeoTIFF(const std::string &path, int width, int height, 
     return GDALDatasetPtr(dataset);
 }
 
-// Helper: Process a single tile for DSM generation
 void processDSMTile(GDALDataset *dataset, int tile_x, int tile_y, int tile_size, const OrthoMosaicBounds &bounds,
                     double gsd, int output_width, int output_height, const std::vector<surface_model> &surfaces,
                     double mean_camera_z)
 {
-    // Calculate tile bounds in pixels
     int x_offset = tile_x * tile_size;
     int y_offset = tile_y * tile_size;
     int tile_width = std::min(tile_size, output_width - x_offset);
@@ -830,53 +829,57 @@ void processDSMTile(GDALDataset *dataset, int tile_x, int tile_y, int tile_size,
 
     std::vector<float> tile_buffer(tile_width * tile_height, std::numeric_limits<float>::quiet_NaN());
 
-    std::vector<MeshIntersectionSearcher> searchers;
-    for (const auto &surface : surfaces)
+#pragma omp parallel
     {
-        searchers.emplace_back();
-        if (!searchers.back().init(surface.mesh))
+        PerformanceMeasure thread_perf("DSM tile rows");
+
+        std::vector<MeshIntersectionSearcher> searchers;
+        for (const auto &surface : surfaces)
         {
-            spdlog::error("Could not initialize searcher on mesh surface");
-            searchers.pop_back();
-        }
-    }
-
-    for (int local_row = 0; local_row < tile_height; local_row++)
-    {
-        for (int local_col = 0; local_col < tile_width; local_col++)
-        {
-            int global_col = x_offset + local_col;
-            int global_row = y_offset + local_row;
-
-            const double x = global_col * gsd + bounds.min_x;
-            const double y = bounds.max_y - global_row * gsd;
-
-            const ray_d intersectionRay{{0, 0, -1}, {x, y, mean_camera_z}};
-            double z = NAN;
-            for (auto &searcher : searchers)
+            searchers.emplace_back();
+            if (!searchers.back().init(surface.mesh))
             {
-                if (searcher.lastResult().type != MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
+                searchers.pop_back();
+            }
+        }
+
+#pragma omp for schedule(dynamic)
+        for (int local_row = 0; local_row < tile_height; local_row++)
+        {
+            for (int local_col = 0; local_col < tile_width; local_col++)
+            {
+                int global_col = x_offset + local_col;
+                int global_row = y_offset + local_row;
+
+                const double x = global_col * gsd + bounds.min_x;
+                const double y = bounds.max_y - global_row * gsd;
+
+                const ray_d intersectionRay{{0, 0, -1}, {x, y, mean_camera_z}};
+                double z = NAN;
+                for (auto &searcher : searchers)
                 {
-                    if (!searcher.reinit())
+                    if (searcher.lastResult().type != MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
                     {
-                        continue;
+                        if (!searcher.reinit())
+                        {
+                            continue;
+                        }
+                    }
+
+                    auto intersection = searcher.triangleIntersect(intersectionRay);
+                    if (intersection.type == MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
+                    {
+                        z = intersection.intersectionLocation.z();
+                        break;
                     }
                 }
 
-                auto intersection = searcher.triangleIntersect(intersectionRay);
-                if (intersection.type == MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
-                {
-                    z = intersection.intersectionLocation.z();
-                    break;
-                }
+                int idx = local_row * tile_width + local_col;
+                tile_buffer[idx] = static_cast<float>(z);
             }
-
-            int idx = local_row * tile_width + local_col;
-            tile_buffer[idx] = static_cast<float>(z);
         }
     }
 
-    // Write tile to GeoTIFF
     CPLErr err = dataset->GetRasterBand(1)->RasterIO(GF_Write, x_offset, y_offset, tile_width, tile_height,
                                                      tile_buffer.data(), tile_width, tile_height, GDT_Float32, 0, 0);
 
@@ -922,10 +925,10 @@ void generateDSMGeoTIFF(const std::vector<surface_model> &surfaces, const Measur
     spdlog::info("DSM: Processing {} tiles ({}x{} grid, tile size: {}x{})", total_tiles, num_tiles_x, num_tiles_y,
                  tile_size, tile_size);
 
-    std::atomic<int> completed_tiles{0};
+    int completed_tiles = 0;
     auto start_time = std::chrono::steady_clock::now();
+    auto last_log_time = start_time;
 
-#pragma omp parallel for schedule(dynamic) collapse(2)
     for (int tile_y = 0; tile_y < num_tiles_y; tile_y++)
     {
         for (int tile_x = 0; tile_x < num_tiles_x; tile_x++)
@@ -933,15 +936,36 @@ void generateDSMGeoTIFF(const std::vector<surface_model> &surfaces, const Measur
             processDSMTile(dataset.get(), tile_x, tile_y, tile_size, context.bounds, context.gsd, width, height,
                            surfaces, context.mean_camera_z);
 
-            int done = ++completed_tiles;
+            completed_tiles++;
 
-            if (done % 50 == 0 || done == total_tiles)
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - start_time).count();
+            if (std::chrono::duration_cast<std::chrono::seconds>(now - last_log_time).count() >= 5 ||
+                completed_tiles == total_tiles)
             {
-                auto now = std::chrono::steady_clock::now();
-                auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - start_time).count();
-                double progress = 100.0 * done / total_tiles;
-                spdlog::info("DSM Progress: {:.1f}% ({}/{} tiles, {} seconds)", progress, done, total_tiles, elapsed);
+                double progress = 100.0 * completed_tiles / total_tiles;
+                spdlog::info("DSM Progress: {:.1f}% ({}/{} tiles, {} seconds)", progress, completed_tiles, total_tiles,
+                             elapsed);
+                last_log_time = now;
             }
+        }
+    }
+
+    // Build internal overviews (pyramids) for faster display in GIS software
+    spdlog::info("Building DSM overviews...");
+    std::vector<int> overview_levels;
+    int min_dim = std::min(width, height);
+    for (int level = 2; level < min_dim; level *= 2)
+    {
+        overview_levels.push_back(level);
+    }
+    if (!overview_levels.empty())
+    {
+        CPLErr err = dataset->BuildOverviews("AVERAGE", static_cast<int>(overview_levels.size()),
+                                             overview_levels.data(), 0, nullptr, nullptr, nullptr);
+        if (err != CE_None)
+        {
+            spdlog::warn("Failed to build DSM overviews");
         }
     }
 
@@ -992,32 +1016,50 @@ void generateGeoTIFFOrthomosaic(const std::vector<surface_model> &surfaces, cons
     spdlog::info("Processing {} tiles ({}x{} grid, tile size: {}x{})", total_tiles, num_tiles_x, num_tiles_y, tile_size,
                  tile_size);
 
-    std::atomic<int> completed_tiles{0};
+    int completed_tiles = 0;
     auto start_time = std::chrono::steady_clock::now();
+    auto last_log_time = start_time;
 
-#pragma omp parallel
+    FullResolutionImageCache image_cache(10);
+
+    for (int tile_y = 0; tile_y < num_tiles_y; tile_y++)
     {
-        FullResolutionImageCache image_cache(10);
-
-#pragma omp for schedule(dynamic) collapse(2)
-        for (int tile_y = 0; tile_y < num_tiles_y; tile_y++)
+        for (int tile_x = 0; tile_x < num_tiles_x; tile_x++)
         {
-            for (int tile_x = 0; tile_x < num_tiles_x; tile_x++)
+            processTile(dataset.get(), tile_x, tile_y, tile_size, context.bounds, context.gsd, width, height, surfaces,
+                        graph, context.imageGPSLocations, context.average_camera_elevation, context.mean_camera_z,
+                        inv_rotation_cache, image_cache);
+
+            completed_tiles++;
+
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - start_time).count();
+            if (std::chrono::duration_cast<std::chrono::seconds>(now - last_log_time).count() >= 5 ||
+                completed_tiles == total_tiles)
             {
-                processTile(dataset.get(), tile_x, tile_y, tile_size, context.bounds, context.gsd, width, height,
-                            surfaces, graph, context.imageGPSLocations, context.average_camera_elevation,
-                            context.mean_camera_z, inv_rotation_cache, image_cache);
-
-                int done = ++completed_tiles;
-
-                if (done % 50 == 0 || done == total_tiles)
-                {
-                    auto now = std::chrono::steady_clock::now();
-                    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - start_time).count();
-                    double progress = 100.0 * done / total_tiles;
-                    spdlog::info("Progress: {:.1f}% ({}/{} tiles, {} seconds)", progress, done, total_tiles, elapsed);
-                }
+                double progress = 100.0 * completed_tiles / total_tiles;
+                spdlog::info("Progress: {:.1f}% ({}/{} tiles, {} seconds)", progress, completed_tiles, total_tiles,
+                             elapsed);
+                last_log_time = now;
             }
+        }
+    }
+
+    // Build internal overviews (pyramids) for faster display in GIS software
+    spdlog::info("Building overviews...");
+    std::vector<int> overview_levels;
+    int min_dim = std::min(width, height);
+    for (int level = 2; level < min_dim; level *= 2)
+    {
+        overview_levels.push_back(level);
+    }
+    if (!overview_levels.empty())
+    {
+        CPLErr err = dataset->BuildOverviews("AVERAGE", static_cast<int>(overview_levels.size()),
+                                             overview_levels.data(), 0, nullptr, nullptr, nullptr);
+        if (err != CE_None)
+        {
+            spdlog::warn("Failed to build overviews");
         }
     }
 
