@@ -13,7 +13,9 @@ enum class PipelineState
     FINAL_GLOBAL_RELAX,
     MESH_REFINEMENT,
     GENERATE_THUMBNAIL,
-    GENERATE_GEOTIFF,
+    GENERATE_LAYERS,
+    COLOR_BALANCE,
+    BLEND_LAYERS,
     COMPLETE
 };
 
@@ -33,8 +35,12 @@ inline std::string pipelineStateToString(PipelineState state)
         return "MESH_REFINEMENT";
     case PipelineState::GENERATE_THUMBNAIL:
         return "GENERATE_THUMBNAIL";
-    case PipelineState::GENERATE_GEOTIFF:
-        return "GENERATE_GEOTIFF";
+    case PipelineState::GENERATE_LAYERS:
+        return "GENERATE_LAYERS";
+    case PipelineState::COLOR_BALANCE:
+        return "COLOR_BALANCE";
+    case PipelineState::BLEND_LAYERS:
+        return "BLEND_LAYERS";
     case PipelineState::COMPLETE:
         return "COMPLETE";
     }
@@ -55,8 +61,12 @@ inline PipelineState stringToPipelineState(const std::string &str)
         return PipelineState::MESH_REFINEMENT;
     if (str == "GENERATE_THUMBNAIL")
         return PipelineState::GENERATE_THUMBNAIL;
-    if (str == "GENERATE_GEOTIFF")
-        return PipelineState::GENERATE_GEOTIFF;
+    if (str == "GENERATE_LAYERS" || str == "GENERATE_GEOTIFF")
+        return PipelineState::GENERATE_LAYERS;
+    if (str == "COLOR_BALANCE")
+        return PipelineState::COLOR_BALANCE;
+    if (str == "BLEND_LAYERS")
+        return PipelineState::BLEND_LAYERS;
     if (str == "COMPLETE")
         return PipelineState::COMPLETE;
     return PipelineState::INITIAL_PROCESSING;

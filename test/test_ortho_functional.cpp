@@ -96,6 +96,76 @@ TEST(ImageCache, clear)
     // Clean up not needed - output directory is for test artifacts
 }
 
+TEST(CameraIdRoundTrip, uint64_camera_ids_survive_geotiff_sidecar)
+{
+    // GIVEN: Camera IDs that require more than 32 bits to represent
+    // (MeasurementGraph generates random size_t IDs)
+    GDALAllRegister();
+
+    int w = 4, h = 4, num_layers = 2;
+    std::string sidecar_path = TEST_DATA_OUTPUT_DIR "test_camera_id_sidecar.tif";
+
+    GDALDriver *driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    ASSERT_NE(driver, nullptr);
+    GDALDatasetPtr write_ds(driver->Create(sidecar_path.c_str(), w, h, num_layers * 2, GDT_UInt32, nullptr));
+    ASSERT_NE(write_ds, nullptr);
+
+    std::vector<size_t> test_ids = {
+        0xDEADBEEF12345678ULL, // large 64-bit value
+        0xFFFFFFFF00000001ULL, // high bits set
+        42,                    // small value (fits in 32 bits)
+        0x100000000ULL,        // smallest value that doesn't fit in 32 bits
+    };
+
+    for (int layer = 0; layer < num_layers; layer++)
+    {
+        std::vector<uint32_t> lo(w * h, 0), hi(w * h, 0);
+        for (int i = 0; i < w * h; i++)
+        {
+            size_t cam_id = test_ids[(layer * w * h + i) % test_ids.size()];
+            lo[i] = static_cast<uint32_t>(cam_id & 0xFFFFFFFF);
+            hi[i] = static_cast<uint32_t>((cam_id >> 32) & 0xFFFFFFFF);
+        }
+
+        int cam_band_offset = layer * 2;
+        CPLErr err;
+        err = write_ds->GetRasterBand(cam_band_offset + 1)
+                  ->RasterIO(GF_Write, 0, 0, w, h, lo.data(), w, h, GDT_UInt32, 0, 0);
+        ASSERT_EQ(err, CE_None);
+        err = write_ds->GetRasterBand(cam_band_offset + 2)
+                  ->RasterIO(GF_Write, 0, 0, w, h, hi.data(), w, h, GDT_UInt32, 0, 0);
+        ASSERT_EQ(err, CE_None);
+    }
+
+    write_ds.reset();
+    GDALDatasetPtr read_ds(static_cast<GDALDataset *>(GDALOpen(sidecar_path.c_str(), GA_ReadOnly)));
+    ASSERT_NE(read_ds, nullptr);
+
+    // WHEN: We read back the camera IDs
+    for (int layer = 0; layer < num_layers; layer++)
+    {
+        std::vector<uint32_t> lo(w * h, 0), hi(w * h, 0);
+        int cam_band_offset = layer * 2;
+
+        CPLErr err;
+        err = read_ds->GetRasterBand(cam_band_offset + 1)
+                  ->RasterIO(GF_Read, 0, 0, w, h, lo.data(), w, h, GDT_UInt32, 0, 0);
+        ASSERT_EQ(err, CE_None);
+        err = read_ds->GetRasterBand(cam_band_offset + 2)
+                  ->RasterIO(GF_Read, 0, 0, w, h, hi.data(), w, h, GDT_UInt32, 0, 0);
+        ASSERT_EQ(err, CE_None);
+
+        // THEN: Reconstructed 64-bit IDs should match the originals
+        for (int i = 0; i < w * h; i++)
+        {
+            size_t expected = test_ids[(layer * w * h + i) % test_ids.size()];
+            size_t actual = static_cast<size_t>(lo[i]) | (static_cast<size_t>(hi[i]) << 32);
+            EXPECT_EQ(actual, expected) << "Layer " << layer << " pixel " << i << ": expected 0x" << std::hex
+                                        << expected << " got 0x" << actual;
+        }
+    }
+}
+
 // ==================== GeoTIFF Generation Tests ====================
 
 struct ortho : public ::testing::Test

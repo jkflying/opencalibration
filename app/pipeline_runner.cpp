@@ -65,7 +65,7 @@ int main(int argc, char *argv[])
     args.addArgument({"-cl", "--checkpoint-load"}, &checkpoint_load, "Load and resume from checkpoint directory");
     args.addArgument({"--resume-from"}, &resume_from,
                      "Resume from specific stage (INITIAL_GLOBAL_RELAX, CAMERA_PARAMETER_RELAX, FINAL_GLOBAL_RELAX, "
-                     "GENERATE_THUMBNAIL, GENERATE_GEOTIFF)");
+                     "GENERATE_THUMBNAIL, GENERATE_LAYERS, COLOR_BALANCE, BLEND_LAYERS)");
     args.addArgument({"--skip-mesh-refinement"}, &skip_mesh_refinement,
                      "Skip the mesh refinement stage (uses grid mesh instead of adaptive refinement)");
     args.addArgument({"--skip-initial-global-relax"}, &skip_initial_global_relax,
@@ -186,7 +186,9 @@ int main(int argc, char *argv[])
             break;
         }
         case PipelineState::GENERATE_THUMBNAIL:
-        case PipelineState::GENERATE_GEOTIFF:
+        case PipelineState::GENERATE_LAYERS:
+        case PipelineState::COLOR_BALANCE:
+        case PipelineState::BLEND_LAYERS:
         case PipelineState::COMPLETE: {
             std::cout << std::endl;
             break;

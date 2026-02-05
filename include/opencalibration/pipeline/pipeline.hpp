@@ -1,6 +1,7 @@
 #pragma once
 
 #include <opencalibration/geo_coord/geo_coord.hpp>
+#include <opencalibration/ortho/color_balance.hpp>
 #include <opencalibration/types/measurement_graph.hpp>
 #include <opencalibration/types/pipeline_state.hpp>
 #include <opencalibration/types/surface_model.hpp>
@@ -135,7 +136,9 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
     PipelineTransition final_global_relax();
     PipelineTransition mesh_refinement();
     PipelineTransition generate_thumbnail();
-    PipelineTransition generate_geotiff();
+    PipelineTransition generate_layers();
+    PipelineTransition color_balance();
+    PipelineTransition blend_layers();
     PipelineTransition complete();
 
     void rebuildGPSLocationsTree();
@@ -174,5 +177,10 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
     bool _skip_initial_global_relax = false;
     bool _skip_camera_param_relax = false;
     bool _skip_final_global_relax = false;
+
+    std::vector<orthomosaic::ColorCorrespondence> _correspondences;
+    orthomosaic::ColorBalanceResult _color_balance_result;
+    std::string _intermediate_layers_path;
+    std::string _intermediate_cameras_path;
 };
 } // namespace opencalibration

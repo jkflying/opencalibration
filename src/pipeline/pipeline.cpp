@@ -75,8 +75,12 @@ PipelineState Pipeline::chooseNextState(PipelineState currentState, Transition t
         USM_STATE(transition, State::FINAL_GLOBAL_RELAX,
                   USM_MAP(Transition::NEXT, State::GENERATE_THUMBNAIL, s));
         USM_STATE(transition, State::GENERATE_THUMBNAIL,
-                  USM_MAP(Transition::NEXT, State::GENERATE_GEOTIFF, s));
-        USM_STATE(transition, State::GENERATE_GEOTIFF,
+                  USM_MAP(Transition::NEXT, State::GENERATE_LAYERS, s));
+        USM_STATE(transition, State::GENERATE_LAYERS,
+                  USM_MAP(Transition::NEXT, State::COLOR_BALANCE, s));
+        USM_STATE(transition, State::COLOR_BALANCE,
+                  USM_MAP(Transition::NEXT, State::BLEND_LAYERS, s));
+        USM_STATE(transition, State::BLEND_LAYERS,
                   USM_MAP(Transition::NEXT, State::COMPLETE, s));
     );
     // clang-format on
@@ -98,7 +102,9 @@ Pipeline::Transition Pipeline::runCurrentState(PipelineState currentState)
               USM_MAP(State::MESH_REFINEMENT, mesh_refinement(), t);
               USM_MAP(State::COMPLETE, complete(), t);
               USM_MAP(State::GENERATE_THUMBNAIL, generate_thumbnail(), t);
-              USM_MAP(State::GENERATE_GEOTIFF, generate_geotiff(), t)
+              USM_MAP(State::GENERATE_LAYERS, generate_layers(), t);
+              USM_MAP(State::COLOR_BALANCE, color_balance(), t);
+              USM_MAP(State::BLEND_LAYERS, blend_layers(), t)
     );
     // clang-format on
 
@@ -327,17 +333,73 @@ Pipeline::Transition Pipeline::generate_thumbnail()
     USM_DECISION_TABLE(Transition::NEXT, );
 }
 
-Pipeline::Transition Pipeline::generate_geotiff()
+Pipeline::Transition Pipeline::generate_layers()
 {
-    if (!_generate_geotiff || (_geotiff_filename.empty() && _dsm_filename.empty()))
+    if (!_generate_geotiff || _geotiff_filename.empty())
     {
         USM_DECISION_TABLE(Transition::NEXT, USM_MAKE_DECISION(!_generate_geotiff, Transition::NEXT));
     }
 
-    if (!_geotiff_filename.empty())
+    if (_surfaces.empty())
     {
-        orthomosaic::generateGeoTIFFOrthomosaic(_surfaces, _graph, _coordinate_system, _geotiff_filename);
+        spdlog::warn("No surfaces available for layer generation");
+        USM_DECISION_TABLE(Transition::NEXT, USM_MAKE_DECISION(_surfaces.empty(), Transition::NEXT));
     }
+
+    _intermediate_layers_path = _geotiff_filename + ".layers.tif";
+    _intermediate_cameras_path = _geotiff_filename + ".cameras.tif";
+
+    _correspondences = orthomosaic::generateLayeredGeoTIFF(_surfaces, _graph, _coordinate_system,
+                                                           _intermediate_layers_path, _intermediate_cameras_path);
+
+    USM_DECISION_TABLE(Transition::NEXT, );
+}
+
+Pipeline::Transition Pipeline::color_balance()
+{
+    if (!_generate_geotiff || _geotiff_filename.empty())
+    {
+        USM_DECISION_TABLE(Transition::NEXT, USM_MAKE_DECISION(!_generate_geotiff, Transition::NEXT));
+    }
+
+    std::unordered_map<size_t, orthomosaic::CameraPosition> camera_positions;
+    for (const auto &corr : _correspondences)
+    {
+        for (size_t cam_id : {corr.camera_id_a, corr.camera_id_b})
+        {
+            if (camera_positions.count(cam_id) == 0)
+            {
+                const auto *node = _graph.getNode(cam_id);
+                if (node)
+                {
+                    camera_positions[cam_id] = {node->payload.position.x(), node->payload.position.y()};
+                }
+            }
+        }
+    }
+
+    _color_balance_result = orthomosaic::solveColorBalance(_correspondences, camera_positions);
+    _correspondences.clear();
+
+    USM_DECISION_TABLE(Transition::NEXT, );
+}
+
+Pipeline::Transition Pipeline::blend_layers()
+{
+    if (!_generate_geotiff || _geotiff_filename.empty())
+    {
+        // Still generate DSM if requested
+        if (!_dsm_filename.empty())
+        {
+            orthomosaic::generateDSMGeoTIFF(_surfaces, _graph, _coordinate_system, _dsm_filename);
+        }
+        USM_DECISION_TABLE(Transition::NEXT, USM_MAKE_DECISION(!_generate_geotiff, Transition::NEXT));
+    }
+
+    orthomosaic::blendLayeredGeoTIFF(_intermediate_layers_path, _intermediate_cameras_path, _geotiff_filename,
+                                     _color_balance_result, _surfaces, _graph, _coordinate_system);
+
+    _color_balance_result = {};
 
     if (!_dsm_filename.empty())
     {
@@ -368,8 +430,12 @@ std::string Pipeline::toString(PipelineState state)
         return "Mesh Refinement";
     case State::GENERATE_THUMBNAIL:
         return "Generate Thumbnail";
-    case State::GENERATE_GEOTIFF:
-        return "Generate GeoTIFF";
+    case State::GENERATE_LAYERS:
+        return "Generate Layers";
+    case State::COLOR_BALANCE:
+        return "Color Balance";
+    case State::BLEND_LAYERS:
+        return "Blend Layers";
     case State::COMPLETE:
         return "Complete";
     };
@@ -391,8 +457,12 @@ PipelineState Pipeline::fromString(const std::string &str)
         return State::MESH_REFINEMENT;
     if (str == "GENERATE_THUMBNAIL" || str == "Generate Thumbnail")
         return State::GENERATE_THUMBNAIL;
-    if (str == "GENERATE_GEOTIFF" || str == "Generate GeoTIFF")
-        return State::GENERATE_GEOTIFF;
+    if (str == "GENERATE_LAYERS" || str == "Generate Layers")
+        return State::GENERATE_LAYERS;
+    if (str == "COLOR_BALANCE" || str == "Color Balance")
+        return State::COLOR_BALANCE;
+    if (str == "BLEND_LAYERS" || str == "Blend Layers")
+        return State::BLEND_LAYERS;
     if (str == "COMPLETE" || str == "Complete")
         return State::COMPLETE;
 

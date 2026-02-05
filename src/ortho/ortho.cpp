@@ -1,5 +1,8 @@
 #include <opencalibration/ortho/ortho.hpp>
 
+#include <opencalibration/ortho/blending.hpp>
+#include <opencalibration/ortho/color_balance.hpp>
+
 #include <ceres/jet.h>
 #include <eigen3/Eigen/Eigenvalues>
 #include <jk/KDTree.h>
@@ -10,10 +13,12 @@
 #include <opencalibration/performance/performance.hpp>
 #include <opencalibration/surface/intersect.hpp>
 
+#include <opencv2/imgproc.hpp>
 #include <spdlog/spdlog.h>
 
 #include <atomic>
 #include <chrono>
+#include <mutex>
 #include <omp.h>
 
 namespace
@@ -1064,6 +1069,756 @@ void generateGeoTIFFOrthomosaic(const std::vector<surface_model> &surfaces, cons
     }
 
     spdlog::info("GeoTIFF orthomosaic generation complete: {}", output_path);
+}
+
+namespace
+{
+
+GDALDatasetPtr createMultiBandGeoTIFF(const std::string &path, int width, int height, double min_x, double max_y,
+                                      double gsd, const std::string &wkt, int num_bands, GDALDataType data_type)
+{
+    GDALAllRegister();
+
+    GDALDriver *driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    if (!driver)
+    {
+        throw std::runtime_error("GTiff driver not available");
+    }
+
+    char **options = nullptr;
+    options = CSLSetNameValue(options, "TILED", "YES");
+    options = CSLSetNameValue(options, "BLOCKXSIZE", "512");
+    options = CSLSetNameValue(options, "BLOCKYSIZE", "512");
+    options = CSLSetNameValue(options, "COMPRESS", "LZW");
+    options = CSLSetNameValue(options, "BIGTIFF", "IF_SAFER");
+
+    GDALDataset *dataset = driver->Create(path.c_str(), width, height, num_bands, data_type, options);
+    CSLDestroy(options);
+
+    if (!dataset)
+    {
+        throw std::runtime_error("Failed to create multi-band GeoTIFF: " + path);
+    }
+
+    double geotransform[6] = {min_x, gsd, 0, max_y, 0, -gsd};
+    dataset->SetGeoTransform(geotransform);
+
+    if (!wkt.empty())
+    {
+        dataset->SetProjection(wkt.c_str());
+    }
+
+    return GDALDatasetPtr(dataset);
+}
+
+void writeLayeredTileToGeoTIFF(GDALDataset *layers_ds, GDALDataset *cameras_ds,
+                               const opencalibration::orthomosaic::LayeredTileBuffer &tile, int x_offset, int y_offset)
+{
+    int w = tile.width;
+    int h = tile.height;
+    int N = tile.num_layers;
+
+    for (int layer = 0; layer < N; layer++)
+    {
+        std::vector<uint8_t> band_b(w * h), band_g(w * h), band_r(w * h), band_a(w * h);
+        std::vector<uint32_t> band_cam_lo(w * h, 0);
+        std::vector<uint32_t> band_cam_hi(w * h, 0);
+
+        for (int i = 0; i < w * h; i++)
+        {
+            const auto &sample = tile.layers[layer][i];
+            if (sample.valid)
+            {
+                band_b[i] = sample.color_bgr[0];
+                band_g[i] = sample.color_bgr[1];
+                band_r[i] = sample.color_bgr[2];
+                band_a[i] = 255;
+                band_cam_lo[i] = static_cast<uint32_t>(sample.camera_id & 0xFFFFFFFF);
+                band_cam_hi[i] = static_cast<uint32_t>((sample.camera_id >> 32) & 0xFFFFFFFF);
+            }
+            else
+            {
+                band_a[i] = 0;
+            }
+        }
+
+        // Bands are: layer0_B, layer0_G, layer0_R, layer0_A, layer1_B, ...
+        int band_offset = layer * 4;
+        CPLErr err;
+        err = layers_ds->GetRasterBand(band_offset + 1)
+                  ->RasterIO(GF_Write, x_offset, y_offset, w, h, band_b.data(), w, h, GDT_Byte, 0, 0);
+        if (err != CE_None)
+            throw std::runtime_error("Failed to write layered tile band B");
+        err = layers_ds->GetRasterBand(band_offset + 2)
+                  ->RasterIO(GF_Write, x_offset, y_offset, w, h, band_g.data(), w, h, GDT_Byte, 0, 0);
+        if (err != CE_None)
+            throw std::runtime_error("Failed to write layered tile band G");
+        err = layers_ds->GetRasterBand(band_offset + 3)
+                  ->RasterIO(GF_Write, x_offset, y_offset, w, h, band_r.data(), w, h, GDT_Byte, 0, 0);
+        if (err != CE_None)
+            throw std::runtime_error("Failed to write layered tile band R");
+        err = layers_ds->GetRasterBand(band_offset + 4)
+                  ->RasterIO(GF_Write, x_offset, y_offset, w, h, band_a.data(), w, h, GDT_Byte, 0, 0);
+        if (err != CE_None)
+            throw std::runtime_error("Failed to write layered tile band A");
+
+        // Camera ID bands (two uint32 bands per layer for full 64-bit size_t)
+        int cam_band_offset = layer * 2;
+        err = cameras_ds->GetRasterBand(cam_band_offset + 1)
+                  ->RasterIO(GF_Write, x_offset, y_offset, w, h, band_cam_lo.data(), w, h, GDT_UInt32, 0, 0);
+        if (err != CE_None)
+            throw std::runtime_error("Failed to write camera ID band (lo)");
+        err = cameras_ds->GetRasterBand(cam_band_offset + 2)
+                  ->RasterIO(GF_Write, x_offset, y_offset, w, h, band_cam_hi.data(), w, h, GDT_UInt32, 0, 0);
+        if (err != CE_None)
+            throw std::runtime_error("Failed to write camera ID band (hi)");
+    }
+}
+
+void readLayeredTileFromGeoTIFF(GDALDataset *layers_ds, GDALDataset *cameras_ds,
+                                opencalibration::orthomosaic::LayeredTileBuffer &tile, int x_offset, int y_offset,
+                                int w, int h, int num_layers)
+{
+    tile.resize(w, h, num_layers);
+
+    for (int layer = 0; layer < num_layers; layer++)
+    {
+        std::vector<uint8_t> band_b(w * h), band_g(w * h), band_r(w * h), band_a(w * h);
+        std::vector<uint32_t> band_cam_lo(w * h, 0);
+        std::vector<uint32_t> band_cam_hi(w * h, 0);
+
+        int band_offset = layer * 4;
+        CPLErr err;
+        err = layers_ds->GetRasterBand(band_offset + 1)
+                  ->RasterIO(GF_Read, x_offset, y_offset, w, h, band_b.data(), w, h, GDT_Byte, 0, 0);
+        if (err != CE_None)
+            throw std::runtime_error("Failed to read layered tile band B");
+        err = layers_ds->GetRasterBand(band_offset + 2)
+                  ->RasterIO(GF_Read, x_offset, y_offset, w, h, band_g.data(), w, h, GDT_Byte, 0, 0);
+        if (err != CE_None)
+            throw std::runtime_error("Failed to read layered tile band G");
+        err = layers_ds->GetRasterBand(band_offset + 3)
+                  ->RasterIO(GF_Read, x_offset, y_offset, w, h, band_r.data(), w, h, GDT_Byte, 0, 0);
+        if (err != CE_None)
+            throw std::runtime_error("Failed to read layered tile band R");
+        err = layers_ds->GetRasterBand(band_offset + 4)
+                  ->RasterIO(GF_Read, x_offset, y_offset, w, h, band_a.data(), w, h, GDT_Byte, 0, 0);
+        if (err != CE_None)
+            throw std::runtime_error("Failed to read layered tile band A");
+
+        int cam_band_offset = layer * 2;
+        err = cameras_ds->GetRasterBand(cam_band_offset + 1)
+                  ->RasterIO(GF_Read, x_offset, y_offset, w, h, band_cam_lo.data(), w, h, GDT_UInt32, 0, 0);
+        if (err != CE_None)
+            throw std::runtime_error("Failed to read camera ID band (lo)");
+        err = cameras_ds->GetRasterBand(cam_band_offset + 2)
+                  ->RasterIO(GF_Read, x_offset, y_offset, w, h, band_cam_hi.data(), w, h, GDT_UInt32, 0, 0);
+        if (err != CE_None)
+            throw std::runtime_error("Failed to read camera ID band (hi)");
+
+        for (int i = 0; i < w * h; i++)
+        {
+            auto &sample = tile.layers[layer][i];
+            if (band_a[i] > 0)
+            {
+                sample.color_bgr = cv::Vec3b(band_b[i], band_g[i], band_r[i]);
+                sample.camera_id = static_cast<size_t>(band_cam_lo[i]) | (static_cast<size_t>(band_cam_hi[i]) << 32);
+                sample.valid = true;
+            }
+            else
+            {
+                sample.valid = false;
+            }
+        }
+    }
+}
+
+} // namespace
+
+void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaicBounds &bounds, double gsd,
+                        int output_width, int output_height, const std::vector<surface_model> &surfaces,
+                        const MeasurementGraph &graph, const jk::tree::KDTree<size_t, 3> &imageGPSLocations,
+                        double average_camera_elevation, double mean_camera_z,
+                        const std::unordered_map<size_t, Eigen::Matrix3d> &inv_rotation_cache,
+                        FullResolutionImageCache &image_cache, int num_layers, LayeredTileBuffer &tile_out,
+                        std::vector<ColorCorrespondence> &correspondences_out, int correspondence_subsample,
+                        std::mutex &correspondences_mutex)
+{
+    int x_offset = tile_x * tile_size;
+    int y_offset = tile_y * tile_size;
+    int tile_width = std::min(tile_size, output_width - x_offset);
+    int tile_height = std::min(tile_size, output_height - y_offset);
+
+    tile_out.resize(tile_width, tile_height, num_layers);
+
+#pragma omp parallel
+    {
+        PerformanceMeasure thread_perf("Layered tile rows");
+
+        PatchSampler sampler;
+
+        std::vector<MeshIntersectionSearcher> searchers;
+        for (const auto &surface : surfaces)
+        {
+            searchers.emplace_back();
+            if (!searchers.back().init(surface.mesh))
+            {
+                searchers.pop_back();
+            }
+        }
+
+        // Thread-local correspondences to avoid contention
+        std::vector<ColorCorrespondence> local_correspondences;
+
+#pragma omp for schedule(dynamic)
+        for (int local_row = 0; local_row < tile_height; local_row++)
+        {
+            for (int local_col = 0; local_col < tile_width; local_col++)
+            {
+                int global_col = x_offset + local_col;
+                int global_row = y_offset + local_row;
+
+                const double x = global_col * gsd + bounds.min_x;
+                const double y = bounds.max_y - global_row * gsd;
+
+                const ray_d intersectionRay{{0, 0, -1}, {x, y, mean_camera_z}};
+                double z = NAN;
+                for (auto &searcher : searchers)
+                {
+                    if (searcher.lastResult().type != MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
+                    {
+                        if (!searcher.reinit())
+                            continue;
+                    }
+                    auto intersection = searcher.triangleIntersect(intersectionRay);
+                    if (intersection.type == MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
+                    {
+                        z = intersection.intersectionLocation.z();
+                        break;
+                    }
+                }
+
+                if (std::isnan(z))
+                    continue;
+
+                Eigen::Vector3d sample_point(x, y, z);
+                auto closest5 = imageGPSLocations.searchKnn({x, y, average_camera_elevation}, 5);
+
+                int layer_idx = 0;
+                for (const auto &closest : closest5)
+                {
+                    if (layer_idx >= num_layers)
+                        break;
+
+                    const auto *closestNode = graph.getNode(closest.payload);
+                    const auto &payload = closestNode->payload;
+
+                    auto inv_rot_it = inv_rotation_cache.find(closest.payload);
+                    if (inv_rot_it == inv_rotation_cache.end())
+                        continue;
+                    const Eigen::Matrix3d &inv_rotation = inv_rot_it->second;
+
+                    Eigen::Vector2d pixel = image_from_3d(sample_point, *payload.model, payload.position, inv_rotation);
+
+                    if (pixel.x() < 0 || pixel.x() >= payload.model->pixels_cols || pixel.y() < 0 ||
+                        pixel.y() >= payload.model->pixels_rows)
+                        continue;
+
+                    cv::Mat full_image = image_cache.getImage(closest.payload, payload.path);
+                    if (full_image.empty())
+                        continue;
+
+                    cv::Vec3b color_bgr;
+                    if (!sampler.sampleWithJacobian(full_image, sample_point, *payload.model, payload.position,
+                                                    inv_rotation, gsd, color_bgr))
+                        continue;
+
+                    auto &sample = tile_out.at(layer_idx, local_row, local_col);
+                    sample.color_bgr = color_bgr;
+                    sample.camera_id = closest.payload;
+                    sample.model_id = payload.model->id;
+                    sample.valid = true;
+
+                    // Compute normalized radius (distance from image center, normalized to [0,1])
+                    double half_w = payload.model->pixels_cols * 0.5;
+                    double half_h = payload.model->pixels_rows * 0.5;
+                    double dx = (pixel.x() - half_w) / half_w;
+                    double dy = (pixel.y() - half_h) / half_h;
+                    sample.normalized_radius = static_cast<float>(std::sqrt(dx * dx + dy * dy));
+
+                    Eigen::Vector3d to_point = sample_point - payload.position;
+                    Eigen::Vector3d camera_down = payload.orientation.inverse() * Eigen::Vector3d(0, 0, 1);
+                    double cos_angle = camera_down.dot(to_point.normalized());
+                    sample.view_angle = static_cast<float>(std::acos(std::clamp(cos_angle, -1.0, 1.0)));
+
+                    float camera_dist = static_cast<float>(to_point.norm());
+                    sample.weight =
+                        computeBlendWeight(static_cast<float>(pixel.x()), static_cast<float>(pixel.y()),
+                                           payload.model->pixels_cols, payload.model->pixels_rows, camera_dist);
+
+                    layer_idx++;
+                }
+
+                // Voronoi boundary detection: check if rank-1 camera differs from neighbors
+                if (layer_idx > 0 && correspondence_subsample > 0)
+                {
+                    size_t my_cam = tile_out.at(0, local_row, local_col).camera_id;
+                    bool is_boundary = false;
+
+                    const int dx_arr[] = {-1, 1, 0, 0};
+                    const int dy_arr[] = {0, 0, -1, 1};
+                    for (int d = 0; d < 4 && !is_boundary; d++)
+                    {
+                        int nr = local_row + dy_arr[d];
+                        int nc = local_col + dx_arr[d];
+                        if (nr >= 0 && nr < tile_height && nc >= 0 && nc < tile_width)
+                        {
+                            const auto &neighbor = tile_out.at(0, nr, nc);
+                            if (neighbor.valid && neighbor.camera_id != my_cam)
+                            {
+                                is_boundary = true;
+                            }
+                        }
+                    }
+
+                    if (is_boundary && ((local_row + local_col) % correspondence_subsample == 0))
+                    {
+                        for (int a = 0; a < layer_idx; a++)
+                        {
+                            for (int b = a + 1; b < layer_idx; b++)
+                            {
+                                const auto &sa = tile_out.at(a, local_row, local_col);
+                                const auto &sb = tile_out.at(b, local_row, local_col);
+
+                                cv::Mat bgr_a(1, 1, CV_8UC3), bgr_b(1, 1, CV_8UC3);
+                                bgr_a.at<cv::Vec3b>(0, 0) = sa.color_bgr;
+                                bgr_b.at<cv::Vec3b>(0, 0) = sb.color_bgr;
+                                cv::Mat lab_a, lab_b;
+                                cv::cvtColor(bgr_a, lab_a, cv::COLOR_BGR2Lab);
+                                cv::cvtColor(bgr_b, lab_b, cv::COLOR_BGR2Lab);
+
+                                ColorCorrespondence corr;
+                                auto la = lab_a.at<cv::Vec3b>(0, 0);
+                                auto lb = lab_b.at<cv::Vec3b>(0, 0);
+                                corr.lab_a = {static_cast<float>(la[0]), static_cast<float>(la[1]),
+                                              static_cast<float>(la[2])};
+                                corr.lab_b = {static_cast<float>(lb[0]), static_cast<float>(lb[1]),
+                                              static_cast<float>(lb[2])};
+                                corr.camera_id_a = sa.camera_id;
+                                corr.camera_id_b = sb.camera_id;
+                                corr.model_id_a = sa.model_id;
+                                corr.model_id_b = sb.model_id;
+                                corr.normalized_radius_a = sa.normalized_radius;
+                                corr.normalized_radius_b = sb.normalized_radius;
+                                corr.view_angle_a = sa.view_angle;
+                                corr.view_angle_b = sb.view_angle;
+
+                                local_correspondences.push_back(corr);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!local_correspondences.empty())
+        {
+            std::lock_guard<std::mutex> lock(correspondences_mutex);
+            correspondences_out.insert(correspondences_out.end(), local_correspondences.begin(),
+                                       local_correspondences.end());
+        }
+    }
+}
+
+std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surface_model> &surfaces,
+                                                        const MeasurementGraph &graph, const GeoCoord &coord_system,
+                                                        const std::string &layers_path, const std::string &cameras_path,
+                                                        const OrthoMosaicConfig &config)
+{
+    spdlog::info("Pass 1: Generating layered GeoTIFF: {}", layers_path);
+
+    PerformanceMeasure p("Generate layered GeoTIFF (Pass 1)");
+
+    OrthoMosaicContext context = prepareOrthoMosaicContext(surfaces, graph, ImageResolution::FullResolution);
+
+    spdlog::info("x range [{}; {}]  y range [{}; {}]  mean surface {}", context.bounds.min_x, context.bounds.max_x,
+                 context.bounds.min_y, context.bounds.max_y, context.bounds.mean_surface_z);
+
+    int width = static_cast<int>((context.bounds.max_x - context.bounds.min_x) / context.gsd);
+    int height = static_cast<int>((context.bounds.max_y - context.bounds.min_y) / context.gsd);
+    if (width <= 0)
+        width = 100;
+    if (height <= 0)
+        height = 100;
+
+    spdlog::info("GSD: {}  Output dimensions: {}x{} pixels, {} layers", context.gsd, width, height, config.num_layers);
+
+    std::string wkt = coord_system.getWKT();
+
+    // Create intermediate multi-band GeoTIFF: N * 4 bands (BGRA per layer)
+    int num_color_bands = config.num_layers * 4;
+    GDALDatasetPtr layers_ds =
+        createMultiBandGeoTIFF(layers_path, width, height, context.bounds.min_x, context.bounds.max_y, context.gsd, wkt,
+                               num_color_bands, GDT_Byte);
+
+    // Create sidecar camera ID GeoTIFF: N bands of uint32
+    GDALDatasetPtr cameras_ds =
+        createMultiBandGeoTIFF(cameras_path, width, height, context.bounds.min_x, context.bounds.max_y, context.gsd,
+                               wkt, config.num_layers * 2, GDT_UInt32);
+
+    std::unordered_map<size_t, Eigen::Matrix3d> inv_rotation_cache;
+    for (size_t node_id : context.involved_nodes)
+    {
+        const auto *node = graph.getNode(node_id);
+        if (node)
+        {
+            inv_rotation_cache[node_id] = node->payload.orientation.inverse().toRotationMatrix();
+        }
+    }
+
+    int tile_size = config.tile_size;
+    int num_tiles_x = (width + tile_size - 1) / tile_size;
+    int num_tiles_y = (height + tile_size - 1) / tile_size;
+    int total_tiles = num_tiles_x * num_tiles_y;
+
+    spdlog::info("Pass 1: Processing {} tiles ({}x{} grid)", total_tiles, num_tiles_x, num_tiles_y);
+
+    std::vector<ColorCorrespondence> all_correspondences;
+    std::mutex correspondences_mutex;
+
+    int completed_tiles = 0;
+    auto start_time = std::chrono::steady_clock::now();
+    auto last_log_time = start_time;
+
+    FullResolutionImageCache image_cache(config.num_layers * 10);
+
+    for (int tile_y = 0; tile_y < num_tiles_y; tile_y++)
+    {
+        for (int tile_x = 0; tile_x < num_tiles_x; tile_x++)
+        {
+            LayeredTileBuffer tile_buf;
+            processLayeredTile(tile_x, tile_y, tile_size, context.bounds, context.gsd, width, height, surfaces, graph,
+                               context.imageGPSLocations, context.average_camera_elevation, context.mean_camera_z,
+                               inv_rotation_cache, image_cache, config.num_layers, tile_buf, all_correspondences,
+                               config.correspondence_subsample, correspondences_mutex);
+
+            int x_off = tile_x * tile_size;
+            int y_off = tile_y * tile_size;
+            writeLayeredTileToGeoTIFF(layers_ds.get(), cameras_ds.get(), tile_buf, x_off, y_off);
+
+            completed_tiles++;
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - start_time).count();
+            if (std::chrono::duration_cast<std::chrono::seconds>(now - last_log_time).count() >= 5 ||
+                completed_tiles == total_tiles)
+            {
+                double progress = 100.0 * completed_tiles / total_tiles;
+                spdlog::info("Pass 1 Progress: {:.1f}% ({}/{} tiles, {} seconds, {} correspondences)", progress,
+                             completed_tiles, total_tiles, elapsed, all_correspondences.size());
+                last_log_time = now;
+            }
+        }
+    }
+
+    spdlog::info("Pass 1 complete: {} correspondences collected", all_correspondences.size());
+    return all_correspondences;
+}
+
+void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &cameras_path,
+                         const std::string &output_path, const ColorBalanceResult &color_balance,
+                         const std::vector<surface_model> &surfaces, const MeasurementGraph &graph,
+                         const GeoCoord &coord_system, const OrthoMosaicConfig &config)
+{
+    spdlog::info("Pass 2: Blending layered GeoTIFF to: {}", output_path);
+
+    PerformanceMeasure p("Blend layered GeoTIFF (Pass 2)");
+
+    GDALAllRegister();
+    GDALDatasetPtr layers_ds(static_cast<GDALDataset *>(GDALOpen(layers_path.c_str(), GA_ReadOnly)));
+    GDALDatasetPtr cameras_ds(static_cast<GDALDataset *>(GDALOpen(cameras_path.c_str(), GA_ReadOnly)));
+
+    if (!layers_ds || !cameras_ds)
+    {
+        throw std::runtime_error("Failed to open intermediate GeoTIFFs for reading");
+    }
+
+    int width = layers_ds->GetRasterXSize();
+    int height = layers_ds->GetRasterYSize();
+    int num_color_bands = layers_ds->GetRasterCount();
+    int num_layers = num_color_bands / 4;
+
+    double geotransform[6];
+    layers_ds->GetGeoTransform(geotransform);
+    double min_x = geotransform[0];
+    double max_y = geotransform[3];
+    double gsd = geotransform[1];
+
+    spdlog::info("Pass 2: {}x{} pixels, {} layers, GSD {}", width, height, num_layers, gsd);
+
+    std::string wkt = coord_system.getWKT();
+    GDALDatasetPtr output_ds = createGeoTIFF(output_path, width, height, min_x, max_y, gsd, wkt);
+
+    // Prepare context for recomputing geometry (needed for radiometric correction)
+    OrthoMosaicContext context = prepareOrthoMosaicContext(surfaces, graph, ImageResolution::FullResolution);
+
+    int tile_size = config.tile_size;
+    int num_tiles_x = (width + tile_size - 1) / tile_size;
+    int num_tiles_y = (height + tile_size - 1) / tile_size;
+    int total_tiles = num_tiles_x * num_tiles_y;
+
+    spdlog::info("Pass 2: Processing {} tiles", total_tiles);
+
+    int completed_tiles = 0;
+    auto start_time = std::chrono::steady_clock::now();
+    auto last_log_time = start_time;
+
+    std::unordered_map<size_t, Eigen::Matrix3d> inv_rotation_cache;
+    for (size_t node_id : context.involved_nodes)
+    {
+        const auto *node = graph.getNode(node_id);
+        if (node)
+        {
+            inv_rotation_cache[node_id] = node->payload.orientation.inverse().toRotationMatrix();
+        }
+    }
+
+    for (int tile_y = 0; tile_y < num_tiles_y; tile_y++)
+    {
+        for (int tile_x = 0; tile_x < num_tiles_x; tile_x++)
+        {
+            int x_offset = tile_x * tile_size;
+            int y_offset = tile_y * tile_size;
+            int tw = std::min(tile_size, width - x_offset);
+            int th = std::min(tile_size, height - y_offset);
+
+            LayeredTileBuffer tile_buf;
+            readLayeredTileFromGeoTIFF(layers_ds.get(), cameras_ds.get(), tile_buf, x_offset, y_offset, tw, th,
+                                       num_layers);
+
+            std::vector<cv::Mat> bgr_layers(num_layers);
+            std::vector<cv::Mat> weight_maps(num_layers);
+            for (int layer = 0; layer < num_layers; layer++)
+            {
+                bgr_layers[layer] = cv::Mat(th, tw, CV_8UC3, cv::Scalar(0, 0, 0));
+                weight_maps[layer] = cv::Mat::zeros(th, tw, CV_32FC1);
+            }
+
+#pragma omp parallel
+            {
+                PerformanceMeasure thread_perf("Blend tile rows");
+
+#pragma omp for schedule(dynamic)
+                for (int local_row = 0; local_row < th; local_row++)
+                {
+                    for (int local_col = 0; local_col < tw; local_col++)
+                    {
+                        int global_col = x_offset + local_col;
+                        int global_row = y_offset + local_row;
+                        const double wx = global_col * gsd + context.bounds.min_x;
+                        const double wy = context.bounds.max_y - global_row * gsd;
+
+                        for (int layer = 0; layer < num_layers; layer++)
+                        {
+                            auto &sample = tile_buf.at(layer, local_row, local_col);
+                            if (!sample.valid)
+                                continue;
+
+                            const auto *node = graph.getNode(sample.camera_id);
+                            if (!node)
+                                continue;
+                            const auto &payload = node->payload;
+
+                            auto inv_rot_it = inv_rotation_cache.find(sample.camera_id);
+                            if (inv_rot_it == inv_rotation_cache.end())
+                                continue;
+
+                            Eigen::Vector3d world_pt(wx, wy, context.bounds.mean_surface_z);
+                            Eigen::Vector2d pixel =
+                                image_from_3d(world_pt, *payload.model, payload.position, inv_rot_it->second);
+
+                            double half_w = payload.model->pixels_cols * 0.5;
+                            double half_h = payload.model->pixels_rows * 0.5;
+                            double ndx = (pixel.x() - half_w) / half_w;
+                            double ndy = (pixel.y() - half_h) / half_h;
+
+                            sample.normalized_radius = static_cast<float>(std::sqrt(ndx * ndx + ndy * ndy));
+
+                            Eigen::Vector3d to_point = world_pt - payload.position;
+                            Eigen::Vector3d cam_down = payload.orientation.inverse() * Eigen::Vector3d(0, 0, 1);
+                            double cos_angle = cam_down.dot(to_point.normalized());
+                            sample.view_angle = static_cast<float>(std::acos(std::clamp(cos_angle, -1.0, 1.0)));
+
+                            float camera_dist = static_cast<float>(to_point.norm());
+                            sample.weight =
+                                computeBlendWeight(static_cast<float>(pixel.x()), static_cast<float>(pixel.y()),
+                                                   payload.model->pixels_cols, payload.model->pixels_rows, camera_dist);
+
+                            bgr_layers[layer].at<cv::Vec3b>(local_row, local_col) = sample.color_bgr;
+                            weight_maps[layer].at<float>(local_row, local_col) = sample.weight;
+                        }
+                    }
+                }
+            }
+
+            std::vector<cv::Mat> lab_layers(num_layers);
+            for (int layer = 0; layer < num_layers; layer++)
+            {
+                cv::cvtColor(bgr_layers[layer], lab_layers[layer], cv::COLOR_BGR2Lab);
+                lab_layers[layer].convertTo(lab_layers[layer], CV_32FC3);
+            }
+
+            for (int local_row = 0; local_row < th; local_row++)
+            {
+                for (int local_col = 0; local_col < tw; local_col++)
+                {
+                    for (int layer = 0; layer < num_layers; layer++)
+                    {
+                        const auto &sample = tile_buf.at(layer, local_row, local_col);
+                        if (!sample.valid)
+                            continue;
+
+                        auto img_it = color_balance.per_image_params.find(sample.camera_id);
+                        if (img_it == color_balance.per_image_params.end())
+                            continue;
+                        const auto &img_params = img_it->second;
+
+                        cv::Vec3f &lab = lab_layers[layer].at<cv::Vec3f>(local_row, local_col);
+                        lab[0] -= static_cast<float>(img_params.lab_offset[0]);
+                        lab[1] -= static_cast<float>(img_params.lab_offset[1]);
+                        lab[2] -= static_cast<float>(img_params.lab_offset[2]);
+
+                        auto mdl_it = color_balance.per_model_params.find(sample.model_id);
+                        if (mdl_it != color_balance.per_model_params.end())
+                        {
+                            const auto &vig = mdl_it->second;
+                            float r2 = sample.normalized_radius * sample.normalized_radius;
+                            float vig_corr = static_cast<float>(vig.coeffs[0]) * r2 +
+                                             static_cast<float>(vig.coeffs[1]) * r2 * r2 +
+                                             static_cast<float>(vig.coeffs[2]) * r2 * r2 * r2;
+                            lab[0] -= vig_corr;
+                        }
+                        lab[0] -= static_cast<float>(img_params.brdf_coeff) * sample.view_angle * sample.view_angle;
+
+                        lab[0] = std::clamp(lab[0], 0.0f, 255.0f);
+                        lab[1] = std::clamp(lab[1], 0.0f, 255.0f);
+                        lab[2] = std::clamp(lab[2], 0.0f, 255.0f);
+                    }
+                }
+            }
+
+            // Outlier rejection on LAB layers (uses L channel from lab_layers)
+            for (int local_row = 0; local_row < th; local_row++)
+            {
+                for (int local_col = 0; local_col < tw; local_col++)
+                {
+                    std::vector<float> L_values;
+                    std::vector<int> valid_indices;
+                    for (int layer = 0; layer < num_layers; layer++)
+                    {
+                        if (tile_buf.at(layer, local_row, local_col).valid)
+                        {
+                            L_values.push_back(lab_layers[layer].at<cv::Vec3f>(local_row, local_col)[0]);
+                            valid_indices.push_back(layer);
+                        }
+                    }
+                    if (valid_indices.size() < 3)
+                        continue;
+
+                    std::vector<float> sorted_L = L_values;
+                    std::sort(sorted_L.begin(), sorted_L.end());
+                    float median = sorted_L[sorted_L.size() / 2];
+
+                    std::vector<float> abs_devs;
+                    abs_devs.reserve(L_values.size());
+                    for (float l : L_values)
+                        abs_devs.push_back(std::abs(l - median));
+                    std::sort(abs_devs.begin(), abs_devs.end());
+                    float mad = abs_devs[abs_devs.size() / 2] * 1.4826f;
+
+                    if (mad < 1.0f)
+                        continue;
+
+                    for (size_t i = 0; i < valid_indices.size(); i++)
+                    {
+                        if (std::abs(L_values[i] - median) > config.outlier_mad_threshold * mad)
+                        {
+                            weight_maps[valid_indices[i]].at<float>(local_row, local_col) = 0.0f;
+                        }
+                    }
+                }
+            }
+
+            cv::Mat blended = laplacianBlend(lab_layers, weight_maps, config.pyramid_levels);
+
+            if (!blended.empty())
+            {
+                // Convert BGRA to RGBA for the output GeoTIFF
+                std::vector<uint8_t> rgba_buffer(tw * th * 4);
+                for (int i = 0; i < tw * th; i++)
+                {
+                    int r = i / tw;
+                    int c = i % tw;
+                    cv::Vec4b pixel = blended.at<cv::Vec4b>(r, c);
+                    rgba_buffer[i * 4 + 0] = pixel[2]; // R (from B in BGRA)
+                    rgba_buffer[i * 4 + 1] = pixel[1]; // G
+                    rgba_buffer[i * 4 + 2] = pixel[0]; // B (from R in BGRA)
+                    rgba_buffer[i * 4 + 3] = pixel[3]; // A
+
+                    bool any_valid = false;
+                    for (int l = 0; l < num_layers && !any_valid; l++)
+                    {
+                        any_valid = tile_buf.at(l, r, c).valid;
+                    }
+                    if (!any_valid)
+                    {
+                        uint8_t grey = ((y_offset + r) + (x_offset + c)) % 2 == 0 ? 64 : 128;
+                        rgba_buffer[i * 4 + 0] = grey;
+                        rgba_buffer[i * 4 + 1] = grey;
+                        rgba_buffer[i * 4 + 2] = grey;
+                        rgba_buffer[i * 4 + 3] = 0;
+                    }
+                }
+
+                writeTileToGeoTIFF(output_ds.get(), x_offset, y_offset, tw, th, rgba_buffer);
+            }
+
+            completed_tiles++;
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - start_time).count();
+            if (std::chrono::duration_cast<std::chrono::seconds>(now - last_log_time).count() >= 5 ||
+                completed_tiles == total_tiles)
+            {
+                double progress = 100.0 * completed_tiles / total_tiles;
+                spdlog::info("Pass 2 Progress: {:.1f}% ({}/{} tiles, {} seconds)", progress, completed_tiles,
+                             total_tiles, elapsed);
+                last_log_time = now;
+            }
+        }
+    }
+
+    spdlog::info("Building overviews...");
+    std::vector<int> overview_levels;
+    int min_dim = std::min(width, height);
+    for (int level = 2; level < min_dim; level *= 2)
+    {
+        overview_levels.push_back(level);
+    }
+    if (!overview_levels.empty())
+    {
+        CPLErr err = output_ds->BuildOverviews("AVERAGE", static_cast<int>(overview_levels.size()),
+                                               overview_levels.data(), 0, nullptr, nullptr, nullptr);
+        if (err != CE_None)
+        {
+            spdlog::warn("Failed to build overviews");
+        }
+    }
+
+    layers_ds.reset();
+    cameras_ds.reset();
+    VSIUnlink(layers_path.c_str());
+    VSIUnlink(cameras_path.c_str());
+
+    spdlog::info("Pass 2 complete: {}", output_path);
 }
 
 } // namespace opencalibration::orthomosaic

@@ -18,6 +18,12 @@ class GeoCoord;
 
 namespace opencalibration::orthomosaic
 {
+struct ColorCorrespondence;
+struct ColorBalanceResult;
+} // namespace opencalibration::orthomosaic
+
+namespace opencalibration::orthomosaic
+{
 
 // RAII context for ray tracing operations - manages mesh intersection searchers
 class RayTraceContext
@@ -89,6 +95,15 @@ double rayTraceHeight(double x, double y, double mean_camera_z, RayTraceContext 
 // Note: Less efficient for repeated calls; prefer using RayTraceContext directly
 double rayTraceHeight(double x, double y, double mean_camera_z, const std::vector<surface_model> &surfaces);
 
+struct OrthoMosaicConfig
+{
+    int num_layers = 3;
+    int tile_size = 1024;
+    int pyramid_levels = 4;
+    double outlier_mad_threshold = 3.0;
+    int correspondence_subsample = 10; // sample every Nth boundary pixel
+};
+
 OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph);
 
 void generateGeoTIFFOrthomosaic(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph,
@@ -98,5 +113,16 @@ void generateGeoTIFFOrthomosaic(const std::vector<surface_model> &surfaces, cons
 void generateDSMGeoTIFF(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph,
                         const opencalibration::GeoCoord &coord_system, const std::string &output_path,
                         int tile_size = 1024);
+
+std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surface_model> &surfaces,
+                                                        const MeasurementGraph &graph,
+                                                        const opencalibration::GeoCoord &coord_system,
+                                                        const std::string &layers_path, const std::string &cameras_path,
+                                                        const OrthoMosaicConfig &config = {});
+
+void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &cameras_path,
+                         const std::string &output_path, const ColorBalanceResult &color_balance,
+                         const std::vector<surface_model> &surfaces, const MeasurementGraph &graph,
+                         const opencalibration::GeoCoord &coord_system, const OrthoMosaicConfig &config = {});
 
 } // namespace opencalibration::orthomosaic

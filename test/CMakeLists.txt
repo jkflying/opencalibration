@@ -31,6 +31,8 @@ target_compile_definitions(functional_tests PUBLIC TEST_DATA_DIR=\"${CMAKE_CURRE
                                                    VISUAL_INSPECTION=1)
 
 add_executable(unit_tests gtest_main.cpp
+                          test_blending.cpp
+                          test_color_balance.cpp
                           test_combinatorics.cpp
                           test_distort.cpp
                           test_geo_coord.cpp
