@@ -187,14 +187,19 @@ cv::Mat laplacianBlend(const std::vector<cv::Mat> &lab_layers, const std::vector
         result = upsampled + blended_pyramid[l];
     }
 
-    // Clamp to valid LAB range and convert to BGR uint8
-    // LAB float32: L in [0,100], a in [-127,127], b in [-127,127]
-    // But OpenCV's 8-bit LAB: L in [0,255], a in [0,255], b in [0,255] (with 128 offset)
+    std::vector<cv::Mat> channels(3);
+    cv::split(result, channels);
+    channels[0] = cv::min(cv::max(channels[0], 0.0f), 100.0f);
+    channels[1] = cv::min(cv::max(channels[1], -127.0f), 127.0f);
+    channels[2] = cv::min(cv::max(channels[2], -127.0f), 127.0f);
     cv::Mat lab_clamped;
-    result.convertTo(lab_clamped, CV_8UC3);
+    cv::merge(channels, lab_clamped);
+
+    cv::Mat bgr_float;
+    cv::cvtColor(lab_clamped, bgr_float, cv::COLOR_Lab2BGR);
 
     cv::Mat bgr_result;
-    cv::cvtColor(lab_clamped, bgr_result, cv::COLOR_Lab2BGR);
+    bgr_float.convertTo(bgr_result, CV_8UC3, 255.0);
 
     // Add alpha channel (fully opaque for valid pixels)
     cv::Mat rgba;

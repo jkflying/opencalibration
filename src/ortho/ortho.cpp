@@ -1393,17 +1393,17 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
                                 cv::Mat bgr_a(1, 1, CV_8UC3), bgr_b(1, 1, CV_8UC3);
                                 bgr_a.at<cv::Vec3b>(0, 0) = sa.color_bgr;
                                 bgr_b.at<cv::Vec3b>(0, 0) = sb.color_bgr;
-                                cv::Mat lab_a, lab_b;
-                                cv::cvtColor(bgr_a, lab_a, cv::COLOR_BGR2Lab);
-                                cv::cvtColor(bgr_b, lab_b, cv::COLOR_BGR2Lab);
+                                cv::Mat bgr_a_f, bgr_b_f, lab_a, lab_b;
+                                bgr_a.convertTo(bgr_a_f, CV_32FC3, 1.0 / 255.0);
+                                bgr_b.convertTo(bgr_b_f, CV_32FC3, 1.0 / 255.0);
+                                cv::cvtColor(bgr_a_f, lab_a, cv::COLOR_BGR2Lab);
+                                cv::cvtColor(bgr_b_f, lab_b, cv::COLOR_BGR2Lab);
 
                                 ColorCorrespondence corr;
-                                auto la = lab_a.at<cv::Vec3b>(0, 0);
-                                auto lb = lab_b.at<cv::Vec3b>(0, 0);
-                                corr.lab_a = {static_cast<float>(la[0]), static_cast<float>(la[1]),
-                                              static_cast<float>(la[2])};
-                                corr.lab_b = {static_cast<float>(lb[0]), static_cast<float>(lb[1]),
-                                              static_cast<float>(lb[2])};
+                                auto la = lab_a.at<cv::Vec3f>(0, 0);
+                                auto lb = lab_b.at<cv::Vec3f>(0, 0);
+                                corr.lab_a = {la[0], la[1], la[2]};
+                                corr.lab_b = {lb[0], lb[1], lb[2]};
                                 corr.camera_id_a = sa.camera_id;
                                 corr.camera_id_b = sb.camera_id;
                                 corr.model_id_a = sa.model_id;
@@ -1663,8 +1663,9 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
             std::vector<cv::Mat> lab_layers(num_layers);
             for (int layer = 0; layer < num_layers; layer++)
             {
-                cv::cvtColor(bgr_layers[layer], lab_layers[layer], cv::COLOR_BGR2Lab);
-                lab_layers[layer].convertTo(lab_layers[layer], CV_32FC3);
+                cv::Mat bgr_float;
+                bgr_layers[layer].convertTo(bgr_float, CV_32FC3, 1.0 / 255.0);
+                cv::cvtColor(bgr_float, lab_layers[layer], cv::COLOR_BGR2Lab);
             }
 
             for (int local_row = 0; local_row < th; local_row++)
@@ -1699,9 +1700,9 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
                         }
                         lab[0] -= static_cast<float>(img_params.brdf_coeff) * sample.view_angle * sample.view_angle;
 
-                        lab[0] = std::clamp(lab[0], 0.0f, 255.0f);
-                        lab[1] = std::clamp(lab[1], 0.0f, 255.0f);
-                        lab[2] = std::clamp(lab[2], 0.0f, 255.0f);
+                        lab[0] = std::clamp(lab[0], 0.0f, 100.0f);
+                        lab[1] = std::clamp(lab[1], -127.0f, 127.0f);
+                        lab[2] = std::clamp(lab[2], -127.0f, 127.0f);
                     }
                 }
             }
