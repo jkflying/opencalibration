@@ -263,49 +263,76 @@ Pipeline::Transition Pipeline::mesh_refinement()
     PerformanceMeasure p("Mesh refinement");
 
     const size_t maxPointsPerTriangle = 20;
-    const int maxIterations = 10;
+    const int maxIterations = 20;
 
-    // First iteration: create initial mesh with GROUND_MESH optimization
+    RelaxOptionSet options = {Option::ORIENTATION, Option::GROUND_MESH};
     if (stateRunCount() == 0)
     {
-        spdlog::info("Mesh refinement: creating initial mesh with GROUND_MESH optimization");
-        _relax_stage->init(_graph, {}, _imageGPSLocations, true, true,
-                           {Option::ORIENTATION, Option::GROUND_MESH, Option::MINIMAL_MESH});
-
-        fvec relax_funcs = _relax_stage->get_runners(_graph);
-        run_parallel(relax_funcs, _parallelism);
-        _next_relaxed_ids = _relax_stage->finalize(_graph);
-        _surfaces = _relax_stage->getSurfaceModels();
-
-        if (_surfaces.empty())
-        {
-            spdlog::warn("No surfaces created during initial mesh optimization");
-            USM_DECISION_TABLE(Transition::NEXT, );
-        }
-
-        // Now refine the mesh based on point density
-        size_t totalRefined = 0;
-        for (auto &surface : _surfaces)
-        {
-            if (surface.mesh.size_nodes() == 0)
-            {
-                continue;
-            }
-
-            size_t initialNodes = surface.mesh.size_nodes();
-            size_t initialEdges = surface.mesh.size_edges();
-
-            size_t created = refineByPointDensity(surface.mesh, surface.cloud, maxPointsPerTriangle, maxIterations);
-            totalRefined += created;
-
-            spdlog::info("Mesh refinement: {} -> {} nodes, {} -> {} edges, {} triangles created", initialNodes,
-                         surface.mesh.size_nodes(), initialEdges, surface.mesh.size_edges(), created);
-        }
-
-        spdlog::info("Total mesh refinement: {} triangles created across {} surfaces", totalRefined, _surfaces.size());
+        options.set(Option::MINIMAL_MESH, true);
     }
 
-    USM_DECISION_TABLE(Transition::NEXT, );
+    _relax_stage->init(_graph, {}, _imageGPSLocations, true, true, options);
+    fvec relax_funcs = _relax_stage->get_runners(_graph);
+    run_parallel(relax_funcs, _parallelism);
+    _next_relaxed_ids = _relax_stage->finalize(_graph);
+    _surfaces = _relax_stage->getSurfaceModels();
+
+    if (_surfaces.empty())
+    {
+        spdlog::warn("No surfaces created during mesh optimization");
+        USM_DECISION_TABLE(Transition::NEXT, );
+    }
+
+    size_t trianglesAboveThreshold = 0;
+    size_t maxPoints = 0;
+    for (const auto &surface : _surfaces)
+    {
+        if (surface.mesh.size_nodes() == 0)
+            continue;
+        auto counts = countPointsPerTriangle(surface.mesh, surface.cloud);
+        for (const auto &[key, count] : counts)
+        {
+            maxPoints = std::max(maxPoints, count);
+            if (count > maxPointsPerTriangle)
+                trianglesAboveThreshold++;
+        }
+    }
+
+    spdlog::info("Mesh refinement iteration {}: max {} points/triangle, {} triangles above threshold",
+                 stateRunCount(), maxPoints, trianglesAboveThreshold);
+
+    if (trianglesAboveThreshold == 0)
+    {
+        spdlog::info("Mesh refinement converged: all triangles have <= {} points", maxPointsPerTriangle);
+        USM_DECISION_TABLE(Transition::NEXT, );
+    }
+
+    if (stateRunCount() >= (uint64_t)(maxIterations - 1))
+    {
+        spdlog::info("Mesh refinement reached max iterations ({})", maxIterations);
+        USM_DECISION_TABLE(Transition::NEXT, );
+    }
+
+    size_t totalRefined = 0;
+    for (auto &surface : _surfaces)
+    {
+        if (surface.mesh.size_nodes() == 0)
+            continue;
+        size_t created = refineByPointDensity(surface.mesh, surface.cloud, maxPointsPerTriangle, 1);
+        totalRefined += created;
+    }
+
+    if (totalRefined == 0)
+    {
+        spdlog::info("Mesh refinement: no triangles created, stopping");
+        USM_DECISION_TABLE(Transition::NEXT, );
+    }
+
+    spdlog::info("Mesh refinement: refined {} triangles", totalRefined);
+
+    _relax_stage->setSurfaceModels(_surfaces);
+
+    USM_DECISION_TABLE(Transition::REPEAT, );
 }
 
 Pipeline::Transition Pipeline::generate_thumbnail()

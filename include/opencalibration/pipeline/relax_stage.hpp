@@ -32,6 +32,7 @@ class RelaxStage
     std::vector<std::vector<size_t>> finalize(MeasurementGraph &graph);
 
     const std::vector<surface_model> &getSurfaceModels();
+    void setSurfaceModels(std::vector<surface_model> surfaces);
 
   private:
     std::vector<RelaxGroup> _groups;

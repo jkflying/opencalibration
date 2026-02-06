@@ -166,4 +166,9 @@ const std::vector<surface_model> &RelaxStage::getSurfaceModels()
     return _surface_models;
 }
 
+void RelaxStage::setSurfaceModels(std::vector<surface_model> surfaces)
+{
+    _surface_models = std::move(surfaces);
+}
+
 } // namespace opencalibration

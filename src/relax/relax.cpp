@@ -2,7 +2,6 @@
 
 #include <opencalibration/performance/performance.hpp>
 #include <opencalibration/relax/relax_problem.hpp>
-#include <opencalibration/surface/refine_mesh.hpp>
 #include <opencalibration/types/surface_model.hpp>
 
 namespace
@@ -139,86 +138,8 @@ std::vector<Backend> getBackends()
         RelaxOptionSet{Option::LENS_DISTORTIONS_RADIAL, Option::LENS_DISTORTIONS_RADIAL_BROWN2_PARAMETERIZATION,
                        Option::LENS_DISTORTIONS_RADIAL_BROWN24_PARAMETERIZATION,
                        Option::LENS_DISTORTIONS_RADIAL_BROWN246_PARAMETERIZATION, Option::FOCAL_LENGTH,
-                       Option::PRINCIPAL_POINT, Option::ORIENTATION, Option::GROUND_MESH},
+                       Option::PRINCIPAL_POINT, Option::ORIENTATION, Option::GROUND_MESH, Option::MINIMAL_MESH},
         mesh_solver);
-
-    // Adaptive mesh solver: starts with minimal mesh, iteratively refines and optimizes
-    auto adaptive_mesh_solver = [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                                   std::unordered_map<size_t, CameraModel> &cam_models,
-                                   const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options,
-                                   const std::vector<surface_model> &previousSurfaces) -> surface_model {
-        PerformanceMeasure p("Relax runner adaptive mesh");
-
-        const size_t maxPointsPerTriangle = 20;
-        const int maxIterations = 20;
-
-        // Start with minimal mesh option enabled
-        RelaxOptionSet minimalOptions = options;
-        minimalOptions.set(Option::MINIMAL_MESH, true);
-
-        surface_model currentSurface;
-        std::vector<surface_model> surfaces = previousSurfaces;
-
-        for (int iter = 0; iter < maxIterations; iter++)
-        {
-            // Setup and solve optimization problem
-            RelaxProblem rp;
-            rp.setupGroundMeshProblem(graph, nodes, cam_models, edges_to_optimize, iter == 0 ? minimalOptions : options,
-                                      surfaces);
-            rp.relaxObservedModelOnly();
-            rp.solve();
-
-            currentSurface = rp.getSurfaceModel();
-
-            // Count points per triangle
-            size_t maxPoints = 0;
-            size_t trianglesAboveThreshold = 0;
-            auto counts = countPointsPerTriangle(currentSurface.mesh, currentSurface.cloud);
-            for (const auto &[key, count] : counts)
-            {
-                maxPoints = std::max(maxPoints, count);
-                if (count > maxPointsPerTriangle)
-                {
-                    trianglesAboveThreshold++;
-                }
-            }
-
-            spdlog::info("Adaptive mesh iteration {}: {} nodes, {} edges, max {} points/triangle, {} triangles above "
-                         "threshold",
-                         iter, currentSurface.mesh.size_nodes(), currentSurface.mesh.size_edges(), maxPoints,
-                         trianglesAboveThreshold);
-
-            // Check convergence
-            if (trianglesAboveThreshold == 0)
-            {
-                spdlog::info("Adaptive mesh converged: all triangles have <= {} points", maxPointsPerTriangle);
-                break;
-            }
-
-            // Refine triangles with too many points
-            size_t created = refineByPointDensity(currentSurface.mesh, currentSurface.cloud, maxPointsPerTriangle, 1);
-            if (created == 0)
-            {
-                spdlog::info("Adaptive mesh: no refinement possible, stopping");
-                break;
-            }
-
-            spdlog::info("Adaptive mesh: refined {} triangles", created);
-
-            // Use current surface as previous for next iteration
-            surfaces = {currentSurface};
-        }
-
-        return currentSurface;
-    };
-
-    backends.emplace_back(RelaxOptionSet{Option::LENS_DISTORTIONS_RADIAL,
-                                         Option::LENS_DISTORTIONS_RADIAL_BROWN2_PARAMETERIZATION,
-                                         Option::LENS_DISTORTIONS_RADIAL_BROWN24_PARAMETERIZATION,
-                                         Option::LENS_DISTORTIONS_RADIAL_BROWN246_PARAMETERIZATION,
-                                         Option::FOCAL_LENGTH, Option::PRINCIPAL_POINT, Option::ORIENTATION,
-                                         Option::GROUND_MESH, Option::MINIMAL_MESH, Option::ADAPTIVE_REFINE},
-                          adaptive_mesh_solver);
 
     backends.emplace_back(RelaxOptionSet{Option::LENS_DISTORTIONS_TANGENTIAL, Option::LENS_DISTORTIONS_RADIAL,
                                          Option::LENS_DISTORTIONS_RADIAL_BROWN2_PARAMETERIZATION,
