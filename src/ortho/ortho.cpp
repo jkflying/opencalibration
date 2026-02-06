@@ -18,11 +18,64 @@
 
 #include <atomic>
 #include <chrono>
+#include <future>
 #include <mutex>
 #include <omp.h>
 
 namespace
 {
+
+// Convert (x,y) to Hilbert curve distance for a square of side 2^order
+uint32_t xy2d(int order, int x, int y)
+{
+    uint32_t d = 0;
+    for (int s = order / 2; s > 0; s /= 2)
+    {
+        int rx = (x & s) > 0 ? 1 : 0;
+        int ry = (y & s) > 0 ? 1 : 0;
+        d += s * s * ((3 * rx) ^ ry);
+        // Rotate quadrant
+        if (ry == 0)
+        {
+            if (rx == 1)
+            {
+                x = s - 1 - x;
+                y = s - 1 - y;
+            }
+            std::swap(x, y);
+        }
+    }
+    return d;
+}
+
+// Generate tile indices sorted by Hilbert curve distance for better spatial locality
+std::vector<std::pair<int, int>> hilbertTileOrder(int num_tiles_x, int num_tiles_y)
+{
+    // Find the smallest power of 2 that covers both dimensions
+    int max_dim = std::max(num_tiles_x, num_tiles_y);
+    int order = 1;
+    while (order < max_dim)
+        order *= 2;
+
+    std::vector<std::pair<uint32_t, std::pair<int, int>>> tiles;
+    tiles.reserve(num_tiles_x * num_tiles_y);
+    for (int ty = 0; ty < num_tiles_y; ty++)
+    {
+        for (int tx = 0; tx < num_tiles_x; tx++)
+        {
+            tiles.push_back({xy2d(order, tx, ty), {tx, ty}});
+        }
+    }
+    std::sort(tiles.begin(), tiles.end());
+
+    std::vector<std::pair<int, int>> result;
+    result.reserve(tiles.size());
+    for (auto &t : tiles)
+    {
+        result.push_back(t.second);
+    }
+    return result;
+}
 
 std::array<double, 3> to_array(const Eigen::Vector3d &v)
 {
@@ -581,7 +634,8 @@ GDALDatasetPtr createGeoTIFF(const std::string &path, int width, int height, dou
     options = CSLSetNameValue(options, "TILED", "YES");
     options = CSLSetNameValue(options, "BLOCKXSIZE", "512");
     options = CSLSetNameValue(options, "BLOCKYSIZE", "512");
-    options = CSLSetNameValue(options, "COMPRESS", "LZW");
+    options = CSLSetNameValue(options, "COMPRESS", "DEFLATE");
+    options = CSLSetNameValue(options, "PREDICTOR", "2");
     options = CSLSetNameValue(options, "PHOTOMETRIC", "RGB");
     options = CSLSetNameValue(options, "BIGTIFF", "IF_SAFER");
 
@@ -795,7 +849,8 @@ GDALDatasetPtr createDSMGeoTIFF(const std::string &path, int width, int height, 
     options = CSLSetNameValue(options, "TILED", "YES");
     options = CSLSetNameValue(options, "BLOCKXSIZE", "512");
     options = CSLSetNameValue(options, "BLOCKYSIZE", "512");
-    options = CSLSetNameValue(options, "COMPRESS", "LZW");
+    options = CSLSetNameValue(options, "COMPRESS", "DEFLATE");
+    options = CSLSetNameValue(options, "PREDICTOR", "2");
     options = CSLSetNameValue(options, "BIGTIFF", "IF_SAFER");
 
     GDALDataset *dataset = driver->Create(path.c_str(), width, height, 1, GDT_Float32, options);
@@ -1089,7 +1144,8 @@ GDALDatasetPtr createMultiBandGeoTIFF(const std::string &path, int width, int he
     options = CSLSetNameValue(options, "TILED", "YES");
     options = CSLSetNameValue(options, "BLOCKXSIZE", "512");
     options = CSLSetNameValue(options, "BLOCKYSIZE", "512");
-    options = CSLSetNameValue(options, "COMPRESS", "LZW");
+    options = CSLSetNameValue(options, "COMPRESS", "DEFLATE");
+    options = CSLSetNameValue(options, "PREDICTOR", "2");
     options = CSLSetNameValue(options, "BIGTIFF", "IF_SAFER");
 
     GDALDataset *dataset = driver->Create(path.c_str(), width, height, num_bands, data_type, options);
@@ -1109,6 +1165,59 @@ GDALDatasetPtr createMultiBandGeoTIFF(const std::string &path, int width, int he
     }
 
     return GDALDatasetPtr(dataset);
+}
+
+std::unordered_set<size_t> findTileCameras(int tile_x, int tile_y, int tile_size,
+                                           const opencalibration::orthomosaic::OrthoMosaicBounds &bounds, double gsd,
+                                           int output_width, int output_height,
+                                           const jk::tree::KDTree<size_t, 3> &imageGPSLocations,
+                                           double average_camera_elevation)
+{
+    int x_offset = tile_x * tile_size;
+    int y_offset = tile_y * tile_size;
+    int tile_width = std::min(tile_size, output_width - x_offset);
+    int tile_height = std::min(tile_size, output_height - y_offset);
+
+    std::unordered_set<size_t> camera_ids;
+
+    int N = 5;
+    for (int sy = 0; sy < 5; sy++)
+    {
+        for (int sx = 0; sx < 5; sx++)
+        {
+            int local_col = tile_width * sx / (N - 1);
+            int local_row = tile_height * sy / (N - 1);
+            local_col = std::min(local_col, tile_width - 1);
+            local_row = std::min(local_row, tile_height - 1);
+
+            int global_col = x_offset + local_col;
+            int global_row = y_offset + local_row;
+
+            double x = global_col * gsd + bounds.min_x;
+            double y = bounds.max_y - global_row * gsd;
+
+            auto closest5 = imageGPSLocations.searchKnn({x, y, average_camera_elevation}, 5);
+            for (const auto &closest : closest5)
+            {
+                camera_ids.insert(closest.payload);
+            }
+        }
+    }
+
+    return camera_ids;
+}
+
+void prefetchImages(const std::unordered_set<size_t> &camera_ids, const opencalibration::MeasurementGraph &graph,
+                    opencalibration::orthomosaic::FullResolutionImageCache &image_cache)
+{
+    for (size_t cam_id : camera_ids)
+    {
+        const auto *node = graph.getNode(cam_id);
+        if (node)
+        {
+            image_cache.getImage(cam_id, node->payload.path);
+        }
+    }
 }
 
 void writeLayeredTileToGeoTIFF(GDALDataset *layers_ds, GDALDataset *cameras_ds,
@@ -1253,7 +1362,7 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
 
 #pragma omp parallel
     {
-        PerformanceMeasure thread_perf("Layered tile rows");
+        PerformanceMeasure thread_perf("Ortho Stage 1");
 
         PatchSampler sampler;
 
@@ -1267,7 +1376,6 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
             }
         }
 
-        // Thread-local correspondences to avoid contention
         std::vector<ColorCorrespondence> local_correspondences;
 
 #pragma omp for schedule(dynamic)
@@ -1436,10 +1544,8 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
                                                         const OrthoMosaicConfig &config)
 {
     spdlog::info("Pass 1: Generating layered GeoTIFF: {}", layers_path);
-
-    PerformanceMeasure p("Generate layered GeoTIFF (Pass 1)");
-
     OrthoMosaicContext context = prepareOrthoMosaicContext(surfaces, graph, ImageResolution::FullResolution);
+    PerformanceMeasure p("Ortho pre-stage 1");
 
     spdlog::info("x range [{}; {}]  y range [{}; {}]  mean surface {}", context.bounds.min_x, context.bounds.max_x,
                  context.bounds.min_y, context.bounds.max_y, context.bounds.mean_surface_z);
@@ -1492,33 +1598,69 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
 
     FullResolutionImageCache image_cache(config.num_layers * 10);
 
-    for (int tile_y = 0; tile_y < num_tiles_y; tile_y++)
+    auto tile_order = hilbertTileOrder(num_tiles_x, num_tiles_y);
+
+    // Prefetch images for the first tile synchronously
+    if (!tile_order.empty())
     {
-        for (int tile_x = 0; tile_x < num_tiles_x; tile_x++)
+        auto first_cams =
+            findTileCameras(tile_order[0].first, tile_order[0].second, tile_size, context.bounds, context.gsd, width,
+                            height, context.imageGPSLocations, context.average_camera_elevation);
+        prefetchImages(first_cams, graph, image_cache);
+    }
+
+    std::future<void> write_future;
+    std::future<void> prefetch_future;
+
+    p.reset("");
+
+    for (size_t i = 0; i < tile_order.size(); i++)
+    {
+        const auto &[tile_x, tile_y] = tile_order[i];
+
+        if (i + 1 < tile_order.size())
         {
-            LayeredTileBuffer tile_buf;
-            processLayeredTile(tile_x, tile_y, tile_size, context.bounds, context.gsd, width, height, surfaces, graph,
-                               context.imageGPSLocations, context.average_camera_elevation, context.mean_camera_z,
-                               inv_rotation_cache, image_cache, config.num_layers, tile_buf, all_correspondences,
-                               config.correspondence_subsample, correspondences_mutex);
+            if (prefetch_future.valid())
+                prefetch_future.wait();
+            const auto &[next_tx, next_ty] = tile_order[i + 1];
+            prefetch_future = std::async(std::launch::async, [&, next_tx, next_ty] {
+                auto cams = findTileCameras(next_tx, next_ty, tile_size, context.bounds, context.gsd, width, height,
+                                            context.imageGPSLocations, context.average_camera_elevation);
+                prefetchImages(cams, graph, image_cache);
+            });
+        }
 
-            int x_off = tile_x * tile_size;
-            int y_off = tile_y * tile_size;
-            writeLayeredTileToGeoTIFF(layers_ds.get(), cameras_ds.get(), tile_buf, x_off, y_off);
+        LayeredTileBuffer tile_buf;
+        processLayeredTile(tile_x, tile_y, tile_size, context.bounds, context.gsd, width, height, surfaces, graph,
+                           context.imageGPSLocations, context.average_camera_elevation, context.mean_camera_z,
+                           inv_rotation_cache, image_cache, config.num_layers, tile_buf, all_correspondences,
+                           config.correspondence_subsample, correspondences_mutex);
 
-            completed_tiles++;
-            auto now = std::chrono::steady_clock::now();
-            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - start_time).count();
-            if (std::chrono::duration_cast<std::chrono::seconds>(now - last_log_time).count() >= 5 ||
-                completed_tiles == total_tiles)
-            {
-                double progress = 100.0 * completed_tiles / total_tiles;
-                spdlog::info("Pass 1 Progress: {:.1f}% ({}/{} tiles, {} seconds, {} correspondences)", progress,
-                             completed_tiles, total_tiles, elapsed, all_correspondences.size());
-                last_log_time = now;
-            }
+        if (write_future.valid())
+            write_future.wait();
+
+        int x_off = tile_x * tile_size;
+        int y_off = tile_y * tile_size;
+        auto tile_buf_ptr = std::make_shared<LayeredTileBuffer>(std::move(tile_buf));
+        write_future = std::async(std::launch::async, [&, tile_buf_ptr, x_off, y_off] {
+            writeLayeredTileToGeoTIFF(layers_ds.get(), cameras_ds.get(), *tile_buf_ptr, x_off, y_off);
+        });
+
+        completed_tiles++;
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - start_time).count();
+        if (std::chrono::duration_cast<std::chrono::seconds>(now - last_log_time).count() >= 5 ||
+            completed_tiles == total_tiles)
+        {
+            double progress = 100.0 * completed_tiles / total_tiles;
+            spdlog::info("Pass 1 Progress: {:.1f}% ({}/{} tiles, {} seconds, {} correspondences)", progress,
+                         completed_tiles, total_tiles, elapsed, all_correspondences.size());
+            last_log_time = now;
         }
     }
+
+    if (write_future.valid())
+        write_future.wait();
 
     spdlog::info("Pass 1 complete: {} correspondences collected", all_correspondences.size());
     return all_correspondences;
@@ -1531,7 +1673,7 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
 {
     spdlog::info("Pass 2: Blending layered GeoTIFF to: {}", output_path);
 
-    PerformanceMeasure p("Blend layered GeoTIFF (Pass 2)");
+    PerformanceMeasure p("Ortho pre-stage 2");
 
     GDALAllRegister();
     GDALDatasetPtr layers_ds(static_cast<GDALDataset *>(GDALOpen(layers_path.c_str(), GA_ReadOnly)));
@@ -1555,6 +1697,10 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
 
     spdlog::info("Pass 2: {}x{} pixels, {} layers, GSD {}", width, height, num_layers, gsd);
 
+    // Close shared read handles; each thread will open its own
+    layers_ds.reset();
+    cameras_ds.reset();
+
     std::string wkt = coord_system.getWKT();
     GDALDatasetPtr output_ds = createGeoTIFF(output_path, width, height, min_x, max_y, gsd, wkt);
 
@@ -1568,9 +1714,9 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
 
     spdlog::info("Pass 2: Processing {} tiles", total_tiles);
 
-    int completed_tiles = 0;
+    std::atomic<int> completed_tiles{0};
     auto start_time = std::chrono::steady_clock::now();
-    auto last_log_time = start_time;
+    std::atomic<long long> last_log_seconds{-5};
 
     std::unordered_map<size_t, Eigen::Matrix3d> inv_rotation_cache;
     for (size_t node_id : context.involved_nodes)
@@ -1582,18 +1728,31 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
         }
     }
 
-    for (int tile_y = 0; tile_y < num_tiles_y; tile_y++)
+    p.reset("");
+    std::mutex gdal_write_mutex;
+
+#pragma omp parallel
     {
-        for (int tile_x = 0; tile_x < num_tiles_x; tile_x++)
+        PerformanceMeasure thread_perf("Ortho stage 2");
+
+        // Each thread opens its own read-only handles to avoid serializing reads
+        GDALDatasetPtr thread_layers_ds(static_cast<GDALDataset *>(GDALOpen(layers_path.c_str(), GA_ReadOnly)));
+        GDALDatasetPtr thread_cameras_ds(static_cast<GDALDataset *>(GDALOpen(cameras_path.c_str(), GA_ReadOnly)));
+
+#pragma omp for schedule(dynamic)
+        for (int tile_idx = 0; tile_idx < total_tiles; tile_idx++)
         {
+            int tile_y = tile_idx / num_tiles_x;
+            int tile_x = tile_idx % num_tiles_x;
+
             int x_offset = tile_x * tile_size;
             int y_offset = tile_y * tile_size;
             int tw = std::min(tile_size, width - x_offset);
             int th = std::min(tile_size, height - y_offset);
 
             LayeredTileBuffer tile_buf;
-            readLayeredTileFromGeoTIFF(layers_ds.get(), cameras_ds.get(), tile_buf, x_offset, y_offset, tw, th,
-                                       num_layers);
+            readLayeredTileFromGeoTIFF(thread_layers_ds.get(), thread_cameras_ds.get(), tile_buf, x_offset, y_offset,
+                                       tw, th, num_layers);
 
             std::vector<cv::Mat> bgr_layers(num_layers);
             std::vector<cv::Mat> weight_maps(num_layers);
@@ -1603,59 +1762,53 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
                 weight_maps[layer] = cv::Mat::zeros(th, tw, CV_32FC1);
             }
 
-#pragma omp parallel
+            for (int local_row = 0; local_row < th; local_row++)
             {
-                PerformanceMeasure thread_perf("Blend tile rows");
-
-#pragma omp for schedule(dynamic)
-                for (int local_row = 0; local_row < th; local_row++)
+                for (int local_col = 0; local_col < tw; local_col++)
                 {
-                    for (int local_col = 0; local_col < tw; local_col++)
+                    int global_col = x_offset + local_col;
+                    int global_row = y_offset + local_row;
+                    const double wx = global_col * gsd + context.bounds.min_x;
+                    const double wy = context.bounds.max_y - global_row * gsd;
+
+                    for (int layer = 0; layer < num_layers; layer++)
                     {
-                        int global_col = x_offset + local_col;
-                        int global_row = y_offset + local_row;
-                        const double wx = global_col * gsd + context.bounds.min_x;
-                        const double wy = context.bounds.max_y - global_row * gsd;
+                        auto &sample = tile_buf.at(layer, local_row, local_col);
+                        if (!sample.valid)
+                            continue;
 
-                        for (int layer = 0; layer < num_layers; layer++)
-                        {
-                            auto &sample = tile_buf.at(layer, local_row, local_col);
-                            if (!sample.valid)
-                                continue;
+                        const auto *node = graph.getNode(sample.camera_id);
+                        if (!node)
+                            continue;
+                        const auto &payload = node->payload;
 
-                            const auto *node = graph.getNode(sample.camera_id);
-                            if (!node)
-                                continue;
-                            const auto &payload = node->payload;
+                        auto inv_rot_it = inv_rotation_cache.find(sample.camera_id);
+                        if (inv_rot_it == inv_rotation_cache.end())
+                            continue;
 
-                            auto inv_rot_it = inv_rotation_cache.find(sample.camera_id);
-                            if (inv_rot_it == inv_rotation_cache.end())
-                                continue;
+                        Eigen::Vector3d world_pt(wx, wy, context.bounds.mean_surface_z);
+                        Eigen::Vector2d pixel =
+                            image_from_3d(world_pt, *payload.model, payload.position, inv_rot_it->second);
 
-                            Eigen::Vector3d world_pt(wx, wy, context.bounds.mean_surface_z);
-                            Eigen::Vector2d pixel =
-                                image_from_3d(world_pt, *payload.model, payload.position, inv_rot_it->second);
+                        double half_w = payload.model->pixels_cols * 0.5;
+                        double half_h = payload.model->pixels_rows * 0.5;
+                        double ndx = (pixel.x() - half_w) / half_w;
+                        double ndy = (pixel.y() - half_h) / half_h;
 
-                            double half_w = payload.model->pixels_cols * 0.5;
-                            double half_h = payload.model->pixels_rows * 0.5;
-                            double ndx = (pixel.x() - half_w) / half_w;
-                            double ndy = (pixel.y() - half_h) / half_h;
+                        sample.normalized_radius = static_cast<float>(std::sqrt(ndx * ndx + ndy * ndy));
 
-                            sample.normalized_radius = static_cast<float>(std::sqrt(ndx * ndx + ndy * ndy));
+                        Eigen::Vector3d to_point = world_pt - payload.position;
+                        Eigen::Vector3d cam_down = payload.orientation.inverse() * Eigen::Vector3d(0, 0, 1);
+                        double cos_angle = cam_down.dot(to_point.normalized());
+                        sample.view_angle = static_cast<float>(std::acos(std::clamp(cos_angle, -1.0, 1.0)));
 
-                            Eigen::Vector3d to_point = world_pt - payload.position;
-                            Eigen::Vector3d cam_down = payload.orientation.inverse() * Eigen::Vector3d(0, 0, 1);
-                            double cos_angle = cam_down.dot(to_point.normalized());
-                            sample.view_angle = static_cast<float>(std::acos(std::clamp(cos_angle, -1.0, 1.0)));
+                        float camera_dist = static_cast<float>(to_point.norm());
+                        sample.weight =
+                            computeBlendWeight(static_cast<float>(pixel.x()), static_cast<float>(pixel.y()),
+                                               payload.model->pixels_cols, payload.model->pixels_rows, camera_dist);
 
-                            float camera_dist = static_cast<float>(to_point.norm());
-                            sample.weight =
-                                computeBlendWeight(static_cast<float>(pixel.x()), static_cast<float>(pixel.y()),
-                                                   payload.model->pixels_cols, payload.model->pixels_rows, camera_dist);
-
-                            bgr_layers[layer].at<cv::Vec3b>(local_row, local_col) = sample.color_bgr;
-                            weight_maps[layer].at<float>(local_row, local_col) = sample.weight;
-                        }
+                        bgr_layers[layer].at<cv::Vec3b>(local_row, local_col) = sample.color_bgr;
+                        weight_maps[layer].at<float>(local_row, local_col) = sample.weight;
                     }
                 }
             }
@@ -1780,22 +1933,25 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
                     }
                 }
 
-                writeTileToGeoTIFF(output_ds.get(), x_offset, y_offset, tw, th, rgba_buffer);
+                {
+                    std::lock_guard<std::mutex> lock(gdal_write_mutex);
+                    writeTileToGeoTIFF(output_ds.get(), x_offset, y_offset, tw, th, rgba_buffer);
+                }
             }
 
-            completed_tiles++;
+            int done = ++completed_tiles;
             auto now = std::chrono::steady_clock::now();
             auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - start_time).count();
-            if (std::chrono::duration_cast<std::chrono::seconds>(now - last_log_time).count() >= 5 ||
-                completed_tiles == total_tiles)
+            long long prev_log = last_log_seconds.load(std::memory_order_relaxed);
+            if (done == total_tiles ||
+                (elapsed - prev_log >= 5 && last_log_seconds.compare_exchange_strong(prev_log, elapsed)))
             {
-                double progress = 100.0 * completed_tiles / total_tiles;
-                spdlog::info("Pass 2 Progress: {:.1f}% ({}/{} tiles, {} seconds)", progress, completed_tiles,
-                             total_tiles, elapsed);
-                last_log_time = now;
+                double progress = 100.0 * done / total_tiles;
+                spdlog::info("Pass 2 Progress: {:.1f}% ({}/{} tiles, {} seconds)", progress, done, total_tiles,
+                             elapsed);
             }
         }
-    }
+    } // omp parallel
 
     spdlog::info("Building overviews...");
     std::vector<int> overview_levels;
@@ -1814,8 +1970,6 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
         }
     }
 
-    layers_ds.reset();
-    cameras_ds.reset();
     VSIUnlink(layers_path.c_str());
     VSIUnlink(cameras_path.c_str());
 

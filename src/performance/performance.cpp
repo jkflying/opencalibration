@@ -55,7 +55,8 @@ PerformanceMeasure::~PerformanceMeasure()
 void PerformanceMeasure::reset(const opencalibration::Literal &key)
 {
     finalize();
-    initialize(key);
+    if (key.len > 0)
+        initialize(key);
 }
 
 void PerformanceMeasure::initialize(const opencalibration::Literal &key)

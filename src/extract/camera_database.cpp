@@ -135,7 +135,7 @@ void writeDatabase(const std::string &path, const std::vector<opencalibration::C
 }
 
 std::vector<opencalibration::CameraDBEntry> loadDatabaseEntries(const std::string &path,
-                                                                 std::map<CameraKey, std::string> &notes_map)
+                                                                std::map<CameraKey, std::string> &notes_map)
 {
     std::vector<opencalibration::CameraDBEntry> entries;
 
