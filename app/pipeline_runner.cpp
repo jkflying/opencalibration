@@ -1,3 +1,4 @@
+#include <opencalibration/extract/camera_database.hpp>
 #include <opencalibration/performance/performance.hpp>
 #include <opencalibration/pipeline/pipeline.hpp>
 
@@ -40,6 +41,7 @@ int main(int argc, char *argv[])
     std::string checkpoint_save = "";
     std::string checkpoint_load = "";
     std::string resume_from = "";
+    bool update_camera_db = false;
     bool skip_mesh_refinement = false;
     bool skip_initial_global_relax = false;
     bool skip_camera_intrinsics = false;
@@ -63,6 +65,8 @@ int main(int argc, char *argv[])
     args.addArgument({"--dsm-geotiff"}, &dsm_file, "Output Digital Surface Model (DSM) GeoTIFF");
     args.addArgument({"-cs", "--checkpoint-save"}, &checkpoint_save, "Save checkpoint to directory after processing");
     args.addArgument({"-cl", "--checkpoint-load"}, &checkpoint_load, "Load and resume from checkpoint directory");
+    args.addArgument({"--update-camera-db"}, &update_camera_db,
+                     "Update data/camera_database.json with optimized parameters after pipeline completes");
     args.addArgument({"--resume-from"}, &resume_from,
                      "Resume from specific stage (INITIAL_GLOBAL_RELAX, CAMERA_PARAMETER_RELAX, FINAL_GLOBAL_RELAX, "
                      "GENERATE_THUMBNAIL, GENERATE_LAYERS, COLOR_BALANCE, BLEND_LAYERS)");
@@ -241,6 +245,16 @@ int main(int argc, char *argv[])
         else
         {
             std::cout << "Checkpoint saved to " << checkpoint_save << std::endl;
+        }
+    }
+
+    if (update_camera_db)
+    {
+        const auto &camera_db_path = CameraDatabase::defaultPath();
+        spdlog::info("Updating camera database at {}", camera_db_path);
+        if (!updateDatabaseFromGraph(p.getGraph(), camera_db_path))
+        {
+            spdlog::error("Failed to update camera database");
         }
     }
 

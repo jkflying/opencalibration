@@ -3,6 +3,9 @@
 
 #include <gtest/gtest.h>
 
+#include <fstream>
+#include <sstream>
+
 using namespace opencalibration;
 
 class CameraDatabaseTest : public ::testing::Test
@@ -142,4 +145,92 @@ TEST_F(CameraDatabaseTest, apply_entry_scales_principal_point_for_different_reso
     // Principal point offset should be scaled by 0.5
     EXPECT_NEAR(model.principle_point.x(), 1341.0, 0.01);
     EXPECT_NEAR(model.principle_point.y(), 1009.0, 0.01);
+}
+
+TEST_F(CameraDatabaseTest, update_database_from_graph_creates_new_file)
+{
+    // GIVEN: a graph with one camera model
+    MeasurementGraph graph;
+    image img;
+    img.model = std::make_shared<CameraModel>();
+    img.model->id = 1;
+    img.model->pixels_cols = 4000;
+    img.model->pixels_rows = 3000;
+    img.model->principle_point = Eigen::Vector2d(2005.0, 1497.0);
+    img.model->radial_distortion = Eigen::Vector3d(-0.1, 0.02, -0.001);
+    img.model->tangential_distortion = Eigen::Vector2d(0.0005, -0.0003);
+    img.metadata.camera_info.make = "TestMake";
+    img.metadata.camera_info.model = "TestModel";
+    img.metadata.camera_info.lens_model = "TestLens";
+    graph.addNode(std::move(img));
+
+    std::string output_path = TEST_DATA_OUTPUT_DIR "test_update_db.json";
+
+    std::remove(output_path.c_str());
+
+    // WHEN: we call updateDatabaseFromGraph
+    bool result = updateDatabaseFromGraph(graph, output_path);
+
+    // THEN: it succeeds and the file contains our entry
+    ASSERT_TRUE(result);
+
+    std::ifstream file(output_path);
+    ASSERT_TRUE(file.is_open());
+    std::stringstream buf;
+    buf << file.rdbuf();
+    std::string json = buf.str();
+
+    EXPECT_NE(json.find("TestMake"), std::string::npos);
+    EXPECT_NE(json.find("TestModel"), std::string::npos);
+    EXPECT_NE(json.find("TestLens"), std::string::npos);
+    EXPECT_NE(json.find("-0.1"), std::string::npos);
+}
+
+TEST_F(CameraDatabaseTest, update_database_from_graph_merges_existing)
+{
+    // GIVEN: an existing database file with one entry
+    std::string output_path = TEST_DATA_OUTPUT_DIR "test_update_db_merge.json";
+    {
+        std::ofstream out(output_path);
+        out << R"({"version":1,"cameras":[{"make":"TestMake","model":"TestModel","lens_model":"TestLens",)"
+            << R"("sensor_width_px":4000,"sensor_height_px":3000,)"
+            << R"("radial_distortion":[-0.05,0.01,0.0],)"
+            << R"("tangential_distortion":[0.0,0.0],)"
+            << R"("principal_point_offset":[0.0,0.0],)"
+            << R"("notes":"original"}]})";
+    }
+
+    // AND: a graph with the same camera but updated parameters
+    MeasurementGraph graph;
+    image img;
+    img.model = std::make_shared<CameraModel>();
+    img.model->id = 1;
+    img.model->pixels_cols = 4000;
+    img.model->pixels_rows = 3000;
+    img.model->principle_point = Eigen::Vector2d(2005.0, 1497.0);
+    img.model->radial_distortion = Eigen::Vector3d(-0.2, 0.03, -0.002);
+    img.model->tangential_distortion = Eigen::Vector2d(0.001, -0.001);
+    img.metadata.camera_info.make = "TestMake";
+    img.metadata.camera_info.model = "TestModel";
+    img.metadata.camera_info.lens_model = "TestLens";
+    graph.addNode(std::move(img));
+
+    // WHEN: we call updateDatabaseFromGraph
+    bool result = updateDatabaseFromGraph(graph, output_path);
+
+    // THEN: it succeeds, has exactly one entry (merged, not duplicated), and notes are preserved
+    ASSERT_TRUE(result);
+
+    std::ifstream file(output_path);
+    ASSERT_TRUE(file.is_open());
+    std::stringstream buf;
+    buf << file.rdbuf();
+    std::string json = buf.str();
+
+    EXPECT_NE(json.find("-0.2"), std::string::npos);
+    EXPECT_NE(json.find("original"), std::string::npos);
+    // Not duplicated
+    size_t first = json.find("TestMake");
+    size_t second = json.find("TestMake", first + 1);
+    EXPECT_EQ(second, std::string::npos);
 }

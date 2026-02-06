@@ -2,6 +2,7 @@
 
 #include <opencalibration/types/camera_model.hpp>
 #include <opencalibration/types/image_metadata.hpp>
+#include <opencalibration/types/measurement_graph.hpp>
 
 #include <mutex>
 #include <optional>
@@ -29,6 +30,7 @@ class CameraDatabase
 {
   public:
     static CameraDatabase &instance();
+    static const std::string &defaultPath();
 
     bool load(const std::string &path);
     bool isLoaded() const;
@@ -47,5 +49,8 @@ class CameraDatabase
 
 void applyDatabaseEntry(const CameraDBEntry &entry, const image_metadata::camera_info_t &camera_info,
                         CameraModel &model);
+
+bool updateDatabaseFromGraph(const MeasurementGraph &graph, const std::string &database_path,
+                             const std::string &notes = "");
 
 } // namespace opencalibration

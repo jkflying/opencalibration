@@ -1,7 +1,6 @@
 {
   "version": 1,
-  "cameras": [
-    {
+  "cameras": [{
       "make": "Parrot",
       "model": "Anafi",
       "lens_model": "",
@@ -11,8 +10,7 @@
       "tangential_distortion": [0.01, -0.06],
       "principal_point_offset": [0.0, 0.0],
       "notes": "Parrot Anafi 21MP"
-    },
-    {
+    }, {
       "make": "DJI",
       "model": "FC6310",
       "lens_model": "",
@@ -22,8 +20,7 @@
       "tangential_distortion": [0.00002, -0.00005],
       "principal_point_offset": [10.0, 27.0],
       "notes": "DJI Phantom 4 Pro. From DJI EXIF DewarpData."
-    },
-    {
+    }, {
       "make": "DJI",
       "model": "FC6310R",
       "lens_model": "",
@@ -33,6 +30,14 @@
       "tangential_distortion": [0.00002, -0.00005],
       "principal_point_offset": [10.0, 27.0],
       "notes": "DJI Phantom 4 RTK. From DJI EXIF DewarpData: cx=10.1, cy=27.29, k1=-0.268652, k2=0.114663, k3=-0.035026"
-    }
-  ]
+    }, {
+      "make": "Canon",
+      "model": "Canon IXUS 220HS",
+      "lens_model": "",
+      "sensor_width_px": 4000,
+      "sensor_height_px": 3000,
+      "radial_distortion": [-0.0380133363442281, 0.019358057097521827, -0.005732714682379086],
+      "tangential_distortion": [-1.758920771711942e-7, 3.645456959733384e-8],
+      "principal_point_offset": [0.00030260690323302697, 0.0017960331460926682]
+    }]
 }
