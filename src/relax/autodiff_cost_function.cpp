@@ -104,4 +104,11 @@ ceres::CostFunction *newAutoDiffPointsDownwardsPrior(double weight)
     using CostFunction = ceres::AutoDiffCostFunction<Functor, Functor::NUM_RESIDUALS, Functor::NUM_PARAMETERS_1>;
     return new CostFunction(new Functor(weight));
 }
+
+ceres::CostFunction *newAutoDiffDistortionMonotonicityCost(double r_max, double weight)
+{
+    using Functor = DistortionMonotonicityCost;
+    using CostFunction = ceres::AutoDiffCostFunction<Functor, Functor::NUM_RESIDUALS, Functor::NUM_PARAMETERS_1>;
+    return new CostFunction(new Functor(r_max, weight));
+}
 } // namespace opencalibration

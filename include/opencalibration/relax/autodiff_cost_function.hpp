@@ -41,4 +41,6 @@ ceres::CostFunction *newAutoDiffDifferenceCost(double weight);
 
 ceres::CostFunction *newAutoDiffPointsDownwardsPrior(double weight);
 
+ceres::CostFunction *newAutoDiffDistortionMonotonicityCost(double r_max, double weight);
+
 } // namespace opencalibration

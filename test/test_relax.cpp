@@ -187,6 +187,66 @@ TEST_F(relax_group, downwards_prior_cost_function)
     EXPECT_NEAR(r, 0.3 * 1e-3, 1e-9);
 }
 
+TEST_F(relax_group, distortion_monotonicity_zero_distortion)
+{
+    // GIVEN: zero radial distortion
+    double radial[3] = {0, 0, 0};
+
+    // WHEN: we evaluate the monotonicity cost
+    DistortionMonotonicityCost cost(1.0, 1.0);
+    double residuals[10];
+    EXPECT_TRUE(cost(radial, residuals));
+
+    // THEN: all residuals should be zero (derivative is always 1 > 0)
+    for (int i = 0; i < 10; i++)
+        EXPECT_DOUBLE_EQ(residuals[i], 0.0) << "residual " << i;
+}
+
+TEST_F(relax_group, distortion_monotonicity_monotonic)
+{
+    // GIVEN: small positive k1 (monotonic for reasonable r)
+    double radial[3] = {0.01, 0, 0};
+
+    // WHEN: we evaluate the monotonicity cost
+    DistortionMonotonicityCost cost(1.0, 1.0);
+    double residuals[10];
+    EXPECT_TRUE(cost(radial, residuals));
+
+    // THEN: all residuals should be zero (derivative = 1 + 3*0.01*r² > 0 for r in [0,1])
+    for (int i = 0; i < 10; i++)
+        EXPECT_DOUBLE_EQ(residuals[i], 0.0) << "residual " << i;
+}
+
+TEST_F(relax_group, distortion_monotonicity_nonmonotonic)
+{
+    // GIVEN: strongly negative k1 making distortion non-monotonic
+    double radial[3] = {-5.0, 0, 0};
+
+    // WHEN: we evaluate the monotonicity cost
+    DistortionMonotonicityCost cost(1.0, 1.0);
+    double residuals[10];
+    EXPECT_TRUE(cost(radial, residuals));
+
+    // THEN: some residuals should be positive (derivative = 1 + 3*(-5)*r² goes negative for r > sqrt(1/15) ≈ 0.258)
+    bool any_positive = false;
+    for (int i = 0; i < 10; i++)
+    {
+        EXPECT_GE(residuals[i], 0.0) << "residual " << i;
+        if (residuals[i] > 0.0)
+            any_positive = true;
+    }
+    EXPECT_TRUE(any_positive);
+
+    // AND: weight scaling should produce proportionally larger residuals
+    DistortionMonotonicityCost cost2(1.0, 3.0);
+    double residuals2[10];
+    EXPECT_TRUE(cost2(radial, residuals2));
+    for (int i = 0; i < 10; i++)
+    {
+        EXPECT_NEAR(residuals2[i], residuals[i] * 3.0, 1e-12) << "residual " << i;
+    }
+}
+
 TEST_F(relax_group, rel_rot_cost_function)
 {
     // GIVEN: two cameras

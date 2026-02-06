@@ -86,6 +86,9 @@ class RelaxProblem
     void addDownwardsPrior();
     void addMeshFlatPrior();
 
+    void trackRadialObservation(double *radial_data, size_t pixels_rows, size_t pixels_cols, double focal_length);
+    void addMonotonicityCosts();
+
     ceres::Solver::Options _solver_options;
     ceres::LossFunctionWrapper _loss;
 
@@ -107,6 +110,14 @@ class RelaxProblem
     std::unordered_map<size_t, CameraModel *> _cam_models_to_optimize;
     std::unordered_map<size_t, InverseDifferentiableCameraModel<double>> _inverse_cam_model_to_optimize;
     std::unordered_set<size_t> _edges_used;
+
+    // Radial distortion monotonicity tracking
+    struct MonotonicityInfo
+    {
+        size_t observation_count = 0;
+        double r_max = 0;
+    };
+    std::unordered_map<double *, MonotonicityInfo> _radial_monotonicity_info;
 
     // Surface models
     using track_vec = std::vector<FeatureTrack, Eigen::aligned_allocator<FeatureTrack>>;

@@ -68,6 +68,36 @@ struct DifferenceCost
     const double _weight;
 };
 
+struct DistortionMonotonicityCost
+{
+    static const int NUM_RESIDUALS = 10;
+    static const int NUM_PARAMETERS_1 = 3; // k1, k2, k3
+
+    DistortionMonotonicityCost(double r_max, double weight) : _r_max(r_max), _weight(weight)
+    {
+    }
+
+    template <typename T> bool operator()(const T *radial, T *residuals) const
+    {
+        // d(r_d)/dr = 1 + 3*k1*r² + 5*k2*r⁴ + 7*k3*r⁶
+        // Penalize when this derivative goes negative (non-monotonic)
+        for (int i = 0; i < NUM_RESIDUALS; i++)
+        {
+            T r = T(_r_max * (i + 1.0) / NUM_RESIDUALS);
+            T r2 = r * r;
+            T r4 = r2 * r2;
+            T r6 = r4 * r2;
+            T deriv = T(1) + T(3) * radial[0] * r2 + T(5) * radial[1] * r4 + T(7) * radial[2] * r6;
+            residuals[i] = deriv < T(0) ? T(_weight) * (-deriv) : T(0);
+        }
+        return true;
+    }
+
+  private:
+    double _r_max;
+    double _weight;
+};
+
 // cost functions for rotations relative to positions
 struct DecomposedRotationCost
 {

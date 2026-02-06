@@ -97,6 +97,7 @@ void RelaxProblem::setupGroundMeshProblem(const MeasurementGraph &graph, std::ve
     }
 
     addMeshFlatPrior();
+    addMonotonicityCosts();
 }
 
 void RelaxProblem::setup3dPointProblem(const MeasurementGraph &graph, std::vector<opencalibration::NodePose> &nodes,
@@ -117,6 +118,8 @@ void RelaxProblem::setup3dPointProblem(const MeasurementGraph &graph, std::vecto
             addPointMeasurementsCost(graph, edge_id, *edge, options);
         }
     }
+
+    addMonotonicityCosts();
 
     _solver_options.max_num_iterations = 1000;
     _solver_options.linear_solver_type = ceres::SPARSE_SCHUR;
@@ -404,6 +407,8 @@ void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, 
             {
                 _problem->SetParameterBlockConstant(inverse_iter->second.principle_point.data());
             }
+            trackRadialObservation(inverse_iter->second.radial_distortion.data(), source_model.pixels_rows,
+                                   source_model.pixels_cols, inverse_iter->second.focal_length_pixels);
             points_added = true;
         }
         else
@@ -642,6 +647,15 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
             func[i].release();
         }
 
+        if (options.hasAny({Option::LENS_DISTORTIONS_RADIAL}))
+        {
+            for (int i = 0; i < 2; i++)
+            {
+                const auto &m = (i == 0) ? source_model : dest_model;
+                trackRadialObservation(radials[i], m.pixels_rows, m.pixels_cols, m.focal_length_pixels);
+            }
+        }
+
         points_added = true;
     }
 
@@ -850,6 +864,28 @@ void RelaxProblem::addMeshFlatPrior()
         double *h = &iter->second.payload.location.z();
         _problem->AddResidualBlock(newAutoDiffDifferenceCost(1e-5), nullptr, h, &_mesh_initial_z[i]);
         _problem->SetParameterBlockConstant(&_mesh_initial_z[i]);
+    }
+}
+
+void RelaxProblem::trackRadialObservation(double *radial_data, size_t pixels_rows, size_t pixels_cols,
+                                          double focal_length)
+{
+    auto &info = _radial_monotonicity_info[radial_data];
+    info.observation_count++;
+    if (info.observation_count == 1)
+    {
+        double half_cols = pixels_cols / 2.0;
+        double half_rows = pixels_rows / 2.0;
+        info.r_max = std::sqrt(half_cols * half_cols + half_rows * half_rows) / focal_length;
+    }
+}
+
+void RelaxProblem::addMonotonicityCosts()
+{
+    for (auto &[radial_data, info] : _radial_monotonicity_info)
+    {
+        double weight = std::sqrt(info.observation_count / 10.0);
+        _problem->AddResidualBlock(newAutoDiffDistortionMonotonicityCost(info.r_max, weight), nullptr, radial_data);
     }
 }
 
