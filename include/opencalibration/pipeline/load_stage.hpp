@@ -17,7 +17,7 @@ class LoadStage
     void init(const MeasurementGraph &graph, const std::vector<std::string> &paths_to_load);
     std::vector<std::function<void()>> get_runners();
     std::vector<size_t> finalize(GeoCoord &coordinate_system, MeasurementGraph &graph,
-                                 jk::tree::KDTree<size_t, 3> &imageGPSLocations);
+                                 jk::tree::KDTree<size_t, 2> &imageGPSLocations);
 
   private:
     std::mutex _images_mutex;

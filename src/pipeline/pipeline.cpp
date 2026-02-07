@@ -556,13 +556,12 @@ PipelineState Pipeline::fromString(const std::string &str)
 
 void Pipeline::rebuildGPSLocationsTree()
 {
-    _imageGPSLocations = jk::tree::KDTree<size_t, 3>();
+    _imageGPSLocations = jk::tree::KDTree<size_t, 2>();
 
     for (auto it = _graph.cnodebegin(); it != _graph.cnodeend(); ++it)
     {
         const auto &node = it->second;
-        std::array<double, 3> gps_pos = {node.payload.position.x(), node.payload.position.y(),
-                                         node.payload.position.z()};
+        std::array<double, 2> gps_pos = {node.payload.position.x(), node.payload.position.y()};
         _imageGPSLocations.addPoint(gps_pos, it->first);
     }
 }

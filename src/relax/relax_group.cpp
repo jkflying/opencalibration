@@ -10,19 +10,11 @@
 
 #include <unordered_set>
 
-namespace
-{
-std::array<double, 3> to_array(const Eigen::Vector3d &v)
-{
-    return {v.x(), v.y(), v.z()};
-}
-} // namespace
-
 namespace opencalibration
 {
 
 void RelaxGroup::init(const MeasurementGraph &graph, const std::vector<size_t> &node_ids,
-                      const jk::tree::KDTree<size_t, 3> &imageGPSLocations, size_t graph_connection_depth,
+                      const jk::tree::KDTree<size_t, 2> &imageGPSLocations, size_t graph_connection_depth,
                       const RelaxOptionSet &relax_options)
 {
     _directly_connected.clear();
@@ -85,11 +77,11 @@ void RelaxGroup::init(const MeasurementGraph &graph, const std::vector<size_t> &
 }
 
 void RelaxGroup::build_optimization_edges(const MeasurementGraph &graph,
-                                          const jk::tree::KDTree<size_t, 3> &imageGPSLocations, size_t node_id)
+                                          const jk::tree::KDTree<size_t, 2> &imageGPSLocations, size_t node_id)
 {
 
     const auto *node = graph.getNode(node_id);
-    auto knn = imageGPSLocations.searchKnn(to_array(node->payload.position), 10);
+    auto knn = imageGPSLocations.searchKnn({node->payload.position.x(), node->payload.position.y()}, 10);
     std::unordered_set<size_t> ideally_connected_nodes(knn.size());
     for (const auto &edge : knn)
     {

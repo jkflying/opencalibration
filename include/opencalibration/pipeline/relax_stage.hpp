@@ -22,7 +22,7 @@ class RelaxStage
     RelaxStage();
     ~RelaxStage();
     void init(const MeasurementGraph &graph, const std::vector<size_t> &node_ids,
-              const jk::tree::KDTree<size_t, 3> &imageGPSLocations, bool relax_all, bool disable_parallelism,
+              const jk::tree::KDTree<size_t, 2> &imageGPSLocations, bool relax_all, bool disable_parallelism,
               const RelaxOptionSet &options);
 
     void trim_groups(size_t max_size);

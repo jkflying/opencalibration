@@ -77,11 +77,6 @@ std::vector<std::pair<int, int>> hilbertTileOrder(int num_tiles_x, int num_tiles
     return result;
 }
 
-std::array<double, 3> to_array(const Eigen::Vector3d &v)
-{
-    return {v.x(), v.y(), v.z()};
-}
-
 Eigen::Vector2i size(const opencalibration::GenericRaster &raster)
 {
     const auto getSize = [](const auto &rasterInstance) -> Eigen::Vector2i {
@@ -373,7 +368,7 @@ OrthoMosaicContext prepareOrthoMosaicContext(const std::vector<surface_model> &s
     for (size_t node_id : context.involved_nodes)
     {
         const auto *node = graph.getNode(node_id);
-        context.imageGPSLocations.addPoint(to_array(node->payload.position), node_id, false);
+        context.imageGPSLocations.addPoint({node->payload.position.x(), node->payload.position.y()}, node_id, false);
         context.mean_camera_z = (context.mean_camera_z * count + node->payload.position.z()) / (count + 1);
         count++;
     }
@@ -553,7 +548,7 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
                 color.fill(0);
                 uint32_t pixelSource = std::numeric_limits<uint32_t>::max();
 
-                auto closest5 = context.imageGPSLocations.searchKnn({x, y, context.average_camera_elevation}, 5);
+                auto closest5 = context.imageGPSLocations.searchKnn({x, y}, 5);
 
                 // get image vertically closest
                 for (const auto &closest : closest5)
@@ -701,8 +696,8 @@ void writeTileToGeoTIFF(GDALDataset *dataset, int x_offset, int y_offset, int wi
 
 void processTile(GDALDataset *dataset, int tile_x, int tile_y, int tile_size, const OrthoMosaicBounds &bounds,
                  double gsd, int output_width, int output_height, const std::vector<surface_model> &surfaces,
-                 const MeasurementGraph &graph, const jk::tree::KDTree<size_t, 3> &imageGPSLocations,
-                 double average_camera_elevation, double mean_camera_z,
+                 const MeasurementGraph &graph, const jk::tree::KDTree<size_t, 2> &imageGPSLocations,
+                 double mean_camera_z,
                  const std::unordered_map<size_t, Eigen::Matrix3d> &inv_rotation_cache,
                  FullResolutionImageCache &image_cache)
 {
@@ -774,7 +769,7 @@ void processTile(GDALDataset *dataset, int tile_x, int tile_y, int tile_size, co
 
                 Eigen::Vector3d sample_point(x, y, z);
 
-                auto closest5 = imageGPSLocations.searchKnn({x, y, average_camera_elevation}, 5);
+                auto closest5 = imageGPSLocations.searchKnn({x, y}, 5);
 
                 bool found_color = false;
                 for (const auto &closest : closest5)
@@ -1087,7 +1082,7 @@ void generateGeoTIFFOrthomosaic(const std::vector<surface_model> &surfaces, cons
         for (int tile_x = 0; tile_x < num_tiles_x; tile_x++)
         {
             processTile(dataset.get(), tile_x, tile_y, tile_size, context.bounds, context.gsd, width, height, surfaces,
-                        graph, context.imageGPSLocations, context.average_camera_elevation, context.mean_camera_z,
+                        graph, context.imageGPSLocations, context.mean_camera_z,
                         inv_rotation_cache, image_cache);
 
             completed_tiles++;
@@ -1170,8 +1165,7 @@ GDALDatasetPtr createMultiBandGeoTIFF(const std::string &path, int width, int he
 std::unordered_set<size_t> findTileCameras(int tile_x, int tile_y, int tile_size,
                                            const opencalibration::orthomosaic::OrthoMosaicBounds &bounds, double gsd,
                                            int output_width, int output_height,
-                                           const jk::tree::KDTree<size_t, 3> &imageGPSLocations,
-                                           double average_camera_elevation)
+                                           const jk::tree::KDTree<size_t, 2> &imageGPSLocations)
 {
     int x_offset = tile_x * tile_size;
     int y_offset = tile_y * tile_size;
@@ -1179,7 +1173,7 @@ std::unordered_set<size_t> findTileCameras(int tile_x, int tile_y, int tile_size
     int tile_height = std::min(tile_size, output_height - y_offset);
 
     std::unordered_set<size_t> camera_ids;
-    jk::tree::KDTree<size_t, 3>::Searcher searcher(imageGPSLocations);
+    jk::tree::KDTree<size_t, 2>::Searcher searcher(imageGPSLocations);
 
     int N = 10;
     for (int sy = 0; sy < N; sy++)
@@ -1197,7 +1191,7 @@ std::unordered_set<size_t> findTileCameras(int tile_x, int tile_y, int tile_size
             double x = global_col * gsd + bounds.min_x;
             double y = bounds.max_y - global_row * gsd;
 
-            const auto& closest5 = searcher.search({x, y, average_camera_elevation},INFINITY, 5);
+            const auto& closest5 = searcher.search({x, y}, INFINITY, 5);
             for (const auto &closest : closest5)
             {
                 camera_ids.insert(closest.payload);
@@ -1347,8 +1341,8 @@ void readLayeredTileFromGeoTIFF(GDALDataset *layers_ds, GDALDataset *cameras_ds,
 
 void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaicBounds &bounds, double gsd,
                         int output_width, int output_height, const std::vector<surface_model> &surfaces,
-                        const MeasurementGraph &graph, const jk::tree::KDTree<size_t, 3> &imageGPSLocations,
-                        double average_camera_elevation, double mean_camera_z,
+                        const MeasurementGraph &graph, const jk::tree::KDTree<size_t, 2> &imageGPSLocations,
+                        double mean_camera_z,
                         const std::unordered_map<size_t, Eigen::Matrix3d> &inv_rotation_cache,
                         FullResolutionImageCache &image_cache, int num_layers, LayeredTileBuffer &tile_out,
                         std::vector<ColorCorrespondence> &correspondences_out, int correspondence_subsample,
@@ -1376,7 +1370,7 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
                 mesh_searchers.pop_back();
             }
         }
-        jk::tree::KDTree<size_t, 3>::Searcher tree_searcher(imageGPSLocations);
+        jk::tree::KDTree<size_t, 2>::Searcher tree_searcher(imageGPSLocations);
         ThreadLocalImageCache local_image_cache;
 
         std::vector<ColorCorrespondence> local_correspondences;
@@ -1413,7 +1407,7 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
                     continue;
 
                 Eigen::Vector3d sample_point(x, y, z);
-                const auto & closest5 = tree_searcher.search({x, y, average_camera_elevation}, INFINITY, 5);
+                const auto & closest5 = tree_searcher.search({x, y}, INFINITY, 5);
 
                 int layer_idx = 0;
                 for (const auto &closest : closest5)
@@ -1621,7 +1615,7 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
     {
         auto first_cams =
             findTileCameras(tile_order[0].first, tile_order[0].second, tile_size, context.bounds, context.gsd, width,
-                            height, context.imageGPSLocations, context.average_camera_elevation);
+                            height, context.imageGPSLocations);
         prefetchImages(first_cams, graph, image_cache);
     }
 
@@ -1641,14 +1635,14 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
             const auto &[next_tx, next_ty] = tile_order[i + 1];
             prefetch_future = std::async(std::launch::async, [&, next_tx, next_ty] {
                 auto cams = findTileCameras(next_tx, next_ty, tile_size, context.bounds, context.gsd, width, height,
-                                            context.imageGPSLocations, context.average_camera_elevation);
+                                            context.imageGPSLocations);
                 prefetchImages(cams, graph, image_cache);
             });
         }
 
         LayeredTileBuffer tile_buf;
         processLayeredTile(tile_x, tile_y, tile_size, context.bounds, context.gsd, width, height, surfaces, graph,
-                           context.imageGPSLocations, context.average_camera_elevation, context.mean_camera_z,
+                           context.imageGPSLocations, context.mean_camera_z,
                            inv_rotation_cache, image_cache, config.num_layers, tile_buf, all_correspondences,
                            config.correspondence_subsample, correspondences_mutex);
 

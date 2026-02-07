@@ -205,7 +205,7 @@ TEST_F(ortho, prepare_context)
     EXPECT_GT(context.gsd, 0);
 
     // AND: it should have built KDTree
-    auto nearest = context.imageGPSLocations.searchKnn({10, 10, 9}, 1);
+    auto nearest = context.imageGPSLocations.searchKnn({10, 10}, 1);
     EXPECT_EQ(nearest.size(), 1);
 
     // AND: it should have calculated mean camera z

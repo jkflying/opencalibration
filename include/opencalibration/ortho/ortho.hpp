@@ -68,7 +68,7 @@ struct OrthoMosaicContext
     OrthoMosaicBounds bounds;
     double gsd;
     std::unordered_set<size_t> involved_nodes;
-    jk::tree::KDTree<size_t, 3> imageGPSLocations;
+    jk::tree::KDTree<size_t, 2> imageGPSLocations;
     double mean_camera_z;
     double average_camera_elevation;
     RayTraceContext rayTraceContext;

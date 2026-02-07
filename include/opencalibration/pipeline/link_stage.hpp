@@ -22,7 +22,7 @@ class LinkStage
     };
 
   public:
-    void init(const MeasurementGraph &graph, const jk::tree::KDTree<size_t, 3> &imageGPSLocations,
+    void init(const MeasurementGraph &graph, const jk::tree::KDTree<size_t, 2> &imageGPSLocations,
               const std::vector<size_t> &node_ids);
 
     std::vector<std::function<void()>> get_runners(const MeasurementGraph &graph);

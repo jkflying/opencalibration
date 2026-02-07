@@ -692,7 +692,7 @@ struct incremental_relax : public ::testing::Test
     std::shared_ptr<CameraModel> model;
     std::vector<Eigen::Quaterniond> ground_ori;
     std::vector<Eigen::Vector3d> ground_pos;
-    jk::tree::KDTree<size_t, 3> imageGPSLocations;
+    jk::tree::KDTree<size_t, 2> imageGPSLocations;
 
     void init_cameras()
     {
@@ -730,7 +730,7 @@ struct incremental_relax : public ::testing::Test
             camera_ids[i] = graph.addNode(std::move(img));
 
             // Add to KD-tree for neighbor lookups
-            imageGPSLocations.addPoint({ground_pos[i].x(), ground_pos[i].y(), ground_pos[i].z()}, camera_ids[i]);
+            imageGPSLocations.addPoint({ground_pos[i].x(), ground_pos[i].y()}, camera_ids[i]);
         }
     }
 

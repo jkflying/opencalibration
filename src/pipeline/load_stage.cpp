@@ -5,14 +5,6 @@
 
 #include <spdlog/spdlog.h>
 
-namespace
-{
-std::array<double, 3> to_array(const Eigen::Vector3d &v)
-{
-    return {v.x(), v.y(), v.z()};
-}
-} // namespace
-
 namespace opencalibration
 {
 
@@ -61,7 +53,7 @@ std::vector<std::function<void()>> LoadStage::get_runners()
 }
 
 std::vector<size_t> LoadStage::finalize(GeoCoord &coordinate_system, MeasurementGraph &graph,
-                                        jk::tree::KDTree<size_t, 3> &imageGPSLocations)
+                                        jk::tree::KDTree<size_t, 2> &imageGPSLocations)
 {
     PerformanceMeasure p("Load finalize");
     // put the images back in order after the parallel processing
@@ -108,7 +100,7 @@ std::vector<size_t> LoadStage::finalize(GeoCoord &coordinate_system, Measurement
             coordinate_system.toLocalCS(img.metadata.capture_info.latitude, img.metadata.capture_info.longitude,
                                         img.metadata.capture_info.altitude);
         size_t node_id = graph.addNode(std::move(img));
-        imageGPSLocations.addPoint(to_array(local_pos), node_id);
+        imageGPSLocations.addPoint({local_pos.x(), local_pos.y()}, node_id);
         node_ids.push_back(node_id);
     }
 

@@ -7,19 +7,10 @@
 
 #include <spdlog/spdlog.h>
 
-namespace
-{
-
-std::array<double, 3> to_array(const Eigen::Vector3d &v)
-{
-    return {v.x(), v.y(), v.z()};
-}
-} // namespace
-
 namespace opencalibration
 {
 
-void LinkStage::init(const MeasurementGraph &graph, const jk::tree::KDTree<size_t, 3> &imageGPSLocations,
+void LinkStage::init(const MeasurementGraph &graph, const jk::tree::KDTree<size_t, 2> &imageGPSLocations,
                      const std::vector<size_t> &node_ids)
 {
     PerformanceMeasure p("Link init");
@@ -32,7 +23,7 @@ void LinkStage::init(const MeasurementGraph &graph, const jk::tree::KDTree<size_
     {
         const auto &img = graph.getNode(node_id)->payload;
 
-        auto knn = imageGPSLocations.searchKnn(to_array(img.position), 10);
+        auto knn = imageGPSLocations.searchKnn({img.position.x(), img.position.y()}, 10);
         NodeLinks link;
         link.node_id = node_id;
         link.link_ids.reserve(knn.size());

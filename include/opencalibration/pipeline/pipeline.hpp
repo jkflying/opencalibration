@@ -157,7 +157,7 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
 
     MeasurementGraph _graph;
     std::vector<surface_model> _surfaces;
-    jk::tree::KDTree<size_t, 3> _imageGPSLocations;
+    jk::tree::KDTree<size_t, 2> _imageGPSLocations;
     GeoCoord _coordinate_system;
 
     StepCompletionCallback _step_callback;
