@@ -1377,6 +1377,7 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
             }
         }
         jk::tree::KDTree<size_t, 3>::Searcher tree_searcher(imageGPSLocations);
+        ThreadLocalImageCache local_image_cache;
 
         std::vector<ColorCorrespondence> local_correspondences;
 
@@ -1434,7 +1435,20 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
                         pixel.y() >= payload.model->pixels_rows)
                         continue;
 
-                    cv::Mat full_image = image_cache.getImage(closest.payload, payload.path);
+                    cv::Mat full_image;
+                    cv::Mat *cached = local_image_cache.get(closest.payload);
+                    if (cached)
+                    {
+                        full_image = *cached;
+                    }
+                    else
+                    {
+                        full_image = image_cache.getImage(closest.payload, payload.path);
+                        if (!full_image.empty())
+                        {
+                            local_image_cache.put(closest.payload, full_image);
+                        }
+                    }
                     if (full_image.empty())
                         continue;
 

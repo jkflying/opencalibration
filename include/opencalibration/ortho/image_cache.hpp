@@ -12,6 +12,41 @@ namespace opencalibration
 namespace orthomosaic
 {
 
+// Simple per-thread cache for fast image lookups within a tile
+class ThreadLocalImageCache
+{
+  private:
+    std::unordered_map<size_t, cv::Mat> cache_;
+
+  public:
+    ThreadLocalImageCache() = default;
+
+    // Try to get image from cache, returns nullptr if not found
+    cv::Mat *get(size_t node_id)
+    {
+        auto it = cache_.find(node_id);
+        if (it != cache_.end())
+        {
+            return &it->second;
+        }
+        return nullptr;
+    }
+
+    // Store image in cache
+    void put(size_t node_id, const cv::Mat &image)
+    {
+        cache_[node_id] = image;
+    }
+
+    // Clear cache (called automatically on destruction)
+    void clear()
+    {
+        cache_.clear();
+    }
+
+    ~ThreadLocalImageCache() = default;
+};
+
 class FullResolutionImageCache
 {
   private:
