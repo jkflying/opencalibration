@@ -155,6 +155,11 @@ Pipeline::Transition Pipeline::initial_processing()
         _next_loaded_ids = _load_stage->finalize(_coordinate_system, _graph, _imageGPSLocations);
         _next_linked_ids = _link_stage->finalize(_graph);
         _next_relaxed_ids = _relax_stage->finalize(_graph);
+
+        for (const auto &s : _relax_stage->getSurfaceModels())
+        {
+            _surfaces.push_back(s);
+        }
     }
 
     USM_DECISION_TABLE(
