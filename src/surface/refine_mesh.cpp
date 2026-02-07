@@ -3,6 +3,7 @@
 #include <jk/KDTree.h>
 #include <spdlog/spdlog.h>
 
+#include <omp.h>
 #include <queue>
 #include <unordered_map>
 #include <unordered_set>
@@ -881,6 +882,10 @@ surface_model mergeSurfaceModels(const std::vector<surface_model> &surfaces)
         vertexWeights[it->first] = {Eigen::Vector3d::Zero(), 0.0};
     }
 
+    std::vector<std::unordered_map<size_t, std::pair<Eigen::Vector3d, double>>> threadLocalWeights(
+        surfaces.size());
+
+#pragma omp parallel for schedule(dynamic)
     for (size_t surfIdx = 0; surfIdx < surfaces.size(); surfIdx++)
     {
         const auto &surf = surfaces[surfIdx];
@@ -911,25 +916,34 @@ surface_model mergeSurfaceModels(const std::vector<surface_model> &surfaces)
             }
         }
 
-        // Now weight each vertex position by its point count
-        for (auto nodeIt = surf.mesh.cnodebegin(); nodeIt != surf.mesh.cnodeend(); ++nodeIt)
+        auto &threadLocal = threadLocalWeights[surfIdx];
+        for (const auto &[nodeId, pointCount] : vertexPointCounts)
         {
-            size_t nodeId = nodeIt->first;
-            const Eigen::Vector3d &pos = nodeIt->second.payload.location;
+            auto nodePtr = surf.mesh.getNode(nodeId);
+            if (!nodePtr)
+                continue;
 
-            double weight = static_cast<double>(vertexPointCounts[nodeId]);
-            if (weight > 0)
-            {
-                auto &[sumPos, sumWeight] = vertexWeights[nodeId];
-                sumPos += pos * weight;
-                sumWeight += weight;
-            }
+            const Eigen::Vector3d &pos = nodePtr->payload.location;
+            double weight = static_cast<double>(pointCount);
+            threadLocal[nodeId] = {pos * weight, weight};
         }
 
-        // Merge point clouds
-        for (const auto &cloud : surf.cloud)
+#pragma omp critical(merge_clouds)
         {
-            result.cloud.push_back(cloud);
+            for (const auto &cloud : surf.cloud)
+            {
+                result.cloud.push_back(cloud);
+            }
+        }
+    }
+
+    for (size_t surfIdx = 0; surfIdx < surfaces.size(); surfIdx++)
+    {
+        for (const auto &[nodeId, weightPair] : threadLocalWeights[surfIdx])
+        {
+            auto &[sumPos, sumWeight] = vertexWeights[nodeId];
+            sumPos += weightPair.first;
+            sumWeight += weightPair.second;
         }
     }
 
