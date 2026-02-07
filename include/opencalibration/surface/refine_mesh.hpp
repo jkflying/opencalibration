@@ -5,6 +5,8 @@
 #include <opencalibration/types/point_cloud.hpp>
 #include <opencalibration/types/surface_model.hpp>
 
+#include <jk/KDTree.h>
+
 #include <functional>
 #include <vector>
 
@@ -74,6 +76,26 @@ size_t findLongestEdge(const MeshGraph &mesh, const TriangleId &tri);
  * @return TriangleId if found, or TriangleId with edgeId=0 if not found
  */
 TriangleId findTriangleContainingPoint(const MeshGraph &mesh, double x, double y);
+
+/**
+ * @brief Spatial index for fast point-in-triangle queries
+ *
+ * Builds a KDTree of triangle centroids at construction time. For each query,
+ * finds the nearest centroid and walks the mesh adjacency to locate the
+ * actual containing triangle. Lookup is O(log T) + O(small walk) instead of O(T).
+ *
+ * The mesh reference must remain valid for the lifetime of this object.
+ */
+class TriangleLocator
+{
+  public:
+    explicit TriangleLocator(const MeshGraph &mesh);
+    TriangleId find(double x, double y) const;
+
+  private:
+    jk::tree::KDTree<TriangleId, 2> _centroidTree;
+    const MeshGraph &_mesh;
+};
 
 /**
  * @brief Bisect a single edge, splitting the triangles on both sides

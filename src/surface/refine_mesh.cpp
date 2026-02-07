@@ -1,5 +1,6 @@
 #include <opencalibration/surface/refine_mesh.hpp>
 
+#include <jk/KDTree.h>
 #include <spdlog/spdlog.h>
 
 #include <queue>
@@ -575,6 +576,143 @@ size_t refineWhere(MeshGraph &mesh, std::function<bool(double x, double y, doubl
     return totalCreated;
 }
 
+TriangleLocator::TriangleLocator(const MeshGraph &m) : _mesh(m)
+{
+    for (auto it = _mesh.cedgebegin(); it != _mesh.cedgeend(); ++it)
+    {
+        size_t edgeId = it->first;
+        const auto &edge = it->second;
+
+        for (int side = 0; side < 2; side++)
+        {
+            if (side == 1 && edge.payload.border)
+                continue;
+
+            TriangleId tri{edgeId, side};
+            auto verts = getTriangleVertices(_mesh, tri);
+            if (verts[0] == 0 && verts[1] == 0 && verts[2] == 0)
+                continue;
+
+            const auto *n0 = _mesh.getNode(verts[0]);
+            const auto *n1 = _mesh.getNode(verts[1]);
+            const auto *n2 = _mesh.getNode(verts[2]);
+            if (!n0 || !n1 || !n2)
+                continue;
+
+            double cx = (n0->payload.location.x() + n1->payload.location.x() + n2->payload.location.x()) / 3.0;
+            double cy = (n0->payload.location.y() + n1->payload.location.y() + n2->payload.location.y()) / 3.0;
+
+            _centroidTree.addPoint({cx, cy}, tri, false);
+        }
+    }
+    _centroidTree.splitOutstanding();
+}
+
+TriangleId TriangleLocator::find(double x, double y) const
+{
+    if (_centroidTree.size() == 0)
+        return {0, 0};
+
+    auto nearest = _centroidTree.search({x, y});
+    TriangleId current = nearest.payload;
+
+    for (int step = 0; step < 100; step++)
+    {
+        auto verts = getTriangleVertices(_mesh, current);
+        if (verts[0] == 0 && verts[1] == 0 && verts[2] == 0)
+            break;
+
+        const auto *n0 = _mesh.getNode(verts[0]);
+        const auto *n1 = _mesh.getNode(verts[1]);
+        const auto *n2 = _mesh.getNode(verts[2]);
+        if (!n0 || !n1 || !n2)
+            break;
+
+        const auto &p0 = n0->payload.location;
+        const auto &p1 = n1->payload.location;
+        const auto &p2 = n2->payload.location;
+
+        // Half-plane sign tests
+        auto sign = [](double px, double py, double ax, double ay, double bx, double by) {
+            return (px - bx) * (ay - by) - (ax - bx) * (py - by);
+        };
+
+        double d0 = sign(x, y, p0.x(), p0.y(), p1.x(), p1.y()); // edge v0-v1
+        double d1 = sign(x, y, p1.x(), p1.y(), p2.x(), p2.y()); // edge v1-v2
+        double d2 = sign(x, y, p2.x(), p2.y(), p0.x(), p0.y()); // edge v2-v0
+
+        bool hasNeg = (d0 < 0) || (d1 < 0) || (d2 < 0);
+        bool hasPos = (d0 > 0) || (d1 > 0) || (d2 > 0);
+
+        if (!(hasNeg && hasPos))
+            return current; // Point is inside this triangle
+
+        // Determine expected sign (majority vote) and pick the most-violated edge
+        int negCount = (d0 < 0) + (d1 < 0) + (d2 < 0);
+        bool expectPositive = negCount < 2;
+
+        double worstVal = 0;
+        int worstEdge = -1;
+
+        auto checkEdge = [&](int edgeIdx, double d) {
+            if ((d > 0) != expectPositive && std::abs(d) > worstVal)
+            {
+                worstVal = std::abs(d);
+                worstEdge = edgeIdx;
+            }
+        };
+        checkEdge(0, d0);
+        checkEdge(1, d1);
+        checkEdge(2, d2);
+
+        if (worstEdge < 0)
+            break;
+
+        // Cross the worst edge to the neighboring triangle
+        // Edge 0: verts[0]-verts[1] = the defining edge of current TriangleId
+        // Edge 1: verts[1]-verts[2]
+        // Edge 2: verts[2]-verts[0]
+        TriangleId neighbor{0, 0};
+
+        if (worstEdge == 0)
+        {
+            // Cross the defining edge to the other side
+            const auto *edge = _mesh.getEdge(current.edgeId);
+            if (edge && !edge->payload.border)
+            {
+                neighbor = {current.edgeId, 1 - current.side};
+            }
+        }
+        else
+        {
+            size_t va = verts[worstEdge];
+            size_t vb = verts[(worstEdge + 1) % 3];
+            size_t crossEdgeId = findEdgeBetween(_mesh, va, vb);
+            if (crossEdgeId != 0)
+            {
+                const auto *crossEdge = _mesh.getEdge(crossEdgeId);
+                if (crossEdge && !crossEdge->payload.border)
+                {
+                    size_t oppositeVertex = verts[(worstEdge + 2) % 3];
+                    int currentSide = findTriangleSide(_mesh, crossEdgeId, oppositeVertex);
+                    if (currentSide >= 0)
+                    {
+                        neighbor = {crossEdgeId, 1 - currentSide};
+                    }
+                }
+            }
+        }
+
+        if (neighbor.edgeId == 0)
+            break; // Hit border or invalid edge
+
+        current = neighbor;
+    }
+
+    // Fallback: brute force search (should rarely be needed)
+    return findTriangleContainingPoint(_mesh, x, y);
+}
+
 std::unordered_map<TriangleId, TrianglePointStats, TriangleIdHash> countPointsPerTriangle(
     const MeshGraph &mesh, const std::vector<point_cloud> &points)
 {
@@ -596,11 +734,13 @@ std::unordered_map<TriangleId, TrianglePointStats, TriangleIdHash> countPointsPe
 
     spdlog::debug("countPointsPerTriangle: mesh has {} nodes, {} edges", mesh.size_nodes(), mesh.size_edges());
 
+    TriangleLocator locator(mesh);
+
     for (const auto &cloud : points)
     {
         for (const auto &p : cloud)
         {
-            TriangleId tri = findTriangleContainingPoint(mesh, p.x(), p.y());
+            TriangleId tri = locator.find(p.x(), p.y());
             if (tri.edgeId == 0)
                 continue;
 

@@ -909,14 +909,16 @@ TEST(refine_mesh, refine_by_point_density)
     MeshGraph mesh = buildMinimalMesh(cameras, {});
     ASSERT_EQ(mesh.size_nodes(), 4);
 
-    // Create many points in the mesh to trigger refinement
+    // Create many points in the mesh to trigger refinement.
+    // Points need varying z to produce non-zero distance variance.
     std::vector<point_cloud> clouds;
     point_cloud testPoints;
     for (double x = 1; x < 10; x += 0.5)
     {
         for (double y = 1; y < 10; y += 0.5)
         {
-            testPoints.push_back(Eigen::Vector3d(x, y, 0));
+            double z = std::sin(x) * std::cos(y) * 2.0;
+            testPoints.push_back(Eigen::Vector3d(x, y, z));
         }
     }
     clouds.push_back(testPoints);
@@ -1035,14 +1037,16 @@ TEST(refine_mesh_functional, output_minimal_mesh_refined_ply)
 
     MeshGraph mesh = buildMinimalMesh(cameras, {});
 
-    // Create points to trigger refinement
+    // Create points to trigger refinement.
+    // Points need varying z to produce non-zero distance variance.
     std::vector<point_cloud> clouds;
     point_cloud testPoints;
     for (double x = 0.5; x < 10; x += 0.3)
     {
         for (double y = 0.5; y < 10; y += 0.3)
         {
-            testPoints.push_back(Eigen::Vector3d(x, y, 0));
+            double z = std::sin(x) * std::cos(y) * 2.0;
+            testPoints.push_back(Eigen::Vector3d(x, y, z));
         }
     }
     clouds.push_back(testPoints);
@@ -1166,4 +1170,146 @@ TEST(refine_mesh, merge_surface_models)
 
     std::cout << "Merged surface: " << merged.mesh.size_nodes() << " nodes, " << merged.mesh.size_edges() << " edges, "
               << merged.cloud.size() << " point clouds" << std::endl;
+}
+
+// Helper: check if (px, py) is inside the triangle defined by three 3D vertices (2D test, ignoring Z)
+bool testPointInTriangle(const MeshGraph &mesh, const TriangleId &tri, double px, double py)
+{
+    auto verts = getTriangleVertices(mesh, tri);
+    const auto *n0 = mesh.getNode(verts[0]);
+    const auto *n1 = mesh.getNode(verts[1]);
+    const auto *n2 = mesh.getNode(verts[2]);
+    if (!n0 || !n1 || !n2)
+        return false;
+
+    auto sign = [](double p1x, double p1y, double p2x, double p2y, double p3x, double p3y) {
+        return (p1x - p3x) * (p2y - p3y) - (p2x - p3x) * (p1y - p3y);
+    };
+
+    const auto &v0 = n0->payload.location;
+    const auto &v1 = n1->payload.location;
+    const auto &v2 = n2->payload.location;
+
+    double d1 = sign(px, py, v0.x(), v0.y(), v1.x(), v1.y());
+    double d2 = sign(px, py, v1.x(), v1.y(), v2.x(), v2.y());
+    double d3 = sign(px, py, v2.x(), v2.y(), v0.x(), v0.y());
+
+    bool hasNeg = (d1 < 0) || (d2 < 0) || (d3 < 0);
+    bool hasPos = (d1 > 0) || (d2 > 0) || (d3 > 0);
+    return !(hasNeg && hasPos);
+}
+
+TEST(refine_mesh, triangle_locator_matches_brute_force_minimal_mesh)
+{
+    point_cloud cameras;
+    cameras.push_back(Eigen::Vector3d(0, 0, 10));
+    cameras.push_back(Eigen::Vector3d(10, 10, 10));
+    MeshGraph mesh = buildMinimalMesh(cameras, {});
+
+    TriangleLocator locator(mesh);
+
+    for (double x = -15; x <= 25; x += 1.0)
+    {
+        for (double y = -15; y <= 25; y += 1.0)
+        {
+            TriangleId brute = findTriangleContainingPoint(mesh, x, y);
+            TriangleId fast = locator.find(x, y);
+
+            if (brute.edgeId == 0)
+            {
+                EXPECT_EQ(fast.edgeId, 0) << "Locator found triangle at (" << x << ", " << y
+                                          << ") but brute force didn't";
+            }
+            else
+            {
+                EXPECT_NE(fast.edgeId, 0) << "Locator missed triangle at (" << x << ", " << y << ")";
+                // Point on a shared edge may map to either adjacent triangle — verify containment
+                EXPECT_TRUE(testPointInTriangle(mesh, fast, x, y))
+                    << "Locator returned non-containing triangle at (" << x << ", " << y << ")";
+            }
+        }
+    }
+}
+
+TEST(refine_mesh, triangle_locator_matches_brute_force_grid_mesh)
+{
+    // Build a larger grid mesh with many triangles
+    point_cloud cameras;
+    cameras.push_back(Eigen::Vector3d(0, 0, 10));
+    cameras.push_back(Eigen::Vector3d(10, 0, 10));
+    cameras.push_back(Eigen::Vector3d(10, 10, 10));
+    cameras.push_back(Eigen::Vector3d(0, 10, 10));
+    MeshGraph mesh = rebuildMesh(cameras, {surface_model{{}, MeshGraph()}});
+
+    ASSERT_GT(mesh.size_nodes(), 4);
+
+    TriangleLocator locator(mesh);
+
+    for (double x = -5; x <= 15; x += 0.7)
+    {
+        for (double y = -5; y <= 15; y += 0.7)
+        {
+            TriangleId brute = findTriangleContainingPoint(mesh, x, y);
+            TriangleId fast = locator.find(x, y);
+
+            if (brute.edgeId == 0)
+            {
+                EXPECT_EQ(fast.edgeId, 0) << "at (" << x << ", " << y << ")";
+            }
+            else
+            {
+                EXPECT_NE(fast.edgeId, 0) << "at (" << x << ", " << y << ")";
+                EXPECT_TRUE(testPointInTriangle(mesh, fast, x, y)) << "at (" << x << ", " << y << ")";
+            }
+        }
+    }
+}
+
+TEST(refine_mesh, triangle_locator_matches_brute_force_refined_mesh)
+{
+    // Build a mesh then refine it to create many small triangles
+    point_cloud cameras;
+    cameras.push_back(Eigen::Vector3d(0, 0, 10));
+    cameras.push_back(Eigen::Vector3d(10, 10, 10));
+    MeshGraph mesh = buildMinimalMesh(cameras, {});
+
+    // Refine several times to create a dense mesh
+    for (int i = 0; i < 5; i++)
+    {
+        refineAtPoint(mesh, 5, 5, 1);
+    }
+    refineAtPoint(mesh, 2, 2, 3);
+    refineAtPoint(mesh, 8, 8, 3);
+
+    ASSERT_GT(countTriangles(mesh), 10);
+
+    TriangleLocator locator(mesh);
+
+    for (double x = -15; x <= 25; x += 0.9)
+    {
+        for (double y = -15; y <= 25; y += 0.9)
+        {
+            TriangleId brute = findTriangleContainingPoint(mesh, x, y);
+            TriangleId fast = locator.find(x, y);
+
+            if (brute.edgeId == 0)
+            {
+                EXPECT_EQ(fast.edgeId, 0) << "at (" << x << ", " << y << ")";
+            }
+            else
+            {
+                EXPECT_NE(fast.edgeId, 0) << "at (" << x << ", " << y << ")";
+                EXPECT_TRUE(testPointInTriangle(mesh, fast, x, y)) << "at (" << x << ", " << y << ")";
+            }
+        }
+    }
+}
+
+TEST(refine_mesh, triangle_locator_empty_mesh)
+{
+    MeshGraph mesh;
+    TriangleLocator locator(mesh);
+
+    TriangleId result = locator.find(5.0, 5.0);
+    EXPECT_EQ(result.edgeId, 0);
 }

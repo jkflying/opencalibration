@@ -10,6 +10,7 @@
 #include <opencalibration/io/cv_raster_conversion.hpp>
 #include <opencalibration/ortho/ortho.hpp>
 #include <opencalibration/performance/performance.hpp>
+#include <opencalibration/surface/expand_mesh.hpp>
 #include <opencalibration/surface/intersect.hpp>
 #include <opencalibration/surface/refine_mesh.hpp>
 
@@ -269,10 +270,22 @@ Pipeline::Transition Pipeline::mesh_refinement()
     RelaxOptionSet options = {Option::ORIENTATION, Option::GROUND_MESH};
     if (stateRunCount() == 0)
     {
-        options.set(Option::MINIMAL_MESH, true);
+        // Build a single global minimal mesh covering all cameras upfront,
+        // so that parallel clusters all share the same mesh structure
+        point_cloud cameraLocations;
+        for (auto it = _graph.cnodebegin(); it != _graph.cnodeend(); ++it)
+        {
+            if (it->second.payload.position.allFinite())
+                cameraLocations.push_back(it->second.payload.position);
+        }
+        surface_model initialSurface;
+        initialSurface.mesh = buildMinimalMesh(cameraLocations, _surfaces);
+        _surfaces.clear();
+        _surfaces.push_back(std::move(initialSurface));
+        _relax_stage->setSurfaceModels(_surfaces);
     }
 
-    _relax_stage->init(_graph, {}, _imageGPSLocations, true, true, options);
+    _relax_stage->init(_graph, {}, _imageGPSLocations, true, false, options);
     fvec relax_funcs = _relax_stage->get_runners(_graph);
     run_parallel(relax_funcs, _parallelism);
     _next_relaxed_ids = _relax_stage->finalize(_graph);
