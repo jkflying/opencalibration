@@ -1179,16 +1179,17 @@ std::unordered_set<size_t> findTileCameras(int tile_x, int tile_y, int tile_size
     int tile_height = std::min(tile_size, output_height - y_offset);
 
     std::unordered_set<size_t> camera_ids;
+    jk::tree::KDTree<size_t, 3>::Searcher searcher(imageGPSLocations);
 
-    int N = 5;
-    for (int sy = 0; sy < 5; sy++)
+    int N = 10;
+    for (int sy = 0; sy < N; sy++)
     {
-        for (int sx = 0; sx < 5; sx++)
+        for (int sx = 0; sx < N; sx++)
         {
             int local_col = tile_width * sx / (N - 1);
             int local_row = tile_height * sy / (N - 1);
-            local_col = std::min(local_col, tile_width - 1);
-            local_row = std::min(local_row, tile_height - 1);
+            local_col = std::min(local_col, tile_width);
+            local_row = std::min(local_row, tile_height);
 
             int global_col = x_offset + local_col;
             int global_row = y_offset + local_row;
@@ -1196,7 +1197,7 @@ std::unordered_set<size_t> findTileCameras(int tile_x, int tile_y, int tile_size
             double x = global_col * gsd + bounds.min_x;
             double y = bounds.max_y - global_row * gsd;
 
-            auto closest5 = imageGPSLocations.searchKnn({x, y, average_camera_elevation}, 5);
+            const auto& closest5 = searcher.search({x, y, average_camera_elevation},INFINITY, 5);
             for (const auto &closest : closest5)
             {
                 camera_ids.insert(closest.payload);
@@ -1366,15 +1367,16 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
 
         PatchSampler sampler;
 
-        std::vector<MeshIntersectionSearcher> searchers;
+        std::vector<MeshIntersectionSearcher> mesh_searchers;
         for (const auto &surface : surfaces)
         {
-            searchers.emplace_back();
-            if (!searchers.back().init(surface.mesh))
+            mesh_searchers.emplace_back();
+            if (!mesh_searchers.back().init(surface.mesh))
             {
-                searchers.pop_back();
+                mesh_searchers.pop_back();
             }
         }
+        jk::tree::KDTree<size_t, 3>::Searcher tree_searcher(imageGPSLocations);
 
         std::vector<ColorCorrespondence> local_correspondences;
 
@@ -1391,14 +1393,14 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
 
                 const ray_d intersectionRay{{0, 0, -1}, {x, y, mean_camera_z}};
                 double z = NAN;
-                for (auto &searcher : searchers)
+                for (auto &mesh_searcher : mesh_searchers)
                 {
-                    if (searcher.lastResult().type != MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
+                    if (mesh_searcher.lastResult().type != MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
                     {
-                        if (!searcher.reinit())
+                        if (!mesh_searcher.reinit())
                             continue;
                     }
-                    auto intersection = searcher.triangleIntersect(intersectionRay);
+                    auto intersection = mesh_searcher.triangleIntersect(intersectionRay);
                     if (intersection.type == MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
                     {
                         z = intersection.intersectionLocation.z();
@@ -1410,7 +1412,7 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
                     continue;
 
                 Eigen::Vector3d sample_point(x, y, z);
-                auto closest5 = imageGPSLocations.searchKnn({x, y, average_camera_elevation}, 5);
+                const auto & closest5 = tree_searcher.search({x, y, average_camera_elevation}, INFINITY, 5);
 
                 int layer_idx = 0;
                 for (const auto &closest : closest5)

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <condition_variable>
 #include <mutex>
 #include <opencv2/opencv.hpp>
 #include <string>
@@ -25,6 +26,7 @@ class FullResolutionImageCache
     size_t max_cache_size_;
     size_t access_counter_ = 0;
     mutable std::mutex cache_mutex_;
+    mutable std::condition_variable cv_;
     size_t cache_hits_ = 0;
     size_t cache_misses_ = 0;
 

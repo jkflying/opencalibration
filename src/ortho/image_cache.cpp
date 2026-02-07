@@ -15,28 +15,24 @@ FullResolutionImageCache::FullResolutionImageCache(size_t max_size) : max_cache_
 
 cv::Mat FullResolutionImageCache::getImage(size_t node_id, const std::string &path)
 {
-    while (true)
+    std::unique_lock<std::mutex> lock(cache_mutex_);
+
+    // Wait if another thread is loading this image
+    cv_.wait(lock, [this, node_id] { return loading_.count(node_id) == 0; });
+
+    // Check if image is now cached
+    auto it = cache_.find(node_id);
+    if (it != cache_.end())
     {
-        std::unique_lock<std::mutex> lock(cache_mutex_);
-
-        auto it = cache_.find(node_id);
-        if (it != cache_.end())
-        {
-            it->second.last_access_time = access_counter_++;
-            cache_hits_++;
-            return it->second.image;
-        }
-
-        if (loading_.count(node_id) == 0)
-        {
-            loading_.insert(node_id);
-            cache_misses_++;
-            break;
-        }
-
-        lock.unlock();
-        std::this_thread::yield();
+        it->second.last_access_time = access_counter_++;
+        cache_hits_++;
+        return it->second.image;
     }
+
+    // Mark this image as being loaded
+    loading_.insert(node_id);
+    cache_misses_++;
+    lock.unlock();
 
     if (cv::getNumThreads() != 1)
     {
@@ -45,13 +41,14 @@ cv::Mat FullResolutionImageCache::getImage(size_t node_id, const std::string &pa
 
     cv::Mat image = cv::imread(path);
 
-    std::lock_guard<std::mutex> lock(cache_mutex_);
+    lock.lock();
 
     loading_.erase(node_id);
 
     if (image.empty())
     {
         spdlog::warn("Failed to load image: {}", path);
+        cv_.notify_all();
         return cv::Mat();
     }
 
@@ -77,6 +74,8 @@ cv::Mat FullResolutionImageCache::getImage(size_t node_id, const std::string &pa
     cache_[node_id] = cached;
 
     spdlog::debug("Loaded image {} into cache (cache size: {}/{})", node_id, cache_.size(), max_cache_size_);
+
+    cv_.notify_all();
 
     return image;
 }
