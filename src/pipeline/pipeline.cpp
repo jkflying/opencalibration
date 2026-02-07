@@ -263,6 +263,7 @@ Pipeline::Transition Pipeline::mesh_refinement()
     PerformanceMeasure p("Mesh refinement");
 
     const size_t maxPointsPerTriangle = 20;
+    const double varianceGsdMultiplier = 2.0;
     const int maxIterations = 20;
 
     RelaxOptionSet options = {Option::ORIENTATION, Option::GROUND_MESH};
@@ -283,23 +284,60 @@ Pipeline::Transition Pipeline::mesh_refinement()
         USM_DECISION_TABLE(Transition::NEXT, );
     }
 
+    double meanSurfaceZ = 0;
+    size_t surfNodeCount = 0;
+    for (const auto &surface : _surfaces)
+    {
+        for (auto it = surface.mesh.cnodebegin(); it != surface.mesh.cnodeend(); ++it)
+        {
+            meanSurfaceZ += it->second.payload.location.z();
+            surfNodeCount++;
+        }
+    }
+    if (surfNodeCount > 0)
+        meanSurfaceZ /= surfNodeCount;
+
+    double meanCameraZ = 0;
+    double meanArcPerPixel = 0;
+    size_t camCount = 0;
+    for (auto it = _graph.cnodebegin(); it != _graph.cnodeend(); ++it)
+    {
+        const auto &payload = it->second.payload;
+        if (!payload.model || payload.model->focal_length_pixels <= 0 || !payload.position.allFinite())
+            continue;
+        meanCameraZ += payload.position.z();
+        meanArcPerPixel += 1.0 / payload.model->focal_length_pixels;
+        camCount++;
+    }
+
+    double gsd = 0.01;
+    if (camCount > 0)
+    {
+        meanCameraZ /= camCount;
+        meanArcPerPixel /= camCount;
+        gsd = std::max(0.001, std::abs(meanCameraZ - meanSurfaceZ) * meanArcPerPixel);
+    }
+    const double minDistanceStddev = varianceGsdMultiplier * gsd;
+    const double minDistanceVariance = minDistanceStddev * minDistanceStddev;
+    spdlog::info("Mesh refinement: estimated GSD {:.4f}m, variance threshold {:.6f}", gsd, minDistanceVariance);
+
     size_t trianglesAboveThreshold = 0;
     size_t maxPoints = 0;
     for (const auto &surface : _surfaces)
     {
         if (surface.mesh.size_nodes() == 0)
             continue;
-        auto counts = countPointsPerTriangle(surface.mesh, surface.cloud);
-        for (const auto &[key, count] : counts)
+        auto stats = countPointsPerTriangle(surface.mesh, surface.cloud);
+        for (const auto &[key, s] : stats)
         {
-            maxPoints = std::max(maxPoints, count);
-            if (count > maxPointsPerTriangle)
+            maxPoints = std::max(maxPoints, s.count);
+            if (s.count > maxPointsPerTriangle && s.distanceVariance > minDistanceVariance)
                 trianglesAboveThreshold++;
         }
     }
 
-    spdlog::info("Mesh refinement iteration {}: max {} points/triangle, {} triangles above threshold",
-                 stateRunCount(), maxPoints, trianglesAboveThreshold);
+    spdlog::info("Mesh refinement iteration {}: max {} points/triangle, {} triangles above threshold", stateRunCount(),
+                 maxPoints, trianglesAboveThreshold);
 
     if (trianglesAboveThreshold == 0)
     {
@@ -318,7 +356,8 @@ Pipeline::Transition Pipeline::mesh_refinement()
     {
         if (surface.mesh.size_nodes() == 0)
             continue;
-        size_t created = refineByPointDensity(surface.mesh, surface.cloud, maxPointsPerTriangle, 1);
+        size_t created =
+            refineByPointDensity(surface.mesh, surface.cloud, maxPointsPerTriangle, minDistanceVariance, 1);
         totalRefined += created;
     }
 

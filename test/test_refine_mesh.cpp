@@ -888,13 +888,13 @@ TEST(refine_mesh, count_points_per_triangle)
     testPoints.push_back(Eigen::Vector3d(4, 4, 0));
     clouds.push_back(testPoints);
 
-    auto counts = countPointsPerTriangle(g, clouds);
+    auto stats = countPointsPerTriangle(g, clouds);
 
     // Should have counted some points
     size_t totalCounted = 0;
-    for (const auto &[key, count] : counts)
+    for (const auto &[key, s] : stats)
     {
-        totalCounted += count;
+        totalCounted += s.count;
     }
     EXPECT_GT(totalCounted, 0);
 }
@@ -922,7 +922,7 @@ TEST(refine_mesh, refine_by_point_density)
     clouds.push_back(testPoints);
 
     size_t initialNodes = mesh.size_nodes();
-    size_t created = refineByPointDensity(mesh, clouds, 20, 10);
+    size_t created = refineByPointDensity(mesh, clouds, 20, 0.0, 10);
 
     EXPECT_GT(created, 0);
     EXPECT_GT(mesh.size_nodes(), initialNodes);
@@ -935,6 +935,95 @@ TEST(refine_mesh, refine_by_point_density)
 
     std::cout << "After point density refinement: " << mesh.size_nodes() << " nodes, " << mesh.size_edges()
               << " edges, " << countTriangles(mesh) << " triangles" << std::endl;
+}
+
+TEST(refine_mesh, variance_filters_coplanar_points)
+{
+    MeshGraph mesh;
+    size_t v0 = mesh.addNode(MeshNode{Eigen::Vector3d(0, 0, 0)});
+    size_t v1 = mesh.addNode(MeshNode{Eigen::Vector3d(10, 0, 0)});
+    size_t v2 = mesh.addNode(MeshNode{Eigen::Vector3d(0, 10, 0)});
+    size_t v3 = mesh.addNode(MeshNode{Eigen::Vector3d(10, 10, 0)});
+
+    size_t e01 = mesh.addEdge(MeshEdge{true, {0, 0}}, v0, v1);
+    size_t e02 = mesh.addEdge(MeshEdge{true, {0, 0}}, v0, v2);
+    size_t e13 = mesh.addEdge(MeshEdge{true, {0, 0}}, v1, v3);
+    size_t e23 = mesh.addEdge(MeshEdge{true, {0, 0}}, v2, v3);
+    size_t e03 = mesh.addEdge(MeshEdge{false, {0, 0}}, v0, v3);
+
+    mesh.getEdge(e03)->payload.triangleOppositeNodes = {v1, v2};
+    mesh.getEdge(e01)->payload.triangleOppositeNodes = {v3, 0};
+    mesh.getEdge(e13)->payload.triangleOppositeNodes = {v0, 0};
+    mesh.getEdge(e02)->payload.triangleOppositeNodes = {v3, 0};
+    mesh.getEdge(e23)->payload.triangleOppositeNodes = {v0, 0};
+
+    std::vector<point_cloud> clouds;
+    point_cloud testPoints;
+    for (double x = 0.5; x < 10; x += 0.3)
+    {
+        for (double y = 0.5; y < 10; y += 0.3)
+        {
+            testPoints.push_back(Eigen::Vector3d(x, y, 0));
+        }
+    }
+    clouds.push_back(testPoints);
+
+    auto stats = countPointsPerTriangle(mesh, clouds);
+    for (const auto &[key, s] : stats)
+    {
+        EXPECT_GT(s.count, 20u);
+        EXPECT_NEAR(s.distanceVariance, 0.0, 1e-10);
+    }
+
+    size_t initialNodes = mesh.size_nodes();
+    size_t created = refineByPointDensity(mesh, clouds, 20, 0.01, 10);
+    EXPECT_EQ(created, 0u);
+    EXPECT_EQ(mesh.size_nodes(), initialNodes);
+}
+
+TEST(refine_mesh, variance_triggers_refinement_for_uneven_surface)
+{
+    MeshGraph mesh;
+    size_t v0 = mesh.addNode(MeshNode{Eigen::Vector3d(0, 0, 0)});
+    size_t v1 = mesh.addNode(MeshNode{Eigen::Vector3d(10, 0, 0)});
+    size_t v2 = mesh.addNode(MeshNode{Eigen::Vector3d(0, 10, 0)});
+    size_t v3 = mesh.addNode(MeshNode{Eigen::Vector3d(10, 10, 0)});
+
+    size_t e01 = mesh.addEdge(MeshEdge{true, {0, 0}}, v0, v1);
+    size_t e02 = mesh.addEdge(MeshEdge{true, {0, 0}}, v0, v2);
+    size_t e13 = mesh.addEdge(MeshEdge{true, {0, 0}}, v1, v3);
+    size_t e23 = mesh.addEdge(MeshEdge{true, {0, 0}}, v2, v3);
+    size_t e03 = mesh.addEdge(MeshEdge{false, {0, 0}}, v0, v3);
+
+    mesh.getEdge(e03)->payload.triangleOppositeNodes = {v1, v2};
+    mesh.getEdge(e01)->payload.triangleOppositeNodes = {v3, 0};
+    mesh.getEdge(e13)->payload.triangleOppositeNodes = {v0, 0};
+    mesh.getEdge(e02)->payload.triangleOppositeNodes = {v3, 0};
+    mesh.getEdge(e23)->payload.triangleOppositeNodes = {v0, 0};
+
+    std::vector<point_cloud> clouds;
+    point_cloud testPoints;
+    for (double x = 0.5; x < 10; x += 0.3)
+    {
+        for (double y = 0.5; y < 10; y += 0.3)
+        {
+            double z = std::sin(x) * 0.5;
+            testPoints.push_back(Eigen::Vector3d(x, y, z));
+        }
+    }
+    clouds.push_back(testPoints);
+
+    auto stats = countPointsPerTriangle(mesh, clouds);
+    for (const auto &[key, s] : stats)
+    {
+        EXPECT_GT(s.count, 20u);
+        EXPECT_GT(s.distanceVariance, 0.01);
+    }
+
+    size_t initialNodes = mesh.size_nodes();
+    size_t created = refineByPointDensity(mesh, clouds, 20, 0.01, 10);
+    EXPECT_GT(created, 0u);
+    EXPECT_GT(mesh.size_nodes(), initialNodes);
 }
 
 TEST(refine_mesh_functional, output_minimal_mesh_refined_ply)
@@ -962,7 +1051,7 @@ TEST(refine_mesh_functional, output_minimal_mesh_refined_ply)
               << countTriangles(mesh) << " triangles, " << testPoints.size() << " points" << std::endl;
 
     // Refine until ~20 points per triangle
-    refineByPointDensity(mesh, clouds, 20, 20);
+    refineByPointDensity(mesh, clouds, 20, 0.0, 20);
 
     std::cout << "After refinement: " << mesh.size_nodes() << " nodes, " << mesh.size_edges() << " edges, "
               << countTriangles(mesh) << " triangles" << std::endl;
@@ -979,11 +1068,11 @@ TEST(refine_mesh_functional, output_minimal_mesh_refined_ply)
     EXPECT_EQ(hangingError, "") << hangingError;
 
     // Verify point counts are reasonable
-    auto counts = countPointsPerTriangle(mesh, clouds);
+    auto stats = countPointsPerTriangle(mesh, clouds);
     size_t maxCount = 0;
-    for (const auto &[key, count] : counts)
+    for (const auto &[key, s] : stats)
     {
-        maxCount = std::max(maxCount, count);
+        maxCount = std::max(maxCount, s.count);
     }
     std::cout << "Max points per triangle after refinement: " << maxCount << std::endl;
 

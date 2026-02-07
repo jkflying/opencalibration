@@ -575,50 +575,98 @@ size_t refineWhere(MeshGraph &mesh, std::function<bool(double x, double y, doubl
     return totalCreated;
 }
 
-std::unordered_map<TriangleId, size_t, TriangleIdHash> countPointsPerTriangle(const MeshGraph &mesh,
-                                                                              const std::vector<point_cloud> &points)
+std::unordered_map<TriangleId, TrianglePointStats, TriangleIdHash> countPointsPerTriangle(
+    const MeshGraph &mesh, const std::vector<point_cloud> &points)
 {
-    std::unordered_map<TriangleId, size_t, TriangleIdHash> counts;
+    struct Accumulator
+    {
+        size_t count = 0;
+        double sumDist = 0;
+        double sumDistSq = 0;
+    };
+
+    std::unordered_map<TriangleId, Accumulator, TriangleIdHash> accumulators;
+
+    struct TrianglePlane
+    {
+        Eigen::Vector3d normal;
+        Eigen::Vector3d origin;
+    };
+    std::unordered_map<TriangleId, TrianglePlane, TriangleIdHash> planeCache;
 
     spdlog::debug("countPointsPerTriangle: mesh has {} nodes, {} edges", mesh.size_nodes(), mesh.size_edges());
 
-    // Count points in each triangle - triangles are identified by the edge returned by findTriangleContainingPoint
     for (const auto &cloud : points)
     {
         for (const auto &p : cloud)
         {
             TriangleId tri = findTriangleContainingPoint(mesh, p.x(), p.y());
-            if (tri.edgeId != 0)
+            if (tri.edgeId == 0)
+                continue;
+
+            auto &acc = accumulators[tri];
+            acc.count++;
+
+            auto planeIt = planeCache.find(tri);
+            if (planeIt == planeCache.end())
             {
-                counts[tri]++;
+                auto verts = getTriangleVertices(mesh, tri);
+                const auto *n0 = mesh.getNode(verts[0]);
+                const auto *n1 = mesh.getNode(verts[1]);
+                const auto *n2 = mesh.getNode(verts[2]);
+                if (n0 && n1 && n2)
+                {
+                    Eigen::Vector3d normal = (n1->payload.location - n0->payload.location)
+                                                 .cross(n2->payload.location - n0->payload.location)
+                                                 .normalized();
+                    planeIt = planeCache.emplace(tri, TrianglePlane{normal, n0->payload.location}).first;
+                }
+            }
+
+            if (planeIt != planeCache.end())
+            {
+                double dist = (p - planeIt->second.origin).dot(planeIt->second.normal);
+                acc.sumDist += dist;
+                acc.sumDistSq += dist * dist;
             }
         }
     }
 
-    spdlog::debug("countPointsPerTriangle: found {} unique triangles with points", counts.size());
+    std::unordered_map<TriangleId, TrianglePointStats, TriangleIdHash> result;
+    for (const auto &[tri, acc] : accumulators)
+    {
+        TrianglePointStats stats;
+        stats.count = acc.count;
+        if (acc.count > 1)
+        {
+            double mean = acc.sumDist / acc.count;
+            stats.distanceVariance = acc.sumDistSq / acc.count - mean * mean;
+        }
+        result[tri] = stats;
+    }
 
-    return counts;
+    spdlog::debug("countPointsPerTriangle: found {} unique triangles with points", result.size());
+
+    return result;
 }
 
 size_t refineByPointDensity(MeshGraph &mesh, const std::vector<point_cloud> &points, size_t maxPointsPerTriangle,
-                            int maxIterations)
+                            double minDistanceVariance, int maxIterations)
 {
     size_t totalCreated = 0;
 
     for (int iter = 0; iter < maxIterations; iter++)
     {
-        // Count points per triangle
-        auto counts = countPointsPerTriangle(mesh, points);
+        auto stats = countPointsPerTriangle(mesh, points);
 
-        // Find triangles exceeding the threshold
         std::vector<TriangleId> toRefine;
-        for (const auto &[tri, count] : counts)
+        for (const auto &[tri, s] : stats)
         {
-            if (count > maxPointsPerTriangle)
+            if (s.count > maxPointsPerTriangle && s.distanceVariance > minDistanceVariance)
             {
                 toRefine.push_back(tri);
-                spdlog::debug("refineByPointDensity: triangle (edge={}, side={}) has {} points", tri.edgeId, tri.side,
-                              count);
+                spdlog::debug("refineByPointDensity: triangle (edge={}, side={}) has {} points, variance {}",
+                              tri.edgeId, tri.side, s.count, s.distanceVariance);
             }
         }
 
@@ -708,7 +756,7 @@ surface_model mergeSurfaceModels(const std::vector<surface_model> &surfaces)
         // For each vertex, accumulate weights from adjacent triangles
         std::unordered_map<size_t, size_t> vertexPointCounts;
 
-        for (const auto &[tri, count] : triangleCounts)
+        for (const auto &[tri, triStats] : triangleCounts)
         {
             auto verts = getTriangleVertices(surf.mesh, tri);
             if (verts[0] == 0 && verts[1] == 0 && verts[2] == 0)
@@ -719,7 +767,7 @@ surface_model mergeSurfaceModels(const std::vector<surface_model> &surfaces)
             // Add this triangle's point count to each of its vertices
             for (int i = 0; i < 3; i++)
             {
-                vertexPointCounts[verts[i]] += count;
+                vertexPointCounts[verts[i]] += triStats.count;
             }
         }
 

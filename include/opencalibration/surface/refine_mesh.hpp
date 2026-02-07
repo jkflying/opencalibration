@@ -136,17 +136,28 @@ size_t refineWhere(MeshGraph &mesh, std::function<bool(double x, double y, doubl
                    int maxIterations = 10);
 
 /**
- * @brief Count the number of 3D points falling within each triangle
+ * @brief Per-triangle statistics from point cloud analysis
+ */
+struct TrianglePointStats
+{
+    size_t count = 0;
+    double distanceVariance = 0;
+};
+
+/**
+ * @brief Count the number of 3D points falling within each triangle and compute
+ * the variance of point-to-plane distance for each triangle
  *
  * @param mesh The mesh graph
  * @param points Vector of point clouds containing 3D points to count
- * @return Map from TriangleId to point count
+ * @return Map from TriangleId to per-triangle statistics
  */
-std::unordered_map<TriangleId, size_t, TriangleIdHash> countPointsPerTriangle(const MeshGraph &mesh,
-                                                                              const std::vector<point_cloud> &points);
+std::unordered_map<TriangleId, TrianglePointStats, TriangleIdHash> countPointsPerTriangle(
+    const MeshGraph &mesh, const std::vector<point_cloud> &points);
 
 /**
  * @brief Refine triangles that have more than maxPointsPerTriangle points
+ * and a distance variance above minDistanceVariance
  *
  * Uses newest vertex bisection to split triangles with too many points,
  * ensuring a conforming mesh (no hanging nodes).
@@ -154,11 +165,12 @@ std::unordered_map<TriangleId, size_t, TriangleIdHash> countPointsPerTriangle(co
  * @param mesh The mesh graph to modify
  * @param points Vector of point clouds containing 3D points
  * @param maxPointsPerTriangle Maximum points allowed per triangle before refinement
+ * @param minDistanceVariance Minimum point-to-plane distance variance to trigger refinement
  * @param maxIterations Maximum refinement iterations
  * @return Number of triangles created
  */
 size_t refineByPointDensity(MeshGraph &mesh, const std::vector<point_cloud> &points, size_t maxPointsPerTriangle = 20,
-                            int maxIterations = 20);
+                            double minDistanceVariance = 0.0, int maxIterations = 20);
 
 /**
  * @brief Merge multiple surface models with the same mesh structure
