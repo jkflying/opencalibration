@@ -86,6 +86,22 @@ Eigen::Vector2i size(const opencalibration::GenericRaster &raster)
     return std::visit(getSize, raster);
 }
 
+float normalizedImageRadius(double pixel_x, double pixel_y, int width, int height)
+{
+    if (width <= 0 || height <= 0)
+        return 0.0f;
+
+    double half_w = width * 0.5;
+    double half_h = height * 0.5;
+    double dx = (pixel_x - half_w) / half_w;
+    double dy = (pixel_y - half_h) / half_h;
+
+    // Scale by sqrt(2) so image corners map to radius 1.0, then clamp.
+    constexpr double INV_SQRT_TWO = 0.7071067811865475;
+    double radius = std::sqrt(dx * dx + dy * dy) * INV_SQRT_TWO;
+    return static_cast<float>(std::clamp(radius, 0.0, 1.0));
+}
+
 class PatchSampler
 {
   public:
@@ -988,6 +1004,8 @@ std::unordered_set<size_t> findTileCameras(int tile_x, int tile_y, int tile_size
                                            int output_width, int output_height,
                                            const jk::tree::KDTree<size_t, 2> &imageGPSLocations)
 {
+    PerformanceMeasure thread_perf("Ortho Stage 1 - read");
+
     int x_offset = tile_x * tile_size;
     int y_offset = tile_y * tile_size;
     int tile_width = std::min(tile_size, output_width - x_offset);
@@ -1026,6 +1044,8 @@ std::unordered_set<size_t> findTileCameras(int tile_x, int tile_y, int tile_size
 void prefetchImages(const std::unordered_set<size_t> &camera_ids, const opencalibration::MeasurementGraph &graph,
                     opencalibration::orthomosaic::FullResolutionImageCache &image_cache)
 {
+    PerformanceMeasure thread_perf("Ortho Stage 1 - read");
+
     for (size_t cam_id : camera_ids)
     {
         const auto *node = graph.getNode(cam_id);
@@ -1039,6 +1059,8 @@ void prefetchImages(const std::unordered_set<size_t> &camera_ids, const opencali
 void writeLayeredTileToGeoTIFF(GDALDatasetH layers_ds, GDALDatasetH cameras_ds,
                                const opencalibration::orthomosaic::LayeredTileBuffer &tile, int x_offset, int y_offset)
 {
+    PerformanceMeasure thread_perf("Ortho Stage 1 - write");
+
     int w = tile.width;
     int h = tile.height;
     int N = tile.num_layers;
@@ -1189,7 +1211,7 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
 
 #pragma omp parallel
     {
-        PerformanceMeasure thread_perf("Ortho Stage 1");
+        PerformanceMeasure thread_perf("Ortho Stage 1 - process");
 
         PatchSampler sampler;
 
@@ -1203,7 +1225,7 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
             }
         }
         jk::tree::KDTree<size_t, 2>::Searcher tree_searcher(imageGPSLocations);
-        ThreadLocalImageCache local_image_cache;
+        std::unordered_map<uint64_t, cv::Mat> local_image_cache;
 
         std::vector<ColorCorrespondence> local_correspondences;
 
@@ -1262,17 +1284,17 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
                         continue;
 
                     cv::Mat full_image;
-                    cv::Mat *cached = local_image_cache.get(closest.payload);
-                    if (cached)
+                    auto img_cache_iter = local_image_cache.find(closest.payload);
+                    if (img_cache_iter != local_image_cache.end())
                     {
-                        full_image = *cached;
+                        full_image = img_cache_iter->second;
                     }
                     else
                     {
                         full_image = image_cache.getImage(closest.payload, payload.path);
                         if (!full_image.empty())
                         {
-                            local_image_cache.put(closest.payload, full_image);
+                            local_image_cache.emplace(closest.payload, full_image);
                         }
                     }
                     if (full_image.empty())
@@ -1289,12 +1311,8 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
                     sample.model_id = payload.model->id;
                     sample.valid = true;
 
-                    // Compute normalized radius (distance from image center, normalized to [0,1])
-                    double half_w = payload.model->pixels_cols * 0.5;
-                    double half_h = payload.model->pixels_rows * 0.5;
-                    double dx = (pixel.x() - half_w) / half_w;
-                    double dy = (pixel.y() - half_h) / half_h;
-                    sample.normalized_radius = static_cast<float>(std::sqrt(dx * dx + dy * dy));
+                    sample.normalized_radius =
+                        normalizedImageRadius(pixel.x(), pixel.y(), payload.model->pixels_cols, payload.model->pixels_rows);
 
                     Eigen::Vector3d to_point = sample_point - payload.position;
                     Eigen::Vector3d camera_down = payload.orientation.inverse() * Eigen::Vector3d(0, 0, 1);
@@ -1387,7 +1405,7 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
 {
     spdlog::info("Pass 1: Generating layered GeoTIFF: {}", layers_path);
     OrthoMosaicContext context = prepareOrthoMosaicContext(surfaces, graph, ImageResolution::FullResolution);
-    PerformanceMeasure p("Ortho pre-stage 1");
+    PerformanceMeasure p("Ortho stage 1 - setup");
 
     spdlog::info("x range [{}; {}]  y range [{}; {}]  mean surface {}", context.bounds.min_x, context.bounds.max_x,
                  context.bounds.min_y, context.bounds.max_y, context.bounds.mean_surface_z);
@@ -1440,6 +1458,8 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
     auto start_time = std::chrono::steady_clock::now();
     auto last_log_time = start_time;
 
+    p.reset("");
+
     FullResolutionImageCache image_cache(config.num_layers * 10);
 
     auto tile_order = hilbertTileOrder(num_tiles_x, num_tiles_y);
@@ -1455,7 +1475,6 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
     std::future<void> write_future;
     std::future<void> prefetch_future;
 
-    p.reset("");
 
     for (size_t i = 0; i < tile_order.size(); i++)
     {
@@ -1634,12 +1653,8 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
                         Eigen::Vector2d pixel =
                             image_from_3d(world_pt, *payload.model, payload.position, inv_rot_it->second);
 
-                        double half_w = payload.model->pixels_cols * 0.5;
-                        double half_h = payload.model->pixels_rows * 0.5;
-                        double ndx = (pixel.x() - half_w) / half_w;
-                        double ndy = (pixel.y() - half_h) / half_h;
-
-                        sample.normalized_radius = static_cast<float>(std::sqrt(ndx * ndx + ndy * ndy));
+                        sample.normalized_radius =
+                            normalizedImageRadius(pixel.x(), pixel.y(), payload.model->pixels_cols, payload.model->pixels_rows);
 
                         Eigen::Vector3d to_point = world_pt - payload.position;
                         Eigen::Vector3d cam_down = payload.orientation.inverse() * Eigen::Vector3d(0, 0, 1);
