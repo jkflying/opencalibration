@@ -606,12 +606,6 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
 
     result.pixelValues = std::move(pixelValues);
     return result;
-
-    //     cv::imwrite("thumbnail.png", image);
-    //     cv::imwrite("source.png", source);
-
-    // TODO: some kind of color balancing of the different patches - maybe in LAB space?
-    // TODO: laplacian or gradient domain blending of the differrent patches
 }
 
 GDALDatasetPtr createGeoTIFF(const std::string &path, int width, int height, double min_x, double max_y, double gsd,
@@ -713,15 +707,17 @@ void processTile(GDALDataset *dataset, int tile_x, int tile_y, int tile_size, co
 
         PatchSampler sampler;
 
-        std::vector<MeshIntersectionSearcher> searchers;
+        std::vector<MeshIntersectionSearcher> mesh_searchers;
         for (const auto &surface : surfaces)
         {
-            searchers.emplace_back();
-            if (!searchers.back().init(surface.mesh))
+            mesh_searchers.emplace_back();
+            if (!mesh_searchers.back().init(surface.mesh))
             {
-                searchers.pop_back();
+                mesh_searchers.pop_back();
             }
         }
+
+        jk::tree::KDTree<size_t, 2>::Searcher tree_searcher(imageGPSLocations);
 
 #pragma omp for schedule(dynamic)
         for (int local_row = 0; local_row < tile_height; local_row++)
@@ -736,17 +732,17 @@ void processTile(GDALDataset *dataset, int tile_x, int tile_y, int tile_size, co
 
                 const ray_d intersectionRay{{0, 0, -1}, {x, y, mean_camera_z}};
                 double z = NAN;
-                for (auto &searcher : searchers)
+                for (auto &mesh_searcher : mesh_searchers)
                 {
-                    if (searcher.lastResult().type != MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
+                    if (mesh_searcher.lastResult().type != MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
                     {
-                        if (!searcher.reinit())
+                        if (!mesh_searcher.reinit())
                         {
                             continue;
                         }
                     }
 
-                    auto intersection = searcher.triangleIntersect(intersectionRay);
+                    auto intersection = mesh_searcher.triangleIntersect(intersectionRay);
                     if (intersection.type == MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
                     {
                         z = intersection.intersectionLocation.z();
@@ -768,7 +764,7 @@ void processTile(GDALDataset *dataset, int tile_x, int tile_y, int tile_size, co
 
                 Eigen::Vector3d sample_point(x, y, z);
 
-                auto closest5 = imageGPSLocations.searchKnn({x, y}, 5);
+                const auto &closest5 = tree_searcher.search({x, y}, INFINITY, 5);
 
                 bool found_color = false;
                 for (const auto &closest : closest5)
