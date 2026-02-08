@@ -2,7 +2,6 @@
 
 #include <Eigen/Dense>
 #include <gdal.h>
-#include <gdal_priv.h>
 #include <memory>
 #include <spdlog/spdlog.h>
 #include <type_traits>
@@ -28,26 +27,14 @@ struct gdal_registration
 class GDALDatasetDeleter
 {
   public:
-    void operator()(GDALDataset *dataset) const
+    void operator()(GDALDatasetH dataset) const
     {
         if (dataset)
             GDALClose(dataset);
     }
 };
 
-class GDALRasterBandDeleter
-{
-  public:
-    void operator()(GDALRasterBand *band) const
-    {
-        // Do any necessary cleanup here
-        if (band)
-            GDALClose(band);
-    }
-};
-
-using GDALDatasetPtr = std::unique_ptr<GDALDataset, GDALDatasetDeleter>;
-using GDALRasterBandPtr = std::unique_ptr<GDALRasterBand, GDALRasterBandDeleter>;
+using GDALDatasetPtr = std::unique_ptr<void, GDALDatasetDeleter>;
 
 } // namespace
 
@@ -129,16 +116,17 @@ std::string convertMultiLayerRasterToTIFF(const MultiLayerRaster<PixelValue> &mu
     std::sort(bandOrder.begin(), bandOrder.end());
 
     // Create an in-memory TIFF dataset
-    GDALDriver *driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    GDALDriverH driver = GDALGetDriverByName("GTiff");
     if (driver == nullptr)
     {
         spdlog::error("Error: GTiff driver not available.");
         return "";
     }
     const char *path = "/vsimem/mlr.tiff";
-    GDALDatasetPtr dataset(driver->Create(path, multiLayerRaster.layers[0].pixels.cols(),
-                                          multiLayerRaster.layers[0].pixels.rows(), multiLayerRaster.layers.size(),
-                                          getGDALDataType<PixelValue>(), nullptr));
+    GDALDatasetH hDataset =
+        GDALCreate(driver, path, multiLayerRaster.layers[0].pixels.cols(), multiLayerRaster.layers[0].pixels.rows(),
+                   multiLayerRaster.layers.size(), getGDALDataType<PixelValue>(), nullptr);
+    GDALDatasetPtr dataset(hDataset);
 
     if (!dataset)
     {
@@ -153,16 +141,16 @@ std::string convertMultiLayerRasterToTIFF(const MultiLayerRaster<PixelValue> &mu
     for (size_t i = 0; i < bandOrder.size(); ++i)
     {
         const auto &layer = multiLayerRaster.layers[bandOrder[i].second];
-        GDALRasterBand *band = dataset->GetRasterBand(i + 1);
+        GDALRasterBandH band = GDALGetRasterBand(dataset.get(), i + 1);
         if (!band)
         {
             spdlog::error("Error: Failed to get raster band.");
             return "";
         }
         PixelValue *data = const_cast<PixelValue *>(layer.pixels.data());
-        const CPLErr err = band->RasterIO(GF_Write, 0, 0, layer.pixels.cols(), layer.pixels.rows(), data,
-                                          layer.pixels.cols(), layer.pixels.rows(), GDT_Float32, 0, 0);
-        band->SetColorInterpretation(convertColorEnumToGDAL(layer.band));
+        const CPLErr err = GDALRasterIO(band, GF_Write, 0, 0, layer.pixels.cols(), layer.pixels.rows(), data,
+                                        layer.pixels.cols(), layer.pixels.rows(), GDT_Float32, 0, 0);
+        GDALSetRasterColorInterpretation(band, convertColorEnumToGDAL(layer.band));
         if (err != CE_None)
         {
             spdlog::error("Error: failed to copy raster");

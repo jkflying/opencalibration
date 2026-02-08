@@ -4,6 +4,7 @@
 #include <opencalibration/ortho/color_balance.hpp>
 
 #include <ceres/jet.h>
+#include <cpl_string.h>
 #include <eigen3/Eigen/Eigenvalues>
 #include <jk/KDTree.h>
 #include <opencalibration/distort/distort_keypoints.hpp>
@@ -246,6 +247,37 @@ class PatchSampler
 namespace opencalibration::orthomosaic
 {
 
+// Clamp output resolution to not exceed sum of input image pixels
+void clampOutputResolution(double &gsd, int &width, int &height, const OrthoMosaicContext &context,
+                           const MeasurementGraph &graph, const char *stage_name = "")
+{
+    uint64_t total_input_pixels = 0;
+    for (size_t node_id : context.involved_nodes)
+    {
+        const auto *node = graph.getNode(node_id);
+        if (node)
+        {
+            const auto &img = node->payload;
+            total_input_pixels += static_cast<uint64_t>(img.metadata.camera_info.width_px) *
+                                  static_cast<uint64_t>(img.metadata.camera_info.height_px);
+        }
+    }
+
+    uint64_t output_pixels = static_cast<uint64_t>(width) * static_cast<uint64_t>(height);
+    if (output_pixels > total_input_pixels && total_input_pixels > 0)
+    {
+        // Scale GSD up to keep output resolution <= input pixels
+        double scale_factor = std::sqrt(static_cast<double>(output_pixels) / total_input_pixels);
+        gsd *= scale_factor;
+        width = static_cast<int>(width / scale_factor);
+        height = static_cast<int>(height / scale_factor);
+
+        std::string stage_str = (stage_name && *stage_name) ? std::string(stage_name) + ": " : std::string("");
+        spdlog::info("{}Clamped output resolution: GSD adjusted to {} (output pixels {} > input pixels {})", stage_str,
+                     gsd, output_pixels, total_input_pixels);
+    }
+}
+
 OrthoMosaicBounds calculateBoundsAndMeanZ(const std::vector<surface_model> &surfaces)
 {
     const double inf = std::numeric_limits<double>::infinity();
@@ -453,6 +485,12 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
     if (!std::isfinite(image_height) || image_height < 1)
         image_height = 100;
 
+    int width = static_cast<int>(image_width);
+    int height = static_cast<int>(image_height);
+    clampOutputResolution(context.gsd, width, height, context, graph, "Thumbnail");
+    image_width = width;
+    image_height = height;
+
     spdlog::info("requested image_width: {} image_height: {}", image_width, image_height);
     spdlog::info("max_x: {} min_x: {} max_y: {} min_y: {}", context.bounds.max_x, context.bounds.min_x,
                  context.bounds.max_y, context.bounds.min_y);
@@ -613,7 +651,7 @@ GDALDatasetPtr createGeoTIFF(const std::string &path, int width, int height, dou
 {
     GDALAllRegister();
 
-    GDALDriver *driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    GDALDriverH driver = GDALGetDriverByName("GTiff");
     if (!driver)
     {
         throw std::runtime_error("GTiff driver not available");
@@ -628,7 +666,7 @@ GDALDatasetPtr createGeoTIFF(const std::string &path, int width, int height, dou
     options = CSLSetNameValue(options, "PHOTOMETRIC", "RGB");
     options = CSLSetNameValue(options, "BIGTIFF", "IF_SAFER");
 
-    GDALDataset *dataset = driver->Create(path.c_str(), width, height, 4, GDT_Byte, options);
+    GDALDatasetH dataset = GDALCreate(driver, path.c_str(), width, height, 4, GDT_Byte, options);
 
     CSLDestroy(options);
 
@@ -637,27 +675,33 @@ GDALDatasetPtr createGeoTIFF(const std::string &path, int width, int height, dou
         throw std::runtime_error("Failed to create GeoTIFF: " + path);
     }
 
+    GDALDatasetWrapper ds_wrapper(dataset);
+
     // Set geotransform: [min_x, gsd, 0, max_y, 0, -gsd]
     double geotransform[6] = {min_x, gsd, 0, max_y, 0, -gsd};
-    dataset->SetGeoTransform(geotransform);
+    ds_wrapper.SetGeoTransform(geotransform);
 
     // Set projection
     if (!wkt.empty())
     {
-        dataset->SetProjection(wkt.c_str());
+        ds_wrapper.SetProjection(wkt.c_str());
     }
 
     // Set band interpretation
-    dataset->GetRasterBand(1)->SetColorInterpretation(GCI_RedBand);
-    dataset->GetRasterBand(2)->SetColorInterpretation(GCI_GreenBand);
-    dataset->GetRasterBand(3)->SetColorInterpretation(GCI_BlueBand);
-    dataset->GetRasterBand(4)->SetColorInterpretation(GCI_AlphaBand);
+    GDALRasterBandWrapper band1(ds_wrapper.GetRasterBand(1));
+    GDALRasterBandWrapper band2(ds_wrapper.GetRasterBand(2));
+    GDALRasterBandWrapper band3(ds_wrapper.GetRasterBand(3));
+    GDALRasterBandWrapper band4(ds_wrapper.GetRasterBand(4));
+    band1.SetColorInterpretation(GCI_RedBand);
+    band2.SetColorInterpretation(GCI_GreenBand);
+    band3.SetColorInterpretation(GCI_BlueBand);
+    band4.SetColorInterpretation(GCI_AlphaBand);
 
     return GDALDatasetPtr(dataset);
 }
 
 // Helper: Write tile data to GeoTIFF
-void writeTileToGeoTIFF(GDALDataset *dataset, int x_offset, int y_offset, int width, int height,
+void writeTileToGeoTIFF(GDALDatasetH dataset, int x_offset, int y_offset, int width, int height,
                         const std::vector<uint8_t> &buffer)
 {
     // Deinterleave RGBA -> separate bands
@@ -678,8 +722,10 @@ void writeTileToGeoTIFF(GDALDataset *dataset, int x_offset, int y_offset, int wi
     // Write each band
     for (int band = 1; band <= 4; band++)
     {
-        CPLErr err = dataset->GetRasterBand(band)->RasterIO(GF_Write, x_offset, y_offset, width, height,
-                                                            band_data[band - 1].data(), width, height, GDT_Byte, 0, 0);
+        GDALRasterBandH hBand = GDALGetRasterBand(dataset, band);
+        GDALRasterBandWrapper band_wrapper(hBand);
+        CPLErr err = band_wrapper.RasterIO(GF_Write, x_offset, y_offset, width, height, band_data[band - 1].data(),
+                                           width, height, GDT_Byte, 0, 0);
 
         if (err != CE_None)
         {
@@ -688,14 +734,13 @@ void writeTileToGeoTIFF(GDALDataset *dataset, int x_offset, int y_offset, int wi
     }
 }
 
-
 // Helper: Create GDAL GeoTIFF dataset for DSM (single float32 band)
 GDALDatasetPtr createDSMGeoTIFF(const std::string &path, int width, int height, double min_x, double max_y, double gsd,
                                 const std::string &wkt)
 {
     GDALAllRegister();
 
-    GDALDriver *driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    GDALDriverH driver = GDALGetDriverByName("GTiff");
     if (!driver)
     {
         throw std::runtime_error("GTiff driver not available");
@@ -709,7 +754,7 @@ GDALDatasetPtr createDSMGeoTIFF(const std::string &path, int width, int height, 
     options = CSLSetNameValue(options, "PREDICTOR", "2");
     options = CSLSetNameValue(options, "BIGTIFF", "IF_SAFER");
 
-    GDALDataset *dataset = driver->Create(path.c_str(), width, height, 1, GDT_Float32, options);
+    GDALDatasetH dataset = GDALCreate(driver, path.c_str(), width, height, 1, GDT_Float32, options);
 
     CSLDestroy(options);
 
@@ -718,23 +763,26 @@ GDALDatasetPtr createDSMGeoTIFF(const std::string &path, int width, int height, 
         throw std::runtime_error("Failed to create DSM GeoTIFF: " + path);
     }
 
+    GDALDatasetWrapper ds_wrapper(dataset);
+
     // Set geotransform: [min_x, gsd, 0, max_y, 0, -gsd]
     double geotransform[6] = {min_x, gsd, 0, max_y, 0, -gsd};
-    dataset->SetGeoTransform(geotransform);
+    ds_wrapper.SetGeoTransform(geotransform);
 
     // Set projection
     if (!wkt.empty())
     {
-        dataset->SetProjection(wkt.c_str());
+        ds_wrapper.SetProjection(wkt.c_str());
     }
 
     // Set nodata value for DSM
-    dataset->GetRasterBand(1)->SetNoDataValue(std::numeric_limits<float>::quiet_NaN());
+    GDALRasterBandWrapper band_wrapper(ds_wrapper.GetRasterBand(1));
+    band_wrapper.SetNoDataValue(std::numeric_limits<float>::quiet_NaN());
 
     return GDALDatasetPtr(dataset);
 }
 
-void processDSMTile(GDALDataset *dataset, int tile_x, int tile_y, int tile_size, const OrthoMosaicBounds &bounds,
+void processDSMTile(GDALDatasetH dataset, int tile_x, int tile_y, int tile_size, const OrthoMosaicBounds &bounds,
                     double gsd, int output_width, int output_height, const std::vector<surface_model> &surfaces,
                     double mean_camera_z)
 {
@@ -796,8 +844,9 @@ void processDSMTile(GDALDataset *dataset, int tile_x, int tile_y, int tile_size,
         }
     }
 
-    CPLErr err = dataset->GetRasterBand(1)->RasterIO(GF_Write, x_offset, y_offset, tile_width, tile_height,
-                                                     tile_buffer.data(), tile_width, tile_height, GDT_Float32, 0, 0);
+    GDALRasterBandWrapper band_wrapper(GDALGetRasterBand(dataset, 1));
+    CPLErr err = band_wrapper.RasterIO(GF_Write, x_offset, y_offset, tile_width, tile_height, tile_buffer.data(),
+                                       tile_width, tile_height, GDT_Float32, 0, 0);
 
     if (err != CE_None)
     {
@@ -825,6 +874,8 @@ void generateDSMGeoTIFF(const std::vector<surface_model> &surfaces, const Measur
         width = 100;
     if (height <= 0)
         height = 100;
+
+    clampOutputResolution(context.gsd, width, height, context, graph, "DSM");
 
     spdlog::info("DSM GSD: {}  Output dimensions: {}x{} pixels", context.gsd, width, height);
 
@@ -877,8 +928,9 @@ void generateDSMGeoTIFF(const std::vector<surface_model> &surfaces, const Measur
     }
     if (!overview_levels.empty())
     {
-        CPLErr err = dataset->BuildOverviews("AVERAGE", static_cast<int>(overview_levels.size()),
-                                             overview_levels.data(), 0, nullptr, nullptr, nullptr);
+        GDALDatasetWrapper ds_wrapper(dataset.get());
+        CPLErr err =
+            ds_wrapper.BuildOverviews("AVERAGE", static_cast<int>(overview_levels.size()), overview_levels.data());
         if (err != CE_None)
         {
             spdlog::warn("Failed to build DSM overviews");
@@ -888,7 +940,6 @@ void generateDSMGeoTIFF(const std::vector<surface_model> &surfaces, const Measur
     spdlog::info("DSM GeoTIFF generation complete: {}", output_path);
 }
 
-
 namespace
 {
 
@@ -897,7 +948,7 @@ GDALDatasetPtr createMultiBandGeoTIFF(const std::string &path, int width, int he
 {
     GDALAllRegister();
 
-    GDALDriver *driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    GDALDriverH driver = GDALGetDriverByName("GTiff");
     if (!driver)
     {
         throw std::runtime_error("GTiff driver not available");
@@ -911,7 +962,7 @@ GDALDatasetPtr createMultiBandGeoTIFF(const std::string &path, int width, int he
     options = CSLSetNameValue(options, "PREDICTOR", "2");
     options = CSLSetNameValue(options, "BIGTIFF", "IF_SAFER");
 
-    GDALDataset *dataset = driver->Create(path.c_str(), width, height, num_bands, data_type, options);
+    GDALDatasetH dataset = GDALCreate(driver, path.c_str(), width, height, num_bands, data_type, options);
     CSLDestroy(options);
 
     if (!dataset)
@@ -919,12 +970,14 @@ GDALDatasetPtr createMultiBandGeoTIFF(const std::string &path, int width, int he
         throw std::runtime_error("Failed to create multi-band GeoTIFF: " + path);
     }
 
+    GDALDatasetWrapper ds_wrapper(dataset);
+
     double geotransform[6] = {min_x, gsd, 0, max_y, 0, -gsd};
-    dataset->SetGeoTransform(geotransform);
+    ds_wrapper.SetGeoTransform(geotransform);
 
     if (!wkt.empty())
     {
-        dataset->SetProjection(wkt.c_str());
+        ds_wrapper.SetProjection(wkt.c_str());
     }
 
     return GDALDatasetPtr(dataset);
@@ -983,7 +1036,7 @@ void prefetchImages(const std::unordered_set<size_t> &camera_ids, const opencali
     }
 }
 
-void writeLayeredTileToGeoTIFF(GDALDataset *layers_ds, GDALDataset *cameras_ds,
+void writeLayeredTileToGeoTIFF(GDALDatasetH layers_ds, GDALDatasetH cameras_ds,
                                const opencalibration::orthomosaic::LayeredTileBuffer &tile, int x_offset, int y_offset)
 {
     int w = tile.width;
@@ -1017,37 +1070,43 @@ void writeLayeredTileToGeoTIFF(GDALDataset *layers_ds, GDALDataset *cameras_ds,
         // Bands are: layer0_B, layer0_G, layer0_R, layer0_A, layer1_B, ...
         int band_offset = layer * 4;
         CPLErr err;
-        err = layers_ds->GetRasterBand(band_offset + 1)
-                  ->RasterIO(GF_Write, x_offset, y_offset, w, h, band_b.data(), w, h, GDT_Byte, 0, 0);
+        GDALRasterBandWrapper band_b_wrapper(GDALGetRasterBand(layers_ds, band_offset + 1));
+        err = band_b_wrapper.RasterIO(GF_Write, x_offset, y_offset, w, h, band_b.data(), w, h, GDT_Byte, 0, 0);
         if (err != CE_None)
             throw std::runtime_error("Failed to write layered tile band B");
-        err = layers_ds->GetRasterBand(band_offset + 2)
-                  ->RasterIO(GF_Write, x_offset, y_offset, w, h, band_g.data(), w, h, GDT_Byte, 0, 0);
+
+        GDALRasterBandWrapper band_g_wrapper(GDALGetRasterBand(layers_ds, band_offset + 2));
+        err = band_g_wrapper.RasterIO(GF_Write, x_offset, y_offset, w, h, band_g.data(), w, h, GDT_Byte, 0, 0);
         if (err != CE_None)
             throw std::runtime_error("Failed to write layered tile band G");
-        err = layers_ds->GetRasterBand(band_offset + 3)
-                  ->RasterIO(GF_Write, x_offset, y_offset, w, h, band_r.data(), w, h, GDT_Byte, 0, 0);
+
+        GDALRasterBandWrapper band_r_wrapper(GDALGetRasterBand(layers_ds, band_offset + 3));
+        err = band_r_wrapper.RasterIO(GF_Write, x_offset, y_offset, w, h, band_r.data(), w, h, GDT_Byte, 0, 0);
         if (err != CE_None)
             throw std::runtime_error("Failed to write layered tile band R");
-        err = layers_ds->GetRasterBand(band_offset + 4)
-                  ->RasterIO(GF_Write, x_offset, y_offset, w, h, band_a.data(), w, h, GDT_Byte, 0, 0);
+
+        GDALRasterBandWrapper band_a_wrapper(GDALGetRasterBand(layers_ds, band_offset + 4));
+        err = band_a_wrapper.RasterIO(GF_Write, x_offset, y_offset, w, h, band_a.data(), w, h, GDT_Byte, 0, 0);
         if (err != CE_None)
             throw std::runtime_error("Failed to write layered tile band A");
 
         // Camera ID bands (two uint32 bands per layer for full 64-bit size_t)
         int cam_band_offset = layer * 2;
-        err = cameras_ds->GetRasterBand(cam_band_offset + 1)
-                  ->RasterIO(GF_Write, x_offset, y_offset, w, h, band_cam_lo.data(), w, h, GDT_UInt32, 0, 0);
+        GDALRasterBandWrapper band_cam_lo_wrapper(GDALGetRasterBand(cameras_ds, cam_band_offset + 1));
+        err = band_cam_lo_wrapper.RasterIO(GF_Write, x_offset, y_offset, w, h, band_cam_lo.data(), w, h, GDT_UInt32, 0,
+                                           0);
         if (err != CE_None)
             throw std::runtime_error("Failed to write camera ID band (lo)");
-        err = cameras_ds->GetRasterBand(cam_band_offset + 2)
-                  ->RasterIO(GF_Write, x_offset, y_offset, w, h, band_cam_hi.data(), w, h, GDT_UInt32, 0, 0);
+
+        GDALRasterBandWrapper band_cam_hi_wrapper(GDALGetRasterBand(cameras_ds, cam_band_offset + 2));
+        err = band_cam_hi_wrapper.RasterIO(GF_Write, x_offset, y_offset, w, h, band_cam_hi.data(), w, h, GDT_UInt32, 0,
+                                           0);
         if (err != CE_None)
             throw std::runtime_error("Failed to write camera ID band (hi)");
     }
 }
 
-void readLayeredTileFromGeoTIFF(GDALDataset *layers_ds, GDALDataset *cameras_ds,
+void readLayeredTileFromGeoTIFF(GDALDatasetH layers_ds, GDALDatasetH cameras_ds,
                                 opencalibration::orthomosaic::LayeredTileBuffer &tile, int x_offset, int y_offset,
                                 int w, int h, int num_layers)
 {
@@ -1061,30 +1120,36 @@ void readLayeredTileFromGeoTIFF(GDALDataset *layers_ds, GDALDataset *cameras_ds,
 
         int band_offset = layer * 4;
         CPLErr err;
-        err = layers_ds->GetRasterBand(band_offset + 1)
-                  ->RasterIO(GF_Read, x_offset, y_offset, w, h, band_b.data(), w, h, GDT_Byte, 0, 0);
+        GDALRasterBandWrapper band_b_wrapper(GDALGetRasterBand(layers_ds, band_offset + 1));
+        err = band_b_wrapper.RasterIO(GF_Read, x_offset, y_offset, w, h, band_b.data(), w, h, GDT_Byte, 0, 0);
         if (err != CE_None)
             throw std::runtime_error("Failed to read layered tile band B");
-        err = layers_ds->GetRasterBand(band_offset + 2)
-                  ->RasterIO(GF_Read, x_offset, y_offset, w, h, band_g.data(), w, h, GDT_Byte, 0, 0);
+
+        GDALRasterBandWrapper band_g_wrapper(GDALGetRasterBand(layers_ds, band_offset + 2));
+        err = band_g_wrapper.RasterIO(GF_Read, x_offset, y_offset, w, h, band_g.data(), w, h, GDT_Byte, 0, 0);
         if (err != CE_None)
             throw std::runtime_error("Failed to read layered tile band G");
-        err = layers_ds->GetRasterBand(band_offset + 3)
-                  ->RasterIO(GF_Read, x_offset, y_offset, w, h, band_r.data(), w, h, GDT_Byte, 0, 0);
+
+        GDALRasterBandWrapper band_r_wrapper(GDALGetRasterBand(layers_ds, band_offset + 3));
+        err = band_r_wrapper.RasterIO(GF_Read, x_offset, y_offset, w, h, band_r.data(), w, h, GDT_Byte, 0, 0);
         if (err != CE_None)
             throw std::runtime_error("Failed to read layered tile band R");
-        err = layers_ds->GetRasterBand(band_offset + 4)
-                  ->RasterIO(GF_Read, x_offset, y_offset, w, h, band_a.data(), w, h, GDT_Byte, 0, 0);
+
+        GDALRasterBandWrapper band_a_wrapper(GDALGetRasterBand(layers_ds, band_offset + 4));
+        err = band_a_wrapper.RasterIO(GF_Read, x_offset, y_offset, w, h, band_a.data(), w, h, GDT_Byte, 0, 0);
         if (err != CE_None)
             throw std::runtime_error("Failed to read layered tile band A");
 
         int cam_band_offset = layer * 2;
-        err = cameras_ds->GetRasterBand(cam_band_offset + 1)
-                  ->RasterIO(GF_Read, x_offset, y_offset, w, h, band_cam_lo.data(), w, h, GDT_UInt32, 0, 0);
+        GDALRasterBandWrapper band_cam_lo_wrapper(GDALGetRasterBand(cameras_ds, cam_band_offset + 1));
+        err =
+            band_cam_lo_wrapper.RasterIO(GF_Read, x_offset, y_offset, w, h, band_cam_lo.data(), w, h, GDT_UInt32, 0, 0);
         if (err != CE_None)
             throw std::runtime_error("Failed to read camera ID band (lo)");
-        err = cameras_ds->GetRasterBand(cam_band_offset + 2)
-                  ->RasterIO(GF_Read, x_offset, y_offset, w, h, band_cam_hi.data(), w, h, GDT_UInt32, 0, 0);
+
+        GDALRasterBandWrapper band_cam_hi_wrapper(GDALGetRasterBand(cameras_ds, cam_band_offset + 2));
+        err =
+            band_cam_hi_wrapper.RasterIO(GF_Read, x_offset, y_offset, w, h, band_cam_hi.data(), w, h, GDT_UInt32, 0, 0);
         if (err != CE_None)
             throw std::runtime_error("Failed to read camera ID band (hi)");
 
@@ -1334,6 +1399,8 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
     if (height <= 0)
         height = 100;
 
+    clampOutputResolution(context.gsd, width, height, context, graph, "Layered GeoTIFF");
+
     spdlog::info("GSD: {}  Output dimensions: {}x{} pixels, {} layers", context.gsd, width, height, config.num_layers);
 
     std::string wkt = coord_system.getWKT();
@@ -1452,21 +1519,22 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
     PerformanceMeasure p("Ortho pre-stage 2");
 
     GDALAllRegister();
-    GDALDatasetPtr layers_ds(static_cast<GDALDataset *>(GDALOpen(layers_path.c_str(), GA_ReadOnly)));
-    GDALDatasetPtr cameras_ds(static_cast<GDALDataset *>(GDALOpen(cameras_path.c_str(), GA_ReadOnly)));
+    GDALDatasetPtr layers_ds(GDALOpen(layers_path.c_str(), GA_ReadOnly));
+    GDALDatasetPtr cameras_ds(GDALOpen(cameras_path.c_str(), GA_ReadOnly));
 
     if (!layers_ds || !cameras_ds)
     {
         throw std::runtime_error("Failed to open intermediate GeoTIFFs for reading");
     }
 
-    int width = layers_ds->GetRasterXSize();
-    int height = layers_ds->GetRasterYSize();
-    int num_color_bands = layers_ds->GetRasterCount();
+    GDALDatasetWrapper layers_wrapper(layers_ds.get());
+    int width = layers_wrapper.GetRasterXSize();
+    int height = layers_wrapper.GetRasterYSize();
+    int num_color_bands = layers_wrapper.GetRasterCount();
     int num_layers = num_color_bands / 4;
 
     double geotransform[6];
-    layers_ds->GetGeoTransform(geotransform);
+    layers_wrapper.GetGeoTransform(geotransform);
     double min_x = geotransform[0];
     double max_y = geotransform[3];
     double gsd = geotransform[1];
@@ -1512,8 +1580,8 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
         PerformanceMeasure thread_perf("Ortho stage 2");
 
         // Each thread opens its own read-only handles to avoid serializing reads
-        GDALDatasetPtr thread_layers_ds(static_cast<GDALDataset *>(GDALOpen(layers_path.c_str(), GA_ReadOnly)));
-        GDALDatasetPtr thread_cameras_ds(static_cast<GDALDataset *>(GDALOpen(cameras_path.c_str(), GA_ReadOnly)));
+        GDALDatasetPtr thread_layers_ds(GDALOpen(layers_path.c_str(), GA_ReadOnly));
+        GDALDatasetPtr thread_cameras_ds(GDALOpen(cameras_path.c_str(), GA_ReadOnly));
 
 #pragma omp for schedule(dynamic)
         for (int tile_idx = 0; tile_idx < total_tiles; tile_idx++)
@@ -1738,8 +1806,9 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
     }
     if (!overview_levels.empty())
     {
-        CPLErr err = output_ds->BuildOverviews("AVERAGE", static_cast<int>(overview_levels.size()),
-                                               overview_levels.data(), 0, nullptr, nullptr, nullptr);
+        GDALDatasetWrapper output_wrapper(output_ds.get());
+        CPLErr err =
+            output_wrapper.BuildOverviews("AVERAGE", static_cast<int>(overview_levels.size()), overview_levels.data());
         if (err != CE_None)
         {
             spdlog::warn("Failed to build overviews");

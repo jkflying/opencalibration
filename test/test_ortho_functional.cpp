@@ -106,10 +106,11 @@ TEST(CameraIdRoundTrip, uint64_camera_ids_survive_geotiff_sidecar)
     int w = 4, h = 4, num_layers = 2;
     std::string sidecar_path = TEST_DATA_OUTPUT_DIR "test_camera_id_sidecar.tif";
 
-    GDALDriver *driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    GDALDriverH driver = GDALGetDriverByName("GTiff");
     ASSERT_NE(driver, nullptr);
-    GDALDatasetPtr write_ds(driver->Create(sidecar_path.c_str(), w, h, num_layers * 2, GDT_UInt32, nullptr));
-    ASSERT_NE(write_ds, nullptr);
+    GDALDatasetH hWriteDs = GDALCreate(driver, sidecar_path.c_str(), w, h, num_layers * 2, GDT_UInt32, nullptr);
+    GDALDatasetPtr write_ds(hWriteDs);
+    ASSERT_NE(write_ds.get(), nullptr);
 
     std::vector<size_t> test_ids = {
         0xDEADBEEF12345678ULL, // large 64-bit value
@@ -130,17 +131,18 @@ TEST(CameraIdRoundTrip, uint64_camera_ids_survive_geotiff_sidecar)
 
         int cam_band_offset = layer * 2;
         CPLErr err;
-        err = write_ds->GetRasterBand(cam_band_offset + 1)
-                  ->RasterIO(GF_Write, 0, 0, w, h, lo.data(), w, h, GDT_UInt32, 0, 0);
+        GDALRasterBandWrapper band_lo(GDALGetRasterBand(write_ds.get(), cam_band_offset + 1));
+        err = band_lo.RasterIO(GF_Write, 0, 0, w, h, lo.data(), w, h, GDT_UInt32, 0, 0);
         ASSERT_EQ(err, CE_None);
-        err = write_ds->GetRasterBand(cam_band_offset + 2)
-                  ->RasterIO(GF_Write, 0, 0, w, h, hi.data(), w, h, GDT_UInt32, 0, 0);
+
+        GDALRasterBandWrapper band_hi(GDALGetRasterBand(write_ds.get(), cam_band_offset + 2));
+        err = band_hi.RasterIO(GF_Write, 0, 0, w, h, hi.data(), w, h, GDT_UInt32, 0, 0);
         ASSERT_EQ(err, CE_None);
     }
 
     write_ds.reset();
-    GDALDatasetPtr read_ds(static_cast<GDALDataset *>(GDALOpen(sidecar_path.c_str(), GA_ReadOnly)));
-    ASSERT_NE(read_ds, nullptr);
+    GDALDatasetPtr read_ds(GDALOpen(sidecar_path.c_str(), GA_ReadOnly));
+    ASSERT_NE(read_ds.get(), nullptr);
 
     // WHEN: We read back the camera IDs
     for (int layer = 0; layer < num_layers; layer++)
@@ -149,11 +151,12 @@ TEST(CameraIdRoundTrip, uint64_camera_ids_survive_geotiff_sidecar)
         int cam_band_offset = layer * 2;
 
         CPLErr err;
-        err = read_ds->GetRasterBand(cam_band_offset + 1)
-                  ->RasterIO(GF_Read, 0, 0, w, h, lo.data(), w, h, GDT_UInt32, 0, 0);
+        GDALRasterBandWrapper band_read_lo(GDALGetRasterBand(read_ds.get(), cam_band_offset + 1));
+        err = band_read_lo.RasterIO(GF_Read, 0, 0, w, h, lo.data(), w, h, GDT_UInt32, 0, 0);
         ASSERT_EQ(err, CE_None);
-        err = read_ds->GetRasterBand(cam_band_offset + 2)
-                  ->RasterIO(GF_Read, 0, 0, w, h, hi.data(), w, h, GDT_UInt32, 0, 0);
+
+        GDALRasterBandWrapper band_read_hi(GDALGetRasterBand(read_ds.get(), cam_band_offset + 2));
+        err = band_read_hi.RasterIO(GF_Read, 0, 0, w, h, hi.data(), w, h, GDT_UInt32, 0, 0);
         ASSERT_EQ(err, CE_None);
 
         // THEN: Reconstructed 64-bit IDs should match the originals
@@ -252,7 +255,7 @@ struct ortho : public ::testing::Test
         // Pass 2: Blend (skip color balance for tests - use empty result)
         ColorBalanceResult color_balance{};
         blendLayeredGeoTIFF(layers_path, cameras_path, output_path, color_balance, surfaces, graph_ref, coord_system,
-                           config);
+                            config);
     }
 };
 
@@ -299,31 +302,37 @@ TEST_F(ortho, geotiff_creation)
 
     // Verify GeoTIFF properties using GDAL
     GDALDatasetPtr dataset = openGDALDataset(output_path);
-    ASSERT_NE(dataset, nullptr);
+    ASSERT_NE(dataset.get(), nullptr);
+
+    GDALDatasetWrapper ds_wrapper(dataset.get());
 
     // Check dimensions
-    EXPECT_GT(dataset->GetRasterXSize(), 0);
-    EXPECT_GT(dataset->GetRasterYSize(), 0);
+    EXPECT_GT(ds_wrapper.GetRasterXSize(), 0);
+    EXPECT_GT(ds_wrapper.GetRasterYSize(), 0);
 
     // Check number of bands (should be 4: RGBA)
-    EXPECT_EQ(dataset->GetRasterCount(), 4);
+    EXPECT_EQ(ds_wrapper.GetRasterCount(), 4);
 
     // Check geotransform
     double geotransform[6];
-    dataset->GetGeoTransform(geotransform);
+    ds_wrapper.GetGeoTransform(geotransform);
     EXPECT_GT(geotransform[1], 0); // GSD (pixel width)
     EXPECT_LT(geotransform[5], 0); // Negative pixel height
 
     // Check projection (should have WKT)
-    const char *projection = dataset->GetProjectionRef();
+    const char *projection = ds_wrapper.GetProjectionRef();
     EXPECT_NE(projection, nullptr);
     EXPECT_GT(strlen(projection), 0);
 
     // Check band color interpretation
-    EXPECT_EQ(dataset->GetRasterBand(1)->GetColorInterpretation(), GCI_RedBand);
-    EXPECT_EQ(dataset->GetRasterBand(2)->GetColorInterpretation(), GCI_GreenBand);
-    EXPECT_EQ(dataset->GetRasterBand(3)->GetColorInterpretation(), GCI_BlueBand);
-    EXPECT_EQ(dataset->GetRasterBand(4)->GetColorInterpretation(), GCI_AlphaBand);
+    GDALRasterBandWrapper band1(ds_wrapper.GetRasterBand(1));
+    GDALRasterBandWrapper band2(ds_wrapper.GetRasterBand(2));
+    GDALRasterBandWrapper band3(ds_wrapper.GetRasterBand(3));
+    GDALRasterBandWrapper band4(ds_wrapper.GetRasterBand(4));
+    EXPECT_EQ(band1.GetColorInterpretation(), GCI_RedBand);
+    EXPECT_EQ(band2.GetColorInterpretation(), GCI_GreenBand);
+    EXPECT_EQ(band3.GetColorInterpretation(), GCI_BlueBand);
+    EXPECT_EQ(band4.GetColorInterpretation(), GCI_AlphaBand);
 
     // Clean up not needed - output directory is for test artifacts
 }
@@ -367,11 +376,12 @@ TEST_F(ortho, geotiff_small_tile_size)
     EXPECT_TRUE(std::filesystem::exists(output_path));
 
     GDALDatasetPtr dataset = openGDALDataset(output_path);
-    ASSERT_NE(dataset, nullptr);
+    ASSERT_NE(dataset.get(), nullptr);
 
-    EXPECT_GT(dataset->GetRasterXSize(), 0);
-    EXPECT_GT(dataset->GetRasterYSize(), 0);
-    EXPECT_EQ(dataset->GetRasterCount(), 4);
+    GDALDatasetWrapper ds_wrapper(dataset.get());
+    EXPECT_GT(ds_wrapper.GetRasterXSize(), 0);
+    EXPECT_GT(ds_wrapper.GetRasterYSize(), 0);
+    EXPECT_EQ(ds_wrapper.GetRasterCount(), 4);
 
     // Clean up not needed - output directory is for test artifacts
 }
@@ -395,9 +405,9 @@ TEST_F(ortho, pixel_values_with_known_colors)
     // Create test images with known distinct colors
     std::vector<std::string> temp_image_paths;
     std::vector<cv::Scalar> colors = {
-        cv::Scalar(0, 0, 255),     // Image 0: Pure red in RGB (0, 0, 255 in BGR)
-        cv::Scalar(0, 255, 0),     // Image 1: Pure green in RGB (0, 255, 0 in BGR)
-        cv::Scalar(255, 0, 0)      // Image 2: Pure blue in RGB (255, 0, 0 in BGR)
+        cv::Scalar(0, 0, 255), // Image 0: Pure red in RGB (0, 0, 255 in BGR)
+        cv::Scalar(0, 255, 0), // Image 1: Pure green in RGB (0, 255, 0 in BGR)
+        cv::Scalar(255, 0, 0)  // Image 2: Pure blue in RGB (255, 0, 0 in BGR)
     };
 
     for (int i = 0; i < 3; i++)
@@ -421,17 +431,18 @@ TEST_F(ortho, pixel_values_with_known_colors)
     EXPECT_TRUE(std::filesystem::exists(output_path));
 
     GDALDatasetPtr dataset = openGDALDataset(output_path);
-    ASSERT_NE(dataset, nullptr);
+    ASSERT_NE(dataset.get(), nullptr);
 
-    int width = dataset->GetRasterXSize();
-    int height = dataset->GetRasterYSize();
+    GDALDatasetWrapper ds_wrapper(dataset.get());
+    int width = ds_wrapper.GetRasterXSize();
+    int height = ds_wrapper.GetRasterYSize();
     EXPECT_GT(width, 0);
     EXPECT_GT(height, 0);
-    EXPECT_EQ(dataset->GetRasterCount(), 4); // RGBA
+    EXPECT_EQ(ds_wrapper.GetRasterCount(), 4); // RGBA
 
     // Verify geotransform is valid and invertible
     double geotransform[6];
-    EXPECT_EQ(dataset->GetGeoTransform(geotransform), CE_None);
+    EXPECT_EQ(ds_wrapper.GetGeoTransform(geotransform), CE_None);
     EXPECT_GT(geotransform[1], 0); // Pixel width (GSD)
     EXPECT_LT(geotransform[5], 0); // Negative pixel height
     double gsd = geotransform[1];
@@ -440,10 +451,10 @@ TEST_F(ortho, pixel_values_with_known_colors)
 
     // Sample pixels from the center and corners to verify blending
     std::vector<std::pair<int, int>> test_pixels = {
-        {width / 2, height / 2},      // Center of image
-        {width / 4, height / 4},      // Upper-left quadrant
-        {3 * width / 4, height / 4},  // Upper-right quadrant
-        {width / 4, 3 * height / 4},  // Lower-left quadrant
+        {width / 2, height / 2},        // Center of image
+        {width / 4, height / 4},        // Upper-left quadrant
+        {3 * width / 4, height / 4},    // Upper-right quadrant
+        {width / 4, 3 * height / 4},    // Lower-left quadrant
         {3 * width / 4, 3 * height / 4} // Lower-right quadrant
     };
 
@@ -476,7 +487,7 @@ TEST_F(ortho, pixel_values_with_known_colors)
         // Verify alpha is either 255 (valid data) or 0 (no data)
         // The test surface should be covered by at least some images
         EXPECT_TRUE(a == 255 || a == 0) << "Alpha at (" << px << ", " << py << ") is " << (int)a
-                                         << ", expected 0 or 255";
+                                        << ", expected 0 or 255";
 
         // If pixel has valid data (alpha == 255), verify RGB values are reasonable
         if (a == 255)
@@ -521,9 +532,9 @@ TEST_F(ortho, single_image_coverage)
     // Create distinct colored test images
     std::vector<std::string> temp_image_paths;
     std::vector<cv::Scalar> colors = {
-        cv::Scalar(0, 0, 255),     // Image 0: Pure red
-        cv::Scalar(0, 255, 0),     // Image 1: Pure green
-        cv::Scalar(255, 0, 0)      // Image 2: Pure blue
+        cv::Scalar(0, 0, 255), // Image 0: Pure red
+        cv::Scalar(0, 255, 0), // Image 1: Pure green
+        cv::Scalar(255, 0, 0)  // Image 2: Pure blue
     };
 
     for (int i = 0; i < 3; i++)
@@ -547,10 +558,11 @@ TEST_F(ortho, single_image_coverage)
     EXPECT_TRUE(std::filesystem::exists(output_path));
 
     GDALDatasetPtr dataset = openGDALDataset(output_path);
-    ASSERT_NE(dataset, nullptr);
+    ASSERT_NE(dataset.get(), nullptr);
 
-    int width = dataset->GetRasterXSize();
-    int height = dataset->GetRasterYSize();
+    GDALDatasetWrapper ds_wrapper(dataset.get());
+    int width = ds_wrapper.GetRasterXSize();
+    int height = ds_wrapper.GetRasterYSize();
     EXPECT_GT(width, 0);
     EXPECT_GT(height, 0);
 
@@ -563,8 +575,8 @@ TEST_F(ortho, single_image_coverage)
     int region_size = std::min(width, height) / 4;
 
     std::vector<uint8_t> alpha_data(region_size * region_size);
-    CPLErr err = GDALRasterIO(alpha_band, GF_Read, center_x, center_y, region_size, region_size,
-                              alpha_data.data(), region_size, region_size, GDT_Byte, 0, 0);
+    CPLErr err = GDALRasterIO(alpha_band, GF_Read, center_x, center_y, region_size, region_size, alpha_data.data(),
+                              region_size, region_size, GDT_Byte, 0, 0);
 
     EXPECT_EQ(err, CE_None);
 

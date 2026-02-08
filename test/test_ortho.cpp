@@ -13,7 +13,6 @@
 
 #include <ceres/jet.h>
 #include <eigen3/Eigen/Eigenvalues>
-#include <gdal/gdal_priv.h>
 #include <gtest/gtest.h>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>

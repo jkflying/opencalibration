@@ -97,36 +97,42 @@ TEST(pipeline, generates_geotiff_when_requested)
     // AND: it should be a valid GeoTIFF with proper properties
     using namespace opencalibration::orthomosaic;
     GDALDatasetPtr dataset = openGDALDataset(output_path);
-    ASSERT_NE(dataset, nullptr) << "Failed to open GeoTIFF file";
+    ASSERT_NE(dataset.get(), nullptr) << "Failed to open GeoTIFF file";
+
+    GDALDatasetWrapper ds_wrapper(dataset.get());
 
     // Verify dimensions
-    EXPECT_GT(dataset->GetRasterXSize(), 0) << "GeoTIFF width should be > 0";
-    EXPECT_GT(dataset->GetRasterYSize(), 0) << "GeoTIFF height should be > 0";
+    EXPECT_GT(ds_wrapper.GetRasterXSize(), 0) << "GeoTIFF width should be > 0";
+    EXPECT_GT(ds_wrapper.GetRasterYSize(), 0) << "GeoTIFF height should be > 0";
 
     // Verify 4 bands (RGBA)
-    EXPECT_EQ(dataset->GetRasterCount(), 4) << "GeoTIFF should have 4 bands (RGBA)";
+    EXPECT_EQ(ds_wrapper.GetRasterCount(), 4) << "GeoTIFF should have 4 bands (RGBA)";
 
     // Verify geotransform is set
     double geotransform[6];
-    CPLErr err = dataset->GetGeoTransform(geotransform);
+    CPLErr err = ds_wrapper.GetGeoTransform(geotransform);
     EXPECT_EQ(err, CE_None) << "GeoTIFF should have a geotransform";
     EXPECT_GT(geotransform[1], 0) << "GSD (pixel width) should be > 0";
     EXPECT_LT(geotransform[5], 0) << "Pixel height should be negative (north-up orientation)";
 
     // Verify projection is set
-    const char *projection = dataset->GetProjectionRef();
+    const char *projection = ds_wrapper.GetProjectionRef();
     EXPECT_NE(projection, nullptr) << "GeoTIFF should have a projection";
     EXPECT_GT(strlen(projection), 0) << "Projection WKT should not be empty";
 
     // Verify band color interpretation
-    EXPECT_EQ(dataset->GetRasterBand(1)->GetColorInterpretation(), GCI_RedBand);
-    EXPECT_EQ(dataset->GetRasterBand(2)->GetColorInterpretation(), GCI_GreenBand);
-    EXPECT_EQ(dataset->GetRasterBand(3)->GetColorInterpretation(), GCI_BlueBand);
-    EXPECT_EQ(dataset->GetRasterBand(4)->GetColorInterpretation(), GCI_AlphaBand);
+    GDALRasterBandWrapper band1(ds_wrapper.GetRasterBand(1));
+    GDALRasterBandWrapper band2(ds_wrapper.GetRasterBand(2));
+    GDALRasterBandWrapper band3(ds_wrapper.GetRasterBand(3));
+    GDALRasterBandWrapper band4(ds_wrapper.GetRasterBand(4));
+    EXPECT_EQ(band1.GetColorInterpretation(), GCI_RedBand);
+    EXPECT_EQ(band2.GetColorInterpretation(), GCI_GreenBand);
+    EXPECT_EQ(band3.GetColorInterpretation(), GCI_BlueBand);
+    EXPECT_EQ(band4.GetColorInterpretation(), GCI_AlphaBand);
 
     // Verify internal tiling is enabled
     int block_x, block_y;
-    dataset->GetRasterBand(1)->GetBlockSize(&block_x, &block_y);
+    band1.GetBlockSize(&block_x, &block_y);
     EXPECT_EQ(block_x, 512) << "GeoTIFF should have 512×512 internal tile blocks";
     EXPECT_EQ(block_y, 512);
 
