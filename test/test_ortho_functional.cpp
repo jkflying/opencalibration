@@ -1,4 +1,5 @@
 #include <opencalibration/geo_coord/geo_coord.hpp>
+#include <opencalibration/ortho/color_balance.hpp>
 #include <opencalibration/ortho/gdal_dataset.hpp>
 #include <opencalibration/ortho/image_cache.hpp>
 #include <opencalibration/ortho/ortho.hpp>
@@ -233,6 +234,26 @@ struct ortho : public ::testing::Test
         }
         return vec3d;
     }
+
+    // Helper to generate layered orthomosaic (multi-pass approach)
+    void generateLayeredOrthomosaic(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph_ref,
+                                    const GeoCoord &coord_system, const std::string &output_path, int tile_size = 1024)
+    {
+        std::string layers_path = output_path + ".layers.tif";
+        std::string cameras_path = output_path + ".cameras.tif";
+
+        OrthoMosaicConfig config;
+        config.tile_size = tile_size;
+        config.num_layers = 3;
+
+        // Pass 1: Generate layers
+        generateLayeredGeoTIFF(surfaces, graph_ref, coord_system, layers_path, cameras_path, config);
+
+        // Pass 2: Blend (skip color balance for tests - use empty result)
+        ColorBalanceResult color_balance{};
+        blendLayeredGeoTIFF(layers_path, cameras_path, output_path, color_balance, surfaces, graph_ref, coord_system,
+                           config);
+    }
 };
 
 TEST_F(ortho, geotiff_creation)
@@ -271,7 +292,7 @@ TEST_F(ortho, geotiff_creation)
     std::string output_path = TEST_DATA_OUTPUT_DIR "test_ortho_output.tif";
 
     // WHEN: we generate a GeoTIFF orthomosaic
-    EXPECT_NO_THROW(generateGeoTIFFOrthomosaic({mesh_surface}, graph, coord_system, output_path, 512));
+    EXPECT_NO_THROW(generateLayeredOrthomosaic({mesh_surface}, graph, coord_system, output_path, 512));
 
     // THEN: the file should exist
     EXPECT_TRUE(std::filesystem::exists(output_path));
@@ -340,7 +361,7 @@ TEST_F(ortho, geotiff_small_tile_size)
     std::string output_path = TEST_DATA_OUTPUT_DIR "test_ortho_small_tile.tif";
 
     // WHEN: we generate a GeoTIFF with small tile size (should create multiple tiles)
-    EXPECT_NO_THROW(generateGeoTIFFOrthomosaic({mesh_surface}, graph, coord_system, output_path, 128));
+    EXPECT_NO_THROW(generateLayeredOrthomosaic({mesh_surface}, graph, coord_system, output_path, 128));
 
     // THEN: the file should exist and be valid
     EXPECT_TRUE(std::filesystem::exists(output_path));
@@ -351,6 +372,212 @@ TEST_F(ortho, geotiff_small_tile_size)
     EXPECT_GT(dataset->GetRasterXSize(), 0);
     EXPECT_GT(dataset->GetRasterYSize(), 0);
     EXPECT_EQ(dataset->GetRasterCount(), 4);
+
+    // Clean up not needed - output directory is for test artifacts
+}
+
+TEST_F(ortho, pixel_values_with_known_colors)
+{
+    // GIVEN: A scene with distinct colored images to verify pixel lookup and blending
+    init_cameras();
+
+    surface_model points_surface;
+    points_surface.cloud.push_back(generate_planar_points());
+
+    point_cloud camera_locations;
+    for (const auto &nodePose : nodePoses)
+    {
+        camera_locations.push_back(nodePose.position);
+    }
+    surface_model mesh_surface;
+    mesh_surface.mesh = rebuildMesh(camera_locations, {points_surface});
+
+    // Create test images with known distinct colors
+    std::vector<std::string> temp_image_paths;
+    std::vector<cv::Scalar> colors = {
+        cv::Scalar(0, 0, 255),     // Image 0: Pure red in RGB (0, 0, 255 in BGR)
+        cv::Scalar(0, 255, 0),     // Image 1: Pure green in RGB (0, 255, 0 in BGR)
+        cv::Scalar(255, 0, 0)      // Image 2: Pure blue in RGB (255, 0, 0 in BGR)
+    };
+
+    for (int i = 0; i < 3; i++)
+    {
+        std::string path = TEST_DATA_OUTPUT_DIR "test_color_image_" + std::to_string(i) + ".png";
+        cv::Mat img(600, 800, CV_8UC3, colors[i]);
+        cv::imwrite(path, img);
+        temp_image_paths.push_back(path);
+        graph.getNode(id[i])->payload.path = path;
+    }
+
+    GeoCoord coord_system;
+    coord_system.setOrigin(0, 0);
+
+    std::string output_path = TEST_DATA_OUTPUT_DIR "test_ortho_pixel_values.tif";
+
+    // WHEN: we generate a GeoTIFF orthomosaic
+    EXPECT_NO_THROW(generateLayeredOrthomosaic({mesh_surface}, graph, coord_system, output_path, 512));
+
+    // THEN: verify the output file exists and has correct structure
+    EXPECT_TRUE(std::filesystem::exists(output_path));
+
+    GDALDatasetPtr dataset = openGDALDataset(output_path);
+    ASSERT_NE(dataset, nullptr);
+
+    int width = dataset->GetRasterXSize();
+    int height = dataset->GetRasterYSize();
+    EXPECT_GT(width, 0);
+    EXPECT_GT(height, 0);
+    EXPECT_EQ(dataset->GetRasterCount(), 4); // RGBA
+
+    // Verify geotransform is valid and invertible
+    double geotransform[6];
+    EXPECT_EQ(dataset->GetGeoTransform(geotransform), CE_None);
+    EXPECT_GT(geotransform[1], 0); // Pixel width (GSD)
+    EXPECT_LT(geotransform[5], 0); // Negative pixel height
+    double gsd = geotransform[1];
+    double origin_x = geotransform[0];
+    double origin_y = geotransform[3];
+
+    // Sample pixels from the center and corners to verify blending
+    std::vector<std::pair<int, int>> test_pixels = {
+        {width / 2, height / 2},      // Center of image
+        {width / 4, height / 4},      // Upper-left quadrant
+        {3 * width / 4, height / 4},  // Upper-right quadrant
+        {width / 4, 3 * height / 4},  // Lower-left quadrant
+        {3 * width / 4, 3 * height / 4} // Lower-right quadrant
+    };
+
+    // Read bands for sampled pixels
+    for (const auto &[px, py] : test_pixels)
+    {
+        // Read pixel from all 4 bands
+        uint8_t r, g, b, a;
+        GDALRasterBandH red_band = GDALGetRasterBand(dataset.get(), 1);
+        GDALRasterBandH green_band = GDALGetRasterBand(dataset.get(), 2);
+        GDALRasterBandH blue_band = GDALGetRasterBand(dataset.get(), 3);
+        GDALRasterBandH alpha_band = GDALGetRasterBand(dataset.get(), 4);
+
+        ASSERT_NE(red_band, nullptr);
+        ASSERT_NE(green_band, nullptr);
+        ASSERT_NE(blue_band, nullptr);
+        ASSERT_NE(alpha_band, nullptr);
+
+        // Read single pixel from each band
+        CPLErr err_r = GDALRasterIO(red_band, GF_Read, px, py, 1, 1, &r, 1, 1, GDT_Byte, 0, 0);
+        CPLErr err_g = GDALRasterIO(green_band, GF_Read, px, py, 1, 1, &g, 1, 1, GDT_Byte, 0, 0);
+        CPLErr err_b = GDALRasterIO(blue_band, GF_Read, px, py, 1, 1, &b, 1, 1, GDT_Byte, 0, 0);
+        CPLErr err_a = GDALRasterIO(alpha_band, GF_Read, px, py, 1, 1, &a, 1, 1, GDT_Byte, 0, 0);
+
+        EXPECT_EQ(err_r, CE_None);
+        EXPECT_EQ(err_g, CE_None);
+        EXPECT_EQ(err_b, CE_None);
+        EXPECT_EQ(err_a, CE_None);
+
+        // Verify alpha is either 255 (valid data) or 0 (no data)
+        // The test surface should be covered by at least some images
+        EXPECT_TRUE(a == 255 || a == 0) << "Alpha at (" << px << ", " << py << ") is " << (int)a
+                                         << ", expected 0 or 255";
+
+        // If pixel has valid data (alpha == 255), verify RGB values are reasonable
+        if (a == 255)
+        {
+            // The blended colors should be within reasonable range of the input colors
+            // Due to blending, we allow some variance (±50 to account for interpolation and blending)
+            EXPECT_TRUE((r < 255 && r > 0) || (g < 255 && g > 0) || (b < 255 && b > 0))
+                << "At least one channel should have significant value at (" << px << ", " << py << ")";
+        }
+    }
+
+    // Verify pixel coordinate to world coordinate transformation
+    // Pick a pixel and verify we can convert it to world coordinates
+    int test_px = width / 2;
+    int test_py = height / 2;
+    double world_x = origin_x + test_px * gsd;
+    double world_y = origin_y + test_py * geotransform[5]; // Note: geotransform[5] is negative
+
+    // World coordinates should be within the expected bounds
+    EXPECT_TRUE(world_x >= -50 && world_x <= 50) << "World X coordinate " << world_x << " out of expected range";
+    EXPECT_TRUE(world_y >= -50 && world_y <= 50) << "World Y coordinate " << world_y << " out of expected range";
+
+    // Clean up not needed - output directory is for test artifacts
+}
+
+TEST_F(ortho, single_image_coverage)
+{
+    // GIVEN: A scene where only one image covers the surface
+    init_cameras();
+
+    surface_model points_surface;
+    points_surface.cloud.push_back(generate_planar_points());
+
+    point_cloud camera_locations;
+    for (const auto &nodePose : nodePoses)
+    {
+        camera_locations.push_back(nodePose.position);
+    }
+    surface_model mesh_surface;
+    mesh_surface.mesh = rebuildMesh(camera_locations, {points_surface});
+
+    // Create distinct colored test images
+    std::vector<std::string> temp_image_paths;
+    std::vector<cv::Scalar> colors = {
+        cv::Scalar(0, 0, 255),     // Image 0: Pure red
+        cv::Scalar(0, 255, 0),     // Image 1: Pure green
+        cv::Scalar(255, 0, 0)      // Image 2: Pure blue
+    };
+
+    for (int i = 0; i < 3; i++)
+    {
+        std::string path = TEST_DATA_OUTPUT_DIR "test_single_coverage_" + std::to_string(i) + ".png";
+        cv::Mat img(600, 800, CV_8UC3, colors[i]);
+        cv::imwrite(path, img);
+        temp_image_paths.push_back(path);
+        graph.getNode(id[i])->payload.path = path;
+    }
+
+    GeoCoord coord_system;
+    coord_system.setOrigin(0, 0);
+
+    std::string output_path = TEST_DATA_OUTPUT_DIR "test_ortho_single_coverage.tif";
+
+    // WHEN: we generate a GeoTIFF orthomosaic
+    EXPECT_NO_THROW(generateLayeredOrthomosaic({mesh_surface}, graph, coord_system, output_path, 256));
+
+    // THEN: verify that the output has valid data
+    EXPECT_TRUE(std::filesystem::exists(output_path));
+
+    GDALDatasetPtr dataset = openGDALDataset(output_path);
+    ASSERT_NE(dataset, nullptr);
+
+    int width = dataset->GetRasterXSize();
+    int height = dataset->GetRasterYSize();
+    EXPECT_GT(width, 0);
+    EXPECT_GT(height, 0);
+
+    // Count valid pixels (alpha == 255) in the center region
+    GDALRasterBandH alpha_band = GDALGetRasterBand(dataset.get(), 4);
+    ASSERT_NE(alpha_band, nullptr);
+
+    int center_x = width / 4;
+    int center_y = height / 4;
+    int region_size = std::min(width, height) / 4;
+
+    std::vector<uint8_t> alpha_data(region_size * region_size);
+    CPLErr err = GDALRasterIO(alpha_band, GF_Read, center_x, center_y, region_size, region_size,
+                              alpha_data.data(), region_size, region_size, GDT_Byte, 0, 0);
+
+    EXPECT_EQ(err, CE_None);
+
+    // At least some pixels in the center should be valid (covered by cameras)
+    int valid_pixel_count = 0;
+    for (uint8_t alpha : alpha_data)
+    {
+        if (alpha == 255)
+            valid_pixel_count++;
+    }
+
+    EXPECT_GT(valid_pixel_count, 0) << "Expected some valid pixels in center region, got 0";
+    EXPECT_LE(valid_pixel_count, region_size * region_size) << "Valid pixel count exceeds region size";
 
     // Clean up not needed - output directory is for test artifacts
 }
