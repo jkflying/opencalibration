@@ -1217,8 +1217,8 @@ TEST(refine_mesh, triangle_locator_matches_brute_force_minimal_mesh)
 
             if (brute.edgeId == 0)
             {
-                EXPECT_EQ(fast.edgeId, 0) << "Locator found triangle at (" << x << ", " << y
-                                          << ") but brute force didn't";
+                EXPECT_EQ(fast.edgeId, 0)
+                    << "Locator found triangle at (" << x << ", " << y << ") but brute force didn't";
             }
             else
             {

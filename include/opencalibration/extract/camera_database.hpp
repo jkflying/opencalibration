@@ -24,6 +24,7 @@ struct CameraDBEntry
     Eigen::Vector3d radial_distortion{0, 0, 0};
     Eigen::Vector2d tangential_distortion{0, 0};
     Eigen::Vector2d principal_point_offset{0, 0};
+    double focal_length_pixels = NAN;
 };
 
 class CameraDatabase

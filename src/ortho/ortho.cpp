@@ -697,8 +697,7 @@ void writeTileToGeoTIFF(GDALDataset *dataset, int x_offset, int y_offset, int wi
 void processTile(GDALDataset *dataset, int tile_x, int tile_y, int tile_size, const OrthoMosaicBounds &bounds,
                  double gsd, int output_width, int output_height, const std::vector<surface_model> &surfaces,
                  const MeasurementGraph &graph, const jk::tree::KDTree<size_t, 2> &imageGPSLocations,
-                 double mean_camera_z,
-                 const std::unordered_map<size_t, Eigen::Matrix3d> &inv_rotation_cache,
+                 double mean_camera_z, const std::unordered_map<size_t, Eigen::Matrix3d> &inv_rotation_cache,
                  FullResolutionImageCache &image_cache)
 {
     int x_offset = tile_x * tile_size;
@@ -1082,8 +1081,7 @@ void generateGeoTIFFOrthomosaic(const std::vector<surface_model> &surfaces, cons
         for (int tile_x = 0; tile_x < num_tiles_x; tile_x++)
         {
             processTile(dataset.get(), tile_x, tile_y, tile_size, context.bounds, context.gsd, width, height, surfaces,
-                        graph, context.imageGPSLocations, context.mean_camera_z,
-                        inv_rotation_cache, image_cache);
+                        graph, context.imageGPSLocations, context.mean_camera_z, inv_rotation_cache, image_cache);
 
             completed_tiles++;
 
@@ -1191,7 +1189,7 @@ std::unordered_set<size_t> findTileCameras(int tile_x, int tile_y, int tile_size
             double x = global_col * gsd + bounds.min_x;
             double y = bounds.max_y - global_row * gsd;
 
-            const auto& closest5 = searcher.search({x, y}, INFINITY, 5);
+            const auto &closest5 = searcher.search({x, y}, INFINITY, 5);
             for (const auto &closest : closest5)
             {
                 camera_ids.insert(closest.payload);
@@ -1342,8 +1340,7 @@ void readLayeredTileFromGeoTIFF(GDALDataset *layers_ds, GDALDataset *cameras_ds,
 void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaicBounds &bounds, double gsd,
                         int output_width, int output_height, const std::vector<surface_model> &surfaces,
                         const MeasurementGraph &graph, const jk::tree::KDTree<size_t, 2> &imageGPSLocations,
-                        double mean_camera_z,
-                        const std::unordered_map<size_t, Eigen::Matrix3d> &inv_rotation_cache,
+                        double mean_camera_z, const std::unordered_map<size_t, Eigen::Matrix3d> &inv_rotation_cache,
                         FullResolutionImageCache &image_cache, int num_layers, LayeredTileBuffer &tile_out,
                         std::vector<ColorCorrespondence> &correspondences_out, int correspondence_subsample,
                         std::mutex &correspondences_mutex)
@@ -1407,7 +1404,7 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
                     continue;
 
                 Eigen::Vector3d sample_point(x, y, z);
-                const auto & closest5 = tree_searcher.search({x, y}, INFINITY, 5);
+                const auto &closest5 = tree_searcher.search({x, y}, INFINITY, 5);
 
                 int layer_idx = 0;
                 for (const auto &closest : closest5)
@@ -1613,9 +1610,8 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
     // Prefetch images for the first tile synchronously
     if (!tile_order.empty())
     {
-        auto first_cams =
-            findTileCameras(tile_order[0].first, tile_order[0].second, tile_size, context.bounds, context.gsd, width,
-                            height, context.imageGPSLocations);
+        auto first_cams = findTileCameras(tile_order[0].first, tile_order[0].second, tile_size, context.bounds,
+                                          context.gsd, width, height, context.imageGPSLocations);
         prefetchImages(first_cams, graph, image_cache);
     }
 
@@ -1642,9 +1638,9 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
 
         LayeredTileBuffer tile_buf;
         processLayeredTile(tile_x, tile_y, tile_size, context.bounds, context.gsd, width, height, surfaces, graph,
-                           context.imageGPSLocations, context.mean_camera_z,
-                           inv_rotation_cache, image_cache, config.num_layers, tile_buf, all_correspondences,
-                           config.correspondence_subsample, correspondences_mutex);
+                           context.imageGPSLocations, context.mean_camera_z, inv_rotation_cache, image_cache,
+                           config.num_layers, tile_buf, all_correspondences, config.correspondence_subsample,
+                           correspondences_mutex);
 
         if (write_future.valid())
             write_future.wait();

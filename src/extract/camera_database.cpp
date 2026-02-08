@@ -59,6 +59,11 @@ opencalibration::CameraDBEntry extractEntry(const opencalibration::image &img)
     Eigen::Vector2d center(img.model->pixels_cols / 2.0, img.model->pixels_rows / 2.0);
     entry.principal_point_offset = img.model->principle_point - center;
 
+    if (img.model->focal_length_pixels > 0)
+    {
+        entry.focal_length_pixels = img.model->focal_length_pixels;
+    }
+
     return entry;
 }
 
@@ -108,6 +113,12 @@ void writeDatabase(const std::string &path, const std::vector<opencalibration::C
         for (int i = 0; i < 2; ++i)
             writer.Double(entry.principal_point_offset[i]);
         writer.EndArray();
+
+        if (!std::isnan(entry.focal_length_pixels))
+        {
+            writer.Key("focal_length_pixels");
+            writer.Double(entry.focal_length_pixels);
+        }
 
         CameraKey key{entry.make, entry.model, entry.lens_model, entry.sensor_width_px, entry.sensor_height_px};
         auto notes_it = notes_map.find(key);
@@ -191,6 +202,10 @@ std::vector<opencalibration::CameraDBEntry> loadDatabaseEntries(const std::strin
             const auto &pp = cam["principal_point_offset"].GetArray();
             for (size_t i = 0; i < std::min(pp.Size(), rapidjson::SizeType(2)); ++i)
                 entry.principal_point_offset[i] = pp[i].GetDouble();
+        }
+        if (cam.HasMember("focal_length_pixels"))
+        {
+            entry.focal_length_pixels = cam["focal_length_pixels"].GetDouble();
         }
 
         CameraKey key{entry.make, entry.model, entry.lens_model, entry.sensor_width_px, entry.sensor_height_px};
@@ -309,6 +324,11 @@ bool CameraDatabase::load(const std::string &path)
             }
         }
 
+        if (cam.HasMember("focal_length_pixels"))
+        {
+            entry.focal_length_pixels = cam["focal_length_pixels"].GetDouble();
+        }
+
         _entries.push_back(std::move(entry));
     }
 
@@ -387,6 +407,14 @@ void applyDatabaseEntry(const CameraDBEntry &entry, const image_metadata::camera
     {
         model.principle_point = center + entry.principal_point_offset;
     }
+
+    // Apply focal_length_pixels ONLY if EXIF didn't provide valid value
+    if (!std::isnan(entry.focal_length_pixels) &&
+        (std::isnan(model.focal_length_pixels) || model.focal_length_pixels <= 0))
+    {
+        model.focal_length_pixels = entry.focal_length_pixels;
+        spdlog::debug("Applied database focal length: {} pixels", model.focal_length_pixels);
+    }
 }
 
 bool updateDatabaseFromGraph(const MeasurementGraph &graph, const std::string &database_path, const std::string &notes)
@@ -431,6 +459,7 @@ bool updateDatabaseFromGraph(const MeasurementGraph &graph, const std::string &d
                 existing.radial_distortion = new_entry.radial_distortion;
                 existing.tangential_distortion = new_entry.tangential_distortion;
                 existing.principal_point_offset = new_entry.principal_point_offset;
+                existing.focal_length_pixels = new_entry.focal_length_pixels;
                 spdlog::info("Updated existing entry: {} {}", key.make, key.model);
                 found = true;
                 break;
