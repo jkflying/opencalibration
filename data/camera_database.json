@@ -6,9 +6,10 @@
       "lens_model": "",
       "sensor_width_px": 5344,
       "sensor_height_px": 4016,
-      "radial_distortion": [-0.205, 0.023, 0.005],
-      "tangential_distortion": [0.01, -0.06],
-      "principal_point_offset": [0.0, 0.0],
+      "radial_distortion": [-0.03227143641412748, -0.0013398651057998067, 0.013516158699926753],
+      "tangential_distortion": [0.003030459595852448, -0.0472812977855108],
+      "principal_point_offset": [2.8983198567566434, -0.03430789380104216],
+      "focal_length_pixels": 4573.011803089125,
       "notes": "Parrot Anafi 21MP"
     }, {
       "make": "DJI",
@@ -36,9 +37,29 @@
       "lens_model": "",
       "sensor_width_px": 4000,
       "sensor_height_px": 3000,
+      "radial_distortion": [-0.0362332496797747, 0.007952687155835479, 0.010270758022948666],
+      "tangential_distortion": [5.99161477671887e-8, 1.011368755252778e-8],
+      "principal_point_offset": [-1.1355213156914488, 25.768894807573589],
+      "focal_length_pixels": 2896.716350244336
+    }, {
+      "make": "Parrot",
+      "model": "Anafi",
+      "lens_model": "",
+      "sensor_width_px": 4608,
+      "sensor_height_px": 3456,
       "radial_distortion": [-0.03227143641412748, -0.0013398651057998067, 0.013516158699926753],
-      "tangential_distortion": [2.9512929088701349e-7, -4.567805056032358e-8],
-      "principal_point_offset": [-0.8325286149222393, 24.775865971150325],
-      "focal_length_pixels": 2891.7293865442954
+      "tangential_distortion": [0.0, 0.0],
+      "principal_point_offset": [0.0, 0.0],
+      "focal_length_pixels": 3500
+    }, {
+      "make": "Canon",
+      "model": "Canon PowerShot S110",
+      "lens_model": "",
+      "sensor_width_px": 4000,
+      "sensor_height_px": 3000,
+      "radial_distortion": [-0.27307424608927785, 0.08727874277058813, -0.014052680339663192],
+      "tangential_distortion": [-0.000010202681626136234, -5.386426685489021e-7],
+      "principal_point_offset": [17.361911943503175, -15.2692149982322],
+      "focal_length_pixels": 3034.282756692746
     }]
 }

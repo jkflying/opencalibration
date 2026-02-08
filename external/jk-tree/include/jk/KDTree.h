@@ -357,7 +357,8 @@ namespace tree
             const std::vector<DistancePayload>& search(const point_t& location, Scalar maxRadius, std::size_t maxPoints)
             {
                 m_results.clear();
-                m_searchStack.reserve(1 + std::size_t(1.5 * std::log2(1 + m_tree.size() / BucketSize)));
+                if (m_searchStack.capacity() == 0)
+                    m_searchStack.reserve(1 + std::size_t(1.5 * std::log2(1 + m_tree.size() / BucketSize)));
                 if (m_prioqueueCapacity < maxPoints && maxPoints < m_tree.size())
                 {
                     std::vector<DistancePayload> container;
