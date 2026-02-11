@@ -21,5 +21,6 @@ digraph {
     "INITIAL_GLOBAL_RELAX\ninitial_global_relax()" -> "INITIAL_GLOBAL_RELAX\ninitial_global_relax()" [label="REPEAT", style="dotted", weight=0.1]
     "CAMERA_PARAMETER_RELAX\ncamera_parameter_relax()" -> "CAMERA_PARAMETER_RELAX\ncamera_parameter_relax()" [label="REPEAT", style="dotted", weight=0.1]
     "FINAL_GLOBAL_RELAX\nfinal_global_relax()" -> "FINAL_GLOBAL_RELAX\nfinal_global_relax()" [label="REPEAT", style="dotted", weight=0.1]
+    "MESH_REFINEMENT\nmesh_refinement()" -> "MESH_REFINEMENT\nmesh_refinement()" [label="REPEAT", style="dotted", weight=0.1]
     "COMPLETE\ncomplete()" -> "COMPLETE\ncomplete()" [label="REPEAT", style="dotted", weight=0.1]
 }

@@ -1311,8 +1311,8 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
                     sample.model_id = payload.model->id;
                     sample.valid = true;
 
-                    sample.normalized_radius =
-                        normalizedImageRadius(pixel.x(), pixel.y(), payload.model->pixels_cols, payload.model->pixels_rows);
+                    sample.normalized_radius = normalizedImageRadius(pixel.x(), pixel.y(), payload.model->pixels_cols,
+                                                                     payload.model->pixels_rows);
 
                     Eigen::Vector3d to_point = sample_point - payload.position;
                     Eigen::Vector3d camera_down = payload.orientation.inverse() * Eigen::Vector3d(0, 0, 1);
@@ -1474,7 +1474,6 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
 
     std::future<void> write_future;
     std::future<void> prefetch_future;
-
 
     for (size_t i = 0; i < tile_order.size(); i++)
     {
@@ -1653,8 +1652,8 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
                         Eigen::Vector2d pixel =
                             image_from_3d(world_pt, *payload.model, payload.position, inv_rot_it->second);
 
-                        sample.normalized_radius =
-                            normalizedImageRadius(pixel.x(), pixel.y(), payload.model->pixels_cols, payload.model->pixels_rows);
+                        sample.normalized_radius = normalizedImageRadius(
+                            pixel.x(), pixel.y(), payload.model->pixels_cols, payload.model->pixels_rows);
 
                         Eigen::Vector3d to_point = world_pt - payload.position;
                         Eigen::Vector3d cam_down = payload.orientation.inverse() * Eigen::Vector3d(0, 0, 1);

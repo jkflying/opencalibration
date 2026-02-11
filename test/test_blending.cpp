@@ -202,5 +202,171 @@ TEST(Blending, layered_tile_buffer_at)
 
     EXPECT_EQ(buf.at(0, 2, 3).color_bgr, cv::Vec3b(10, 20, 30));
     EXPECT_TRUE(buf.at(0, 2, 3).valid);
-    EXPECT_FALSE(buf.at(1, 2, 3).valid); // Different layer
+    EXPECT_FALSE(buf.at(1, 2, 3).valid);
+}
+
+TEST(Blending, no_ringing_at_shared_vertical_edge)
+{
+    // GIVEN: All layers share the same validity boundary (left 3/4 valid, right 1/4 invalid).
+    // Invalid regions are black (0,0,0) in color, simulating the pipeline init.
+    // Without pull-push fill this creates ringing artifacts from the Laplacian pyramid.
+    int sz = 128;
+    int num_layers = 3;
+    float L_value = 50.0f;
+    int boundary_col = 3 * sz / 4;
+
+    std::vector<cv::Mat> lab_layers(num_layers);
+    std::vector<cv::Mat> weight_maps(num_layers);
+
+    for (int i = 0; i < num_layers; i++)
+    {
+        lab_layers[i] = cv::Mat(sz, sz, CV_32FC3, cv::Scalar(0, 0, 0));
+        weight_maps[i] = cv::Mat::zeros(sz, sz, CV_32FC1);
+
+        for (int r = 0; r < sz; r++)
+        {
+            for (int c = 0; c < boundary_col; c++)
+            {
+                lab_layers[i].at<cv::Vec3f>(r, c) = cv::Vec3f(L_value, 0.0f, 0.0f);
+                weight_maps[i].at<float>(r, c) = 1.0f;
+            }
+        }
+    }
+
+    // WHEN: We Laplacian blend
+    cv::Mat result = laplacianBlend(lab_layers, weight_maps, 4);
+    ASSERT_FALSE(result.empty());
+
+    // THEN: All valid pixels should have consistent color with no ringing
+    int check_row = sz / 2;
+    cv::Vec4b ref = result.at<cv::Vec4b>(check_row, sz / 4);
+
+    for (int c = 0; c < boundary_col; c++)
+    {
+        cv::Vec4b pixel = result.at<cv::Vec4b>(check_row, c);
+        for (int ch = 0; ch < 3; ch++)
+        {
+            EXPECT_NEAR(pixel[ch], ref[ch], 2) << "Ringing at col=" << c << " ch=" << ch;
+        }
+    }
+}
+
+TEST(Blending, no_ringing_at_shared_corner_edge)
+{
+    // GIVEN: All layers share the same invalid corner region (bottom-right).
+    // This pattern matches the real-world case from blending_tile225.
+    int sz = 128;
+    int num_layers = 3;
+    float L_value = 50.0f;
+
+    std::vector<cv::Mat> lab_layers(num_layers);
+    std::vector<cv::Mat> weight_maps(num_layers);
+
+    for (int i = 0; i < num_layers; i++)
+    {
+        lab_layers[i] = cv::Mat(sz, sz, CV_32FC3, cv::Scalar(0, 0, 0));
+        weight_maps[i] = cv::Mat::zeros(sz, sz, CV_32FC1);
+
+        for (int r = 0; r < sz; r++)
+        {
+            for (int c = 0; c < sz; c++)
+            {
+                // Valid in the top-left 3/4-by-3/4 region.
+                if (r < 3 * sz / 4 && c < 3 * sz / 4)
+                {
+                    lab_layers[i].at<cv::Vec3f>(r, c) = cv::Vec3f(L_value, 0.0f, 0.0f);
+                    weight_maps[i].at<float>(r, c) = 1.0f;
+                }
+            }
+        }
+    }
+
+    cv::Mat result = laplacianBlend(lab_layers, weight_maps, 4);
+    ASSERT_FALSE(result.empty());
+
+    // THEN: Pixels well inside the valid region should have uniform color
+    cv::Vec4b ref = result.at<cv::Vec4b>(sz / 4, sz / 4);
+    for (int r = 5; r < sz / 2; r++)
+    {
+        for (int c = 5; c < sz / 2; c++)
+        {
+            cv::Vec4b pixel = result.at<cv::Vec4b>(r, c);
+            for (int ch = 0; ch < 3; ch++)
+            {
+                EXPECT_NEAR(pixel[ch], ref[ch], 2) << "Ringing at r=" << r << " c=" << c << " ch=" << ch;
+            }
+        }
+    }
+}
+
+TEST(Blending, no_seam_at_layer_boundary)
+{
+    // GIVEN: Two layers with different colors and non-overlapping valid regions
+    // that share a boundary. With per-layer fill, the extrapolated colors from each
+    // layer leak through at coarser pyramid levels, creating a visible seam.
+    // With consensus fill, both layers' invalid regions get the consensus color,
+    // which eliminates the seam.
+    int sz = 128;
+    int boundary_col = sz / 2;
+
+    cv::Mat lab_a(sz, sz, CV_32FC3, cv::Scalar(0, 0, 0));
+    cv::Mat lab_b(sz, sz, CV_32FC3, cv::Scalar(0, 0, 0));
+    cv::Mat weight_a = cv::Mat::zeros(sz, sz, CV_32FC1);
+    cv::Mat weight_b = cv::Mat::zeros(sz, sz, CV_32FC1);
+
+    cv::Vec3f color_a(60.0f, 20.0f, 15.0f);
+    cv::Vec3f color_b(40.0f, -15.0f, -10.0f);
+
+    for (int r = 0; r < sz; r++)
+    {
+        for (int c = 0; c < sz; c++)
+        {
+            if (c < boundary_col)
+            {
+                lab_a.at<cv::Vec3f>(r, c) = color_a;
+                weight_a.at<float>(r, c) = 1.0f;
+            }
+            else
+            {
+                lab_b.at<cv::Vec3f>(r, c) = color_b;
+                weight_b.at<float>(r, c) = 1.0f;
+            }
+        }
+    }
+
+    cv::Mat result = laplacianBlend({lab_a, lab_b}, {weight_a, weight_b}, 4);
+    ASSERT_FALSE(result.empty());
+
+    // THEN: Far left should be pure layer A, far right should be pure layer B
+    cv::Vec4b left_ref = result.at<cv::Vec4b>(sz / 2, 10);
+    cv::Vec4b right_ref = result.at<cv::Vec4b>(sz / 2, sz - 11);
+
+    for (int c = 5; c < sz / 4; c++)
+    {
+        cv::Vec4b pixel = result.at<cv::Vec4b>(sz / 2, c);
+        for (int ch = 0; ch < 3; ch++)
+        {
+            EXPECT_NEAR(pixel[ch], left_ref[ch], 3)
+                << "Seam artifact from layer B leaking into left at col=" << c << " ch=" << ch;
+        }
+    }
+
+    for (int c = 3 * sz / 4; c < sz - 5; c++)
+    {
+        cv::Vec4b pixel = result.at<cv::Vec4b>(sz / 2, c);
+        for (int ch = 0; ch < 3; ch++)
+        {
+            EXPECT_NEAR(pixel[ch], right_ref[ch], 3)
+                << "Seam artifact from layer A leaking into right at col=" << c << " ch=" << ch;
+        }
+    }
+
+    // Transition region (around boundary) should be monotonic - no ringing
+    int check_row = sz / 2;
+    for (int c = boundary_col - 20; c < boundary_col + 19; c++)
+    {
+        cv::Vec4b curr = result.at<cv::Vec4b>(check_row, c);
+        cv::Vec4b next = result.at<cv::Vec4b>(check_row, c + 1);
+        EXPECT_GE(curr[0], next[0] - 1) << "Non-monotonic transition at col=" << c << " (possible ringing)";
+    }
 }

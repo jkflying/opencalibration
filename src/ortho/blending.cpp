@@ -92,6 +92,59 @@ float computeBlendWeight(float pixel_x, float pixel_y, int image_width, int imag
     return edge_weight * center_weight * proximity_weight;
 }
 
+static cv::Mat fillInvalidRegions(const cv::Mat &color, const cv::Mat &weight)
+{
+    // Pull-push interpolation: extrapolate valid colors into zero-weight regions.
+    // This prevents hard edges in the Laplacian pyramid that cause ringing artifacts
+    // when all layers share the same validity boundary.
+    int levels = 1;
+    int min_dim = std::min(color.rows, color.cols);
+    while ((min_dim >> levels) >= 2)
+    {
+        levels++;
+    }
+
+    cv::Mat weight3;
+    std::vector<cv::Mat> w3ch = {weight, weight, weight};
+    cv::merge(w3ch, weight3);
+
+    std::vector<cv::Mat> wc_pyr(levels), w_pyr(levels);
+    wc_pyr[0] = color.mul(weight3);
+    w_pyr[0] = weight;
+
+    for (int l = 1; l < levels; l++)
+    {
+        cv::pyrDown(wc_pyr[l - 1], wc_pyr[l]);
+        cv::pyrDown(w_pyr[l - 1], w_pyr[l]);
+    }
+
+    // Coarsest level: normalize weighted color by weight
+    cv::Mat w3_coarse;
+    cv::merge(std::vector<cv::Mat>{w_pyr.back(), w_pyr.back(), w_pyr.back()}, w3_coarse);
+    cv::Mat filled;
+    cv::divide(wc_pyr.back(), cv::max(w3_coarse, 1e-6f), filled);
+
+    // Pull back up: use original color where valid, upsampled fill where invalid
+    for (int l = levels - 2; l >= 0; l--)
+    {
+        cv::Mat upsampled;
+        cv::pyrUp(filled, upsampled, wc_pyr[l].size());
+
+        cv::Mat w3_level;
+        cv::merge(std::vector<cv::Mat>{w_pyr[l], w_pyr[l], w_pyr[l]}, w3_level);
+        cv::Mat normalized;
+        cv::divide(wc_pyr[l], cv::max(w3_level, 1e-6f), normalized);
+
+        cv::Mat mask;
+        cv::compare(w_pyr[l], 1e-6f, mask, cv::CMP_GT);
+
+        filled = upsampled.clone();
+        normalized.copyTo(filled, mask);
+    }
+
+    return filled;
+}
+
 cv::Mat laplacianBlend(const std::vector<cv::Mat> &lab_layers, const std::vector<cv::Mat> &weight_maps,
                        int pyramid_levels)
 {
@@ -130,6 +183,13 @@ cv::Mat laplacianBlend(const std::vector<cv::Mat> &lab_layers, const std::vector
     }
     pyramid_levels = max_levels;
 
+    // Per-layer pull-push fill: each layer extrapolates from its own valid pixels.
+    std::vector<cv::Mat> filled_layers(num_layers);
+    for (int i = 0; i < num_layers; i++)
+    {
+        filled_layers[i] = fillInvalidRegions(lab_layers[i], norm_weights[i]);
+    }
+
     // Build Gaussian pyramid for each weight map
     std::vector<std::vector<cv::Mat>> weight_pyramids(num_layers);
     for (int i = 0; i < num_layers; i++)
@@ -142,12 +202,29 @@ cv::Mat laplacianBlend(const std::vector<cv::Mat> &lab_layers, const std::vector
         }
     }
 
-    // Build Laplacian pyramid for each color layer
+    // Renormalize weight pyramids at each level so they sum to 1.
+    // pyrDown can break the partition-of-unity property at boundaries
+    // where all layers share the same edge, causing darkening artifacts.
+    for (int l = 1; l < pyramid_levels; l++)
+    {
+        cv::Mat level_sum = cv::Mat::zeros(weight_pyramids[0][l].size(), CV_32FC1);
+        for (int i = 0; i < num_layers; i++)
+        {
+            level_sum += weight_pyramids[i][l];
+        }
+        level_sum = cv::max(level_sum, 1e-6f);
+        for (int i = 0; i < num_layers; i++)
+        {
+            cv::divide(weight_pyramids[i][l], level_sum, weight_pyramids[i][l]);
+        }
+    }
+
+    // Build Laplacian pyramid for each filled color layer
     std::vector<std::vector<cv::Mat>> color_pyramids(num_layers);
     for (int i = 0; i < num_layers; i++)
     {
         std::vector<cv::Mat> gaussian(pyramid_levels);
-        gaussian[0] = lab_layers[i];
+        gaussian[0] = filled_layers[i];
         for (int l = 1; l < pyramid_levels; l++)
         {
             cv::pyrDown(gaussian[l - 1], gaussian[l]);

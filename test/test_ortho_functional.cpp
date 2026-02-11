@@ -1,4 +1,5 @@
 #include <opencalibration/geo_coord/geo_coord.hpp>
+#include <opencalibration/ortho/blending.hpp>
 #include <opencalibration/ortho/color_balance.hpp>
 #include <opencalibration/ortho/gdal_dataset.hpp>
 #include <opencalibration/ortho/image_cache.hpp>
@@ -592,4 +593,96 @@ TEST_F(ortho, single_image_coverage)
     EXPECT_LE(valid_pixel_count, region_size * region_size) << "Valid pixel count exceeds region size";
 
     // Clean up not needed - output directory is for test artifacts
+}
+
+TEST(Blending_Functional, no_ringing_with_camera_hash_masks)
+{
+    // GIVEN: Validity masks derived from real camera hash images (blending_tile225).
+    // All layers share a similar edge boundary in the bottom-right corner,
+    // which caused ringing artifacts before the pull-push fill fix.
+    std::string base = TEST_DATA_DIR "blending_tile225/";
+    cv::Mat hash0 = cv::imread(base + "layer_0_camera_hash.png");
+    cv::Mat hash1 = cv::imread(base + "layer_1_camera_hash.png");
+    cv::Mat hash2 = cv::imread(base + "layer_2_camera_hash.png");
+
+    ASSERT_FALSE(hash0.empty()) << "Failed to load layer_0_camera_hash.png";
+    ASSERT_FALSE(hash1.empty()) << "Failed to load layer_1_camera_hash.png";
+    ASSERT_FALSE(hash2.empty()) << "Failed to load layer_2_camera_hash.png";
+
+    int rows = hash0.rows, cols = hash0.cols;
+    int num_layers = 3;
+    float L_value = 50.0f;
+
+    std::vector<cv::Mat> lab_layers(num_layers);
+    std::vector<cv::Mat> weight_maps(num_layers);
+    cv::Mat hashes[3] = {hash0, hash1, hash2};
+
+    for (int i = 0; i < num_layers; i++)
+    {
+        lab_layers[i] = cv::Mat(rows, cols, CV_32FC3, cv::Scalar(0, 0, 0));
+        weight_maps[i] = cv::Mat::zeros(rows, cols, CV_32FC1);
+
+        for (int r = 0; r < rows; r++)
+        {
+            for (int c = 0; c < cols; c++)
+            {
+                cv::Vec3b pixel = hashes[i].at<cv::Vec3b>(r, c);
+                bool valid = (pixel[0] > 5 || pixel[1] > 5 || pixel[2] > 5);
+                if (valid)
+                {
+                    lab_layers[i].at<cv::Vec3f>(r, c) = cv::Vec3f(L_value, 0.0f, 0.0f);
+                    weight_maps[i].at<float>(r, c) = 1.0f;
+                }
+            }
+        }
+    }
+
+    // WHEN: We Laplacian blend
+    cv::Mat result = laplacianBlend(lab_layers, weight_maps, 4);
+    ASSERT_FALSE(result.empty());
+
+    cv::imwrite(TEST_DATA_OUTPUT_DIR "blending_tile225_result.png", result);
+
+    // THEN: All pixels where every layer is valid should have uniform color (no ringing)
+    cv::Vec4b ref(0, 0, 0, 0);
+    bool ref_set = false;
+    int all_valid_pixels = 0;
+    int ringing_pixels = 0;
+    for (int r = 0; r < rows; r++)
+    {
+        for (int c = 0; c < cols; c++)
+        {
+            bool all_valid = true;
+            for (int i = 0; i < num_layers; i++)
+            {
+                if (weight_maps[i].at<float>(r, c) < 0.5f)
+                {
+                    all_valid = false;
+                    break;
+                }
+            }
+
+            if (all_valid)
+            {
+                all_valid_pixels++;
+                cv::Vec4b pixel = result.at<cv::Vec4b>(r, c);
+                if (!ref_set)
+                {
+                    ref = pixel;
+                    ref_set = true;
+                }
+                for (int ch = 0; ch < 3; ch++)
+                {
+                    if (std::abs(pixel[ch] - ref[ch]) > 3)
+                    {
+                        ringing_pixels++;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    ASSERT_GT(all_valid_pixels, 0) << "Expected at least one pixel where all layers are valid";
+    EXPECT_EQ(ringing_pixels, 0) << "Found " << ringing_pixels << " pixels with ringing artifacts";
 }
