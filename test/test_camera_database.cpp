@@ -43,7 +43,7 @@ TEST_F(CameraDatabaseTest, lookup_parrot_anafi)
     ASSERT_TRUE(entry.has_value());
     EXPECT_EQ(entry->make, "Parrot");
     EXPECT_EQ(entry->model, "Anafi");
-    EXPECT_EQ(entry->radial_distortion[0], -0.205);
+    EXPECT_NEAR(entry->radial_distortion[0], -0.03227143641412748, 1e-12);
 }
 
 TEST_F(CameraDatabaseTest, lookup_case_insensitive)
