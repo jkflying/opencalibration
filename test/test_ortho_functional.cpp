@@ -12,6 +12,7 @@
 #include <gtest/gtest.h>
 #include <opencv2/imgcodecs.hpp>
 
+#include <cstdint>
 #include <filesystem>
 
 using namespace opencalibration;
@@ -241,13 +242,15 @@ struct ortho : public ::testing::Test
 
     // Helper to generate layered orthomosaic (multi-pass approach)
     void generateLayeredOrthomosaic(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph_ref,
-                                    const GeoCoord &coord_system, const std::string &output_path, int tile_size = 1024)
+                                    const GeoCoord &coord_system, const std::string &output_path, int tile_size = 1024,
+                                    double max_output_megapixels = 0.0)
     {
         std::string layers_path = output_path + ".layers.tif";
         std::string cameras_path = output_path + ".cameras.tif";
 
         OrthoMosaicConfig config;
         config.tile_size = tile_size;
+        config.max_output_megapixels = max_output_megapixels;
 
         // Pass 1: Generate layers
         generateLayeredGeoTIFF(surfaces, graph_ref, coord_system, layers_path, cameras_path, config);
@@ -384,6 +387,52 @@ TEST_F(ortho, geotiff_small_tile_size)
     EXPECT_EQ(ds_wrapper.GetRasterCount(), 4);
 
     // Clean up not needed - output directory is for test artifacts
+}
+
+TEST_F(ortho, geotiff_respects_max_megapixel_limit)
+{
+    // GIVEN: A scene with images and surface
+    init_cameras();
+
+    surface_model points_surface;
+    points_surface.cloud.push_back(generate_planar_points());
+
+    point_cloud camera_locations;
+    for (const auto &nodePose : nodePoses)
+    {
+        camera_locations.push_back(nodePose.position);
+    }
+    surface_model mesh_surface;
+    mesh_surface.mesh = rebuildMesh(camera_locations, {points_surface});
+
+    // Create temporary test images
+    for (int i = 0; i < 3; i++)
+    {
+        std::string path = TEST_DATA_OUTPUT_DIR "test_geotiff_capped_" + std::to_string(i) + ".png";
+        cv::Mat img(600, 800, CV_8UC3, cv::Scalar(60 + i * 60, 120, 180));
+        cv::imwrite(path, img);
+        graph.getNode(id[i])->payload.path = path;
+    }
+
+    GeoCoord coord_system;
+    coord_system.setOrigin(0, 0);
+
+    std::string output_path = TEST_DATA_OUTPUT_DIR "test_ortho_capped.tif";
+    constexpr double max_megapixels = 0.01; // 10k pixels
+
+    // WHEN: we generate a GeoTIFF with a strict output megapixel cap
+    EXPECT_NO_THROW(generateLayeredOrthomosaic({mesh_surface}, graph, coord_system, output_path, 256, max_megapixels));
+
+    // THEN: output dimensions should respect the requested cap
+    GDALDatasetPtr dataset = openGDALDataset(output_path);
+    ASSERT_NE(dataset.get(), nullptr);
+
+    GDALDatasetWrapper ds_wrapper(dataset.get());
+    uint64_t output_pixels =
+        static_cast<uint64_t>(ds_wrapper.GetRasterXSize()) * static_cast<uint64_t>(ds_wrapper.GetRasterYSize());
+    uint64_t max_pixels = static_cast<uint64_t>(max_megapixels * 1000000.0);
+
+    EXPECT_LE(output_pixels, max_pixels);
 }
 
 TEST_F(ortho, pixel_values_with_known_colors)

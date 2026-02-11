@@ -38,6 +38,7 @@ int main(int argc, char *argv[])
     std::string overlap_file = "";
     std::string geotiff_file = "";
     std::string dsm_file = "";
+    double ortho_max_megapixels = 0.0;
     std::string checkpoint_save = "";
     std::string checkpoint_load = "";
     std::string resume_from = "";
@@ -63,6 +64,8 @@ int main(int argc, char *argv[])
     args.addArgument({"--overlap-file"}, &overlap_file, "Output overlap count image file");
     args.addArgument({"--ortho-geotiff"}, &geotiff_file, "Output full-resolution georeferenced GeoTIFF orthomosaic");
     args.addArgument({"--dsm-geotiff"}, &dsm_file, "Output Digital Surface Model (DSM) GeoTIFF");
+    args.addArgument({"--ortho-max-megapixels"}, &ortho_max_megapixels,
+                     "Maximum orthomosaic output size in megapixels (0 = unlimited)");
     args.addArgument({"-cs", "--checkpoint-save"}, &checkpoint_save, "Save checkpoint to directory after processing");
     args.addArgument({"-cl", "--checkpoint-load"}, &checkpoint_load, "Load and resume from checkpoint directory");
     args.addArgument({"--update-camera-db"}, &update_camera_db,
@@ -93,6 +96,12 @@ int main(int argc, char *argv[])
     {
         args.printHelp();
         return 0;
+    }
+
+    if (ortho_max_megapixels < 0.0)
+    {
+        std::cerr << "--ortho-max-megapixels must be >= 0" << std::endl;
+        return -1;
     }
 
     auto level = spdlog::level::err;
@@ -133,12 +142,17 @@ int main(int argc, char *argv[])
 
     spdlog::info("Log level set to {}", log_level_str);
     spdlog::info("Pipeline batch size set to {}", batch_size);
+    if (ortho_max_megapixels > 0.0)
+    {
+        spdlog::info("Orthomosaic max output set to {} MP", ortho_max_megapixels);
+    }
 
     Pipeline p(batch_size);
     p.set_generate_thumbnails(generate_thumbnails);
     p.set_thumbnail_filenames(thumbnail_file, source_file, overlap_file);
     p.set_geotiff_filename(geotiff_file);
     p.set_dsm_filename(dsm_file);
+    p.set_orthomosaic_max_megapixels(ortho_max_megapixels);
     p.set_skip_mesh_refinement(skip_mesh_refinement);
     p.set_skip_initial_global_relax(skip_initial_global_relax);
     p.set_skip_camera_param_relax(skip_camera_intrinsics);

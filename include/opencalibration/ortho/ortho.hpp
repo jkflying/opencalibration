@@ -102,13 +102,14 @@ struct OrthoMosaicConfig
     int pyramid_levels = 4;
     int correspondence_subsample = 10;
     int blend_transition_radius = 64;
+    double max_output_megapixels = 0.0; // 0 = unlimited
 };
 
 OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph);
 
 void generateDSMGeoTIFF(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph,
                         const opencalibration::GeoCoord &coord_system, const std::string &output_path,
-                        int tile_size = 1024);
+                        int tile_size = 1024, double max_output_megapixels = 0.0);
 
 std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surface_model> &surfaces,
                                                         const MeasurementGraph &graph,

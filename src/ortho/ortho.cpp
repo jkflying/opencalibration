@@ -294,6 +294,31 @@ void clampOutputResolution(double &gsd, int &width, int &height, const OrthoMosa
     }
 }
 
+void clampOutputMegapixels(double &gsd, int &width, int &height, double max_output_megapixels,
+                           const char *stage_name = "")
+{
+    if (!std::isfinite(max_output_megapixels) || max_output_megapixels <= 0.0)
+    {
+        return;
+    }
+
+    uint64_t output_pixels = static_cast<uint64_t>(width) * static_cast<uint64_t>(height);
+    uint64_t max_output_pixels = static_cast<uint64_t>(max_output_megapixels * 1000000.0);
+    if (max_output_pixels == 0 || output_pixels <= max_output_pixels)
+    {
+        return;
+    }
+
+    double scale_factor = std::sqrt(static_cast<double>(output_pixels) / static_cast<double>(max_output_pixels));
+    gsd *= scale_factor;
+    width = std::max(1, static_cast<int>(width / scale_factor));
+    height = std::max(1, static_cast<int>(height / scale_factor));
+
+    std::string stage_str = (stage_name && *stage_name) ? std::string(stage_name) + ": " : std::string("");
+    spdlog::info("{}Applied max output megapixels {} MP: GSD adjusted to {} (output pixels {} > max {})", stage_str,
+                 max_output_megapixels, gsd, output_pixels, max_output_pixels);
+}
+
 OrthoMosaicBounds calculateBoundsAndMeanZ(const std::vector<surface_model> &surfaces)
 {
     const double inf = std::numeric_limits<double>::infinity();
@@ -871,7 +896,8 @@ void processDSMTile(GDALDatasetH dataset, int tile_x, int tile_y, int tile_size,
 }
 
 void generateDSMGeoTIFF(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph,
-                        const GeoCoord &coord_system, const std::string &output_path, int tile_size)
+                        const GeoCoord &coord_system, const std::string &output_path, int tile_size,
+                        double max_output_megapixels)
 {
     spdlog::info("Generating DSM GeoTIFF: {}", output_path);
 
@@ -892,6 +918,7 @@ void generateDSMGeoTIFF(const std::vector<surface_model> &surfaces, const Measur
         height = 100;
 
     clampOutputResolution(context.gsd, width, height, context, graph, "DSM");
+    clampOutputMegapixels(context.gsd, width, height, max_output_megapixels, "DSM");
 
     spdlog::info("DSM GSD: {}  Output dimensions: {}x{} pixels", context.gsd, width, height);
 
@@ -1418,6 +1445,7 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
         height = 100;
 
     clampOutputResolution(context.gsd, width, height, context, graph, "Layered GeoTIFF");
+    clampOutputMegapixels(context.gsd, width, height, config.max_output_megapixels, "Layered GeoTIFF");
 
     spdlog::info("GSD: {}  Output dimensions: {}x{} pixels, {} layers", context.gsd, width, height, config.num_layers);
 

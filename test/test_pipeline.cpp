@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <cstdint>
 
 using namespace opencalibration;
 using namespace std::chrono_literals;
@@ -77,7 +78,9 @@ TEST(pipeline, generates_geotiff_when_requested)
     // GIVEN: a pipeline with geotiff filename
     Pipeline p(2);
     std::string output_path = TEST_DATA_OUTPUT_DIR "test_pipeline_ortho.tif";
+    constexpr double max_output_megapixels = 4.0;
     p.set_geotiff_filename(output_path);
+    p.set_orthomosaic_max_megapixels(max_output_megapixels);
 
     std::string path1 = TEST_DATA_DIR "P2530253.JPG";
     std::string path2 = TEST_DATA_DIR "P2540254.JPG";
@@ -104,6 +107,10 @@ TEST(pipeline, generates_geotiff_when_requested)
     // Verify dimensions
     EXPECT_GT(ds_wrapper.GetRasterXSize(), 0) << "GeoTIFF width should be > 0";
     EXPECT_GT(ds_wrapper.GetRasterYSize(), 0) << "GeoTIFF height should be > 0";
+    uint64_t output_pixels =
+        static_cast<uint64_t>(ds_wrapper.GetRasterXSize()) * static_cast<uint64_t>(ds_wrapper.GetRasterYSize());
+    uint64_t max_output_pixels = static_cast<uint64_t>(max_output_megapixels * 1000000.0);
+    EXPECT_LE(output_pixels, max_output_pixels) << "GeoTIFF should honor configured max megapixels";
 
     // Verify 4 bands (RGBA)
     EXPECT_EQ(ds_wrapper.GetRasterCount(), 4) << "GeoTIFF should have 4 bands (RGBA)";

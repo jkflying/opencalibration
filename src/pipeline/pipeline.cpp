@@ -433,8 +433,12 @@ Pipeline::Transition Pipeline::generate_layers()
     _intermediate_layers_path = _geotiff_filename + ".layers.tif";
     _intermediate_cameras_path = _geotiff_filename + ".cameras.tif";
 
+    orthomosaic::OrthoMosaicConfig config;
+    config.max_output_megapixels = _orthomosaic_max_megapixels;
+
     _correspondences = orthomosaic::generateLayeredGeoTIFF(_surfaces, _graph, _coordinate_system,
-                                                           _intermediate_layers_path, _intermediate_cameras_path);
+                                                           _intermediate_layers_path, _intermediate_cameras_path,
+                                                           config);
 
     USM_DECISION_TABLE(Transition::NEXT, );
 }
@@ -475,19 +479,24 @@ Pipeline::Transition Pipeline::blend_layers()
         // Still generate DSM if requested
         if (!_dsm_filename.empty())
         {
-            orthomosaic::generateDSMGeoTIFF(_surfaces, _graph, _coordinate_system, _dsm_filename);
+            orthomosaic::generateDSMGeoTIFF(_surfaces, _graph, _coordinate_system, _dsm_filename, 1024,
+                                            _orthomosaic_max_megapixels);
         }
         USM_DECISION_TABLE(Transition::NEXT, USM_MAKE_DECISION(!_generate_geotiff, Transition::NEXT));
     }
 
+    orthomosaic::OrthoMosaicConfig config;
+    config.max_output_megapixels = _orthomosaic_max_megapixels;
+
     orthomosaic::blendLayeredGeoTIFF(_intermediate_layers_path, _intermediate_cameras_path, _geotiff_filename,
-                                     _color_balance_result, _surfaces, _graph, _coordinate_system);
+                                     _color_balance_result, _surfaces, _graph, _coordinate_system, config);
 
     _color_balance_result = {};
 
     if (!_dsm_filename.empty())
     {
-        orthomosaic::generateDSMGeoTIFF(_surfaces, _graph, _coordinate_system, _dsm_filename);
+        orthomosaic::generateDSMGeoTIFF(_surfaces, _graph, _coordinate_system, _dsm_filename, 1024,
+                                        _orthomosaic_max_megapixels);
     }
 
     USM_DECISION_TABLE(Transition::NEXT, );

@@ -100,6 +100,11 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
         }
     }
 
+    void set_orthomosaic_max_megapixels(double max_megapixels)
+    {
+        _orthomosaic_max_megapixels = max_megapixels;
+    }
+
     // Stage configuration - allows skipping pipeline stages
     void set_skip_mesh_refinement(bool skip)
     {
@@ -171,6 +176,7 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
     bool _generate_geotiff = false;
     std::string _geotiff_filename = "";
     std::string _dsm_filename = "";
+    double _orthomosaic_max_megapixels = 0.0;
 
     // Stage skip flags
     bool _skip_mesh_refinement = false;
