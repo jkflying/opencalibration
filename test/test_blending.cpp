@@ -393,8 +393,7 @@ TEST(Blending, boundary_only_secondary_blending)
         cv::Vec4b pixel = result.at<cv::Vec4b>(sz / 2, c);
         for (int ch = 0; ch < 3; ch++)
         {
-            EXPECT_NEAR(pixel[ch], ref_left[ch], 2)
-                << "Interior left mismatch at col=" << c << " ch=" << ch;
+            EXPECT_NEAR(pixel[ch], ref_left[ch], 2) << "Interior left mismatch at col=" << c << " ch=" << ch;
         }
     }
 
@@ -404,8 +403,7 @@ TEST(Blending, boundary_only_secondary_blending)
         cv::Vec4b pixel = result.at<cv::Vec4b>(sz / 2, c);
         for (int ch = 0; ch < 3; ch++)
         {
-            EXPECT_NEAR(pixel[ch], ref_right[ch], 2)
-                << "Interior right mismatch at col=" << c << " ch=" << ch;
+            EXPECT_NEAR(pixel[ch], ref_right[ch], 2) << "Interior right mismatch at col=" << c << " ch=" << ch;
         }
     }
 
@@ -416,7 +414,6 @@ TEST(Blending, boundary_only_secondary_blending)
         cv::Vec4b next = result.at<cv::Vec4b>(sz / 2, c + 1);
         // color_a is brighter (L=60) on left, color_b darker (L=40) on right
         // So pixel brightness should decrease or stay the same going left to right
-        EXPECT_GE(curr[0], next[0] - 1)
-            << "Non-monotonic transition at col=" << c;
+        EXPECT_GE(curr[0], next[0] - 1) << "Non-monotonic transition at col=" << c;
     }
 }

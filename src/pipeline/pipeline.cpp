@@ -436,9 +436,8 @@ Pipeline::Transition Pipeline::generate_layers()
     orthomosaic::OrthoMosaicConfig config;
     config.max_output_megapixels = _orthomosaic_max_megapixels;
 
-    _correspondences = orthomosaic::generateLayeredGeoTIFF(_surfaces, _graph, _coordinate_system,
-                                                           _intermediate_layers_path, _intermediate_cameras_path,
-                                                           config);
+    _correspondences = orthomosaic::generateLayeredGeoTIFF(
+        _surfaces, _graph, _coordinate_system, _intermediate_layers_path, _intermediate_cameras_path, config);
 
     USM_DECISION_TABLE(Transition::NEXT, );
 }
