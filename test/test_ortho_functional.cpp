@@ -248,7 +248,6 @@ struct ortho : public ::testing::Test
 
         OrthoMosaicConfig config;
         config.tile_size = tile_size;
-        config.num_layers = 3;
 
         // Pass 1: Generate layers
         generateLayeredGeoTIFF(surfaces, graph_ref, coord_system, layers_path, cameras_path, config);

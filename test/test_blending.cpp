@@ -3,81 +3,10 @@
 #include <gtest/gtest.h>
 #include <opencv2/imgproc.hpp>
 
+#include <algorithm>
 #include <cmath>
 
 using namespace opencalibration::orthomosaic;
-
-TEST(Blending, outlier_rejection_no_outlier)
-{
-    // GIVEN: 3 layers with consistent colors
-    LayeredTileBuffer tile;
-    tile.resize(2, 2, 3);
-
-    for (int layer = 0; layer < 3; layer++)
-    {
-        for (int i = 0; i < 4; i++)
-        {
-            tile.layers[layer][i].color_bgr = cv::Vec3b(100, 100, 100);
-            tile.layers[layer][i].valid = true;
-        }
-    }
-
-    // WHEN: We run outlier rejection
-    rejectOutliers(tile, 3.0);
-
-    // THEN: All samples should still be valid
-    for (int layer = 0; layer < 3; layer++)
-    {
-        for (int i = 0; i < 4; i++)
-        {
-            EXPECT_TRUE(tile.layers[layer][i].valid);
-        }
-    }
-}
-
-TEST(Blending, outlier_rejection_with_outlier)
-{
-    // GIVEN: 3 layers where one layer has a very different brightness
-    LayeredTileBuffer tile;
-    tile.resize(1, 1, 3);
-
-    // Layer 0 and 1: similar dark color
-    tile.at(0, 0, 0).color_bgr = cv::Vec3b(50, 50, 50);
-    tile.at(0, 0, 0).valid = true;
-    tile.at(1, 0, 0).color_bgr = cv::Vec3b(55, 55, 55);
-    tile.at(1, 0, 0).valid = true;
-    // Layer 2: very bright outlier
-    tile.at(2, 0, 0).color_bgr = cv::Vec3b(250, 250, 250);
-    tile.at(2, 0, 0).valid = true;
-
-    // WHEN: We run outlier rejection
-    rejectOutliers(tile, 3.0);
-
-    // THEN: Layer 2 should be rejected as outlier
-    EXPECT_TRUE(tile.at(0, 0, 0).valid);
-    EXPECT_TRUE(tile.at(1, 0, 0).valid);
-    EXPECT_FALSE(tile.at(2, 0, 0).valid);
-}
-
-TEST(Blending, outlier_rejection_needs_3_layers)
-{
-    // GIVEN: Only 2 valid layers
-    LayeredTileBuffer tile;
-    tile.resize(1, 1, 3);
-
-    tile.at(0, 0, 0).color_bgr = cv::Vec3b(50, 50, 50);
-    tile.at(0, 0, 0).valid = true;
-    tile.at(1, 0, 0).color_bgr = cv::Vec3b(250, 250, 250);
-    tile.at(1, 0, 0).valid = true;
-    tile.at(2, 0, 0).valid = false; // Invalid
-
-    // WHEN: We run outlier rejection
-    rejectOutliers(tile, 3.0);
-
-    // THEN: Both valid layers should remain (can't reject with only 2)
-    EXPECT_TRUE(tile.at(0, 0, 0).valid);
-    EXPECT_TRUE(tile.at(1, 0, 0).valid);
-}
 
 TEST(Blending, compute_blend_weight_center)
 {
@@ -368,5 +297,126 @@ TEST(Blending, no_seam_at_layer_boundary)
         cv::Vec4b curr = result.at<cv::Vec4b>(check_row, c);
         cv::Vec4b next = result.at<cv::Vec4b>(check_row, c + 1);
         EXPECT_GE(curr[0], next[0] - 1) << "Non-monotonic transition at col=" << c << " (possible ringing)";
+    }
+}
+
+TEST(Blending, boundary_only_secondary_blending)
+{
+    // GIVEN: Two layers where primary cameras differ on left vs right half.
+    // A transition mask suppresses the secondary layer except near the boundary.
+    int sz = 128;
+    int boundary_col = sz / 2;
+    int transition_radius = 16;
+
+    cv::Vec3f color_a(60.0f, 10.0f, 5.0f);
+    cv::Vec3f color_b(40.0f, -10.0f, -5.0f);
+
+    // Layer 0 (primary): color_a on left, color_b on right — full weight everywhere
+    cv::Mat lab_0(sz, sz, CV_32FC3, cv::Scalar(0, 0, 0));
+    cv::Mat weight_0 = cv::Mat::zeros(sz, sz, CV_32FC1);
+    for (int r = 0; r < sz; r++)
+    {
+        for (int c = 0; c < sz; c++)
+        {
+            lab_0.at<cv::Vec3f>(r, c) = (c < boundary_col) ? color_a : color_b;
+            weight_0.at<float>(r, c) = 1.0f;
+        }
+    }
+
+    // Layer 1 (secondary): opposite colors — weight masked by boundary distance
+    cv::Mat lab_1(sz, sz, CV_32FC3, cv::Scalar(0, 0, 0));
+    cv::Mat weight_1 = cv::Mat::zeros(sz, sz, CV_32FC1);
+    for (int r = 0; r < sz; r++)
+    {
+        for (int c = 0; c < sz; c++)
+        {
+            lab_1.at<cv::Vec3f>(r, c) = (c < boundary_col) ? color_b : color_a;
+            weight_1.at<float>(r, c) = 1.0f;
+        }
+    }
+
+    // Build boundary mask from layer 0's camera assignment (left vs right)
+    cv::Mat boundary_mask(sz, sz, CV_8UC1, cv::Scalar(0));
+    for (int r = 0; r < sz; r++)
+    {
+        for (int c = 0; c < sz; c++)
+        {
+            int my_cam = (c < boundary_col) ? 0 : 1;
+            const int dx[] = {-1, 1, 0, 0};
+            const int dy[] = {0, 0, -1, 1};
+            for (int d = 0; d < 4; d++)
+            {
+                int nr = r + dy[d], nc = c + dx[d];
+                if (nr >= 0 && nr < sz && nc >= 0 && nc < sz)
+                {
+                    int neighbor_cam = (nc < boundary_col) ? 0 : 1;
+                    if (neighbor_cam != my_cam)
+                    {
+                        boundary_mask.at<uint8_t>(r, c) = 255;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    cv::Mat inv_boundary;
+    cv::bitwise_not(boundary_mask, inv_boundary);
+    cv::Mat boundary_dist;
+    cv::distanceTransform(inv_boundary, boundary_dist, cv::DIST_L2, 3);
+
+    float steepness = std::log(99.0f) / static_cast<float>(transition_radius);
+    for (int r = 0; r < sz; r++)
+    {
+        for (int c = 0; c < sz; c++)
+        {
+            float d = boundary_dist.at<float>(r, c);
+            float falloff = 1.0f / (1.0f + std::exp(steepness * d));
+            weight_1.at<float>(r, c) *= falloff;
+        }
+    }
+
+    // WHEN: Laplacian blend
+    cv::Mat result = laplacianBlend({lab_0, lab_1}, {weight_0, weight_1}, 4);
+    ASSERT_FALSE(result.empty());
+
+    // THEN: Interior pixels (far from boundary) should match primary layer exactly
+    // because secondary weight is 0 there.
+    cv::Vec4b ref_left = result.at<cv::Vec4b>(sz / 2, 10);
+    cv::Vec4b ref_right = result.at<cv::Vec4b>(sz / 2, sz - 11);
+
+    // Check well inside the left half — use generous margin from transition zone
+    // because the Laplacian pyramid spreads some influence beyond weight boundaries
+    int margin = transition_radius + 16;
+    for (int c = 5; c < boundary_col - margin; c++)
+    {
+        cv::Vec4b pixel = result.at<cv::Vec4b>(sz / 2, c);
+        for (int ch = 0; ch < 3; ch++)
+        {
+            EXPECT_NEAR(pixel[ch], ref_left[ch], 2)
+                << "Interior left mismatch at col=" << c << " ch=" << ch;
+        }
+    }
+
+    // Check well inside the right half
+    for (int c = boundary_col + margin; c < sz - 5; c++)
+    {
+        cv::Vec4b pixel = result.at<cv::Vec4b>(sz / 2, c);
+        for (int ch = 0; ch < 3; ch++)
+        {
+            EXPECT_NEAR(pixel[ch], ref_right[ch], 2)
+                << "Interior right mismatch at col=" << c << " ch=" << ch;
+        }
+    }
+
+    // Check that the boundary region has a smooth transition (monotonic L channel)
+    for (int c = boundary_col - transition_radius; c < boundary_col + transition_radius - 1; c++)
+    {
+        cv::Vec4b curr = result.at<cv::Vec4b>(sz / 2, c);
+        cv::Vec4b next = result.at<cv::Vec4b>(sz / 2, c + 1);
+        // color_a is brighter (L=60) on left, color_b darker (L=40) on right
+        // So pixel brightness should decrease or stay the same going left to right
+        EXPECT_GE(curr[0], next[0] - 1)
+            << "Non-monotonic transition at col=" << c;
     }
 }

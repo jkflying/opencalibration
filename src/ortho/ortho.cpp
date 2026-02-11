@@ -1718,44 +1718,47 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
                 }
             }
 
-            // Outlier rejection on LAB layers (uses L channel from lab_layers)
+            cv::Mat boundary_mask(th, tw, CV_8UC1, cv::Scalar(0));
+            const int dx_arr[] = {-1, 1, 0, 0};
+            const int dy_arr[] = {0, 0, -1, 1};
             for (int local_row = 0; local_row < th; local_row++)
             {
                 for (int local_col = 0; local_col < tw; local_col++)
                 {
-                    std::vector<float> L_values;
-                    std::vector<int> valid_indices;
-                    for (int layer = 0; layer < num_layers; layer++)
+                    const auto &sample = tile_buf.at(0, local_row, local_col);
+                    if (!sample.valid)
+                        continue;
+                    for (int d = 0; d < 4; d++)
                     {
-                        if (tile_buf.at(layer, local_row, local_col).valid)
+                        int nr = local_row + dy_arr[d], nc = local_col + dx_arr[d];
+                        if (nr >= 0 && nr < th && nc >= 0 && nc < tw)
                         {
-                            L_values.push_back(lab_layers[layer].at<cv::Vec3f>(local_row, local_col)[0]);
-                            valid_indices.push_back(layer);
+                            const auto &neighbor = tile_buf.at(0, nr, nc);
+                            if (!neighbor.valid || neighbor.camera_id != sample.camera_id)
+                            {
+                                boundary_mask.at<uint8_t>(local_row, local_col) = 255;
+                                break;
+                            }
                         }
                     }
-                    if (valid_indices.size() < 3)
-                        continue;
+                }
+            }
 
-                    std::vector<float> sorted_L = L_values;
-                    std::sort(sorted_L.begin(), sorted_L.end());
-                    float median = sorted_L[sorted_L.size() / 2];
+            cv::Mat inv_boundary;
+            cv::bitwise_not(boundary_mask, inv_boundary);
+            cv::Mat boundary_dist;
+            cv::distanceTransform(inv_boundary, boundary_dist, cv::DIST_L2, 3);
 
-                    std::vector<float> abs_devs;
-                    abs_devs.reserve(L_values.size());
-                    for (float l : L_values)
-                        abs_devs.push_back(std::abs(l - median));
-                    std::sort(abs_devs.begin(), abs_devs.end());
-                    float mad = abs_devs[abs_devs.size() / 2] * 1.4826f;
-
-                    if (mad < 1.0f)
-                        continue;
-
-                    for (size_t i = 0; i < valid_indices.size(); i++)
+            float steepness = std::log(99.0f) / static_cast<float>(config.blend_transition_radius);
+            for (int layer = 1; layer < num_layers; layer++)
+            {
+                for (int local_row = 0; local_row < th; local_row++)
+                {
+                    for (int local_col = 0; local_col < tw; local_col++)
                     {
-                        if (std::abs(L_values[i] - median) > config.outlier_mad_threshold * mad)
-                        {
-                            weight_maps[valid_indices[i]].at<float>(local_row, local_col) = 0.0f;
-                        }
+                        float d = boundary_dist.at<float>(local_row, local_col);
+                        float falloff = 1.0f / (1.0f + std::exp(steepness * d));
+                        weight_maps[layer].at<float>(local_row, local_col) *= falloff;
                     }
                 }
             }

@@ -97,11 +97,11 @@ double rayTraceHeight(double x, double y, double mean_camera_z, const std::vecto
 
 struct OrthoMosaicConfig
 {
-    int num_layers = 3;
+    int num_layers = 2;
     int tile_size = 1024;
     int pyramid_levels = 4;
-    double outlier_mad_threshold = 3.0;
-    int correspondence_subsample = 10; // sample every Nth boundary pixel
+    int correspondence_subsample = 10;
+    int blend_transition_radius = 64;
 };
 
 OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph);

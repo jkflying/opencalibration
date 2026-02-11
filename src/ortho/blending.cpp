@@ -9,63 +9,6 @@
 namespace opencalibration::orthomosaic
 {
 
-void rejectOutliers(LayeredTileBuffer &tile, double mad_threshold)
-{
-    for (int row = 0; row < tile.height; row++)
-    {
-        for (int col = 0; col < tile.width; col++)
-        {
-            std::vector<float> L_values;
-            std::vector<int> valid_layers;
-            for (int layer = 0; layer < tile.num_layers; layer++)
-            {
-                const auto &sample = tile.at(layer, row, col);
-                if (sample.valid)
-                {
-                    cv::Mat bgr_pixel(1, 1, CV_8UC3);
-                    bgr_pixel.at<cv::Vec3b>(0, 0) = sample.color_bgr;
-                    cv::Mat lab_pixel;
-                    cv::cvtColor(bgr_pixel, lab_pixel, cv::COLOR_BGR2Lab);
-                    L_values.push_back(lab_pixel.at<cv::Vec3b>(0, 0)[0]);
-                    valid_layers.push_back(layer);
-                }
-            }
-
-            if (valid_layers.size() < 3)
-            {
-                continue; // Need at least 3 samples for meaningful outlier rejection
-            }
-
-            std::vector<float> sorted_L = L_values;
-            std::sort(sorted_L.begin(), sorted_L.end());
-            float median = sorted_L[sorted_L.size() / 2];
-
-            // Compute MAD (median absolute deviation)
-            std::vector<float> abs_devs;
-            abs_devs.reserve(L_values.size());
-            for (float l : L_values)
-            {
-                abs_devs.push_back(std::abs(l - median));
-            }
-            std::sort(abs_devs.begin(), abs_devs.end());
-            float mad = abs_devs[abs_devs.size() / 2] * 1.4826f; // scale factor for normal distribution
-
-            if (mad < 1.0f)
-            {
-                continue; // Very consistent values, no outliers
-            }
-
-            for (size_t i = 0; i < valid_layers.size(); i++)
-            {
-                if (std::abs(L_values[i] - median) > mad_threshold * mad)
-                {
-                    tile.at(valid_layers[i], row, col).valid = false;
-                }
-            }
-        }
-    }
-}
-
 float computeBlendWeight(float pixel_x, float pixel_y, int image_width, int image_height, float camera_distance)
 {
     float half_w = image_width * 0.5f;

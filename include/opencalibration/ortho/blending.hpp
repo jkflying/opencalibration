@@ -51,14 +51,6 @@ struct LayeredTileBuffer
     }
 };
 
-struct BlendConfig
-{
-    int pyramid_levels = 4;
-    double outlier_mad_threshold = 3.0;
-};
-
-void rejectOutliers(LayeredTileBuffer &tile, double mad_threshold);
-
 float computeBlendWeight(float pixel_x, float pixel_y, int image_width, int image_height, float camera_distance);
 
 cv::Mat laplacianBlend(const std::vector<cv::Mat> &lab_layers, const std::vector<cv::Mat> &weight_maps,
