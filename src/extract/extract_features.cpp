@@ -11,7 +11,7 @@ namespace opencalibration
 std::vector<feature_2d> extract_features(const cv::Mat &image)
 {
 
-    int max_length_pixels = 800;
+    int max_length_pixels = 1600;
     double nms_pixel_radius = 8;
     std::vector<feature_2d> results;
 

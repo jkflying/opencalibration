@@ -15,6 +15,12 @@ template <> inline double fast_pow<4>(double d)
     return t * t;
 }
 
+template <> inline double fast_pow<5>(double d)
+{
+    double t = d * d;
+    return t * t * d;
+}
+
 template <> inline double fast_pow<8>(double d)
 {
     double t = d * d;
@@ -116,6 +122,7 @@ double ransac(const std::vector<correspondence> &matches, Model &model, std::vec
 
 template double ransac(const std::vector<correspondence> &, homography_model &, std::vector<bool> &);
 template double ransac(const std::vector<correspondence> &, fundamental_matrix_model &, std::vector<bool> &);
+template double ransac(const std::vector<correspondence> &, essential_matrix_model &, std::vector<bool> &);
 
 void assembleInliers(const std::vector<feature_match> &matches, const std::vector<bool> &inliers,
                      const std::vector<feature_2d> &source_features, const std::vector<feature_2d> &dest_features,

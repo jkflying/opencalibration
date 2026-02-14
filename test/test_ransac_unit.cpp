@@ -175,6 +175,177 @@ TEST_P(ransac_p, homography_rotation_translation)
     }
 }
 
+TEST(ransac_fundamental_matrix, fitInliers_uses_correct_subset)
+{
+    std::vector<correspondence> matches;
+    matches.push_back(correspondence{Eigen::Vector3d{1, 2, 1}, Eigen::Vector3d{1, 2, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{100, 200, 1}, Eigen::Vector3d{200, 100, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{2, 2, 1}, Eigen::Vector3d{2, 2, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{150, 250, 1}, Eigen::Vector3d{250, 150, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{2, 1, 1}, Eigen::Vector3d{2, 1, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{1, 1, 1}, Eigen::Vector3d{1, 1, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{1.5, 1.5, 1}, Eigen::Vector3d{1.5, 1.5, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{120, 220, 1}, Eigen::Vector3d{220, 120, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{1.2, 1.8, 1}, Eigen::Vector3d{1.2, 1.8, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{130, 230, 1}, Eigen::Vector3d{230, 130, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{1.8, 1.2, 1}, Eigen::Vector3d{1.8, 1.2, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{1.3, 1.7, 1}, Eigen::Vector3d{1.3, 1.7, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{1, 2, 3}, Eigen::Vector3d{1, 2, 3}});
+    matches.push_back(correspondence{Eigen::Vector3d{2, 2, 2}, Eigen::Vector3d{2, 2, 2}});
+    for (auto &m : matches)
+    {
+        m.measurement1.normalize();
+        m.measurement2.normalize();
+    }
+
+    std::vector<bool> inliers = {true, false, true, false, true, true, true, false, true, false, true, true, true, true};
+
+    fundamental_matrix_model model;
+    model.fitInliers(matches, inliers);
+
+    double inlier_error = 0;
+    size_t inlier_count = 0;
+    for (size_t i = 0; i < matches.size(); i++)
+    {
+        if (inliers[i])
+        {
+            inlier_error += std::abs(model.error(matches[i]));
+            inlier_count++;
+        }
+    }
+    double avg_inlier_error = inlier_error / inlier_count;
+
+    double outlier_error = 0;
+    size_t outlier_count = 0;
+    for (size_t i = 0; i < matches.size(); i++)
+    {
+        if (!inliers[i])
+        {
+            outlier_error += std::abs(model.error(matches[i]));
+            outlier_count++;
+        }
+    }
+    double avg_outlier_error = outlier_error / outlier_count;
+
+    EXPECT_LT(avg_inlier_error, 0.01);
+    EXPECT_GT(avg_outlier_error, avg_inlier_error * 2);
+}
+
+TEST(ransac_fundamental_matrix, evaluate_uses_absolute_error)
+{
+    std::vector<correspondence> matches;
+    matches.push_back(correspondence{Eigen::Vector3d{1, 2, 1}, Eigen::Vector3d{1, 2, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{2, 2, 1}, Eigen::Vector3d{2, 2, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{2, 1, 1}, Eigen::Vector3d{2, 1, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{1, 1, 1}, Eigen::Vector3d{1, 1, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{1.5, 1.5, 1}, Eigen::Vector3d{1.5, 1.5, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{1.2, 1.8, 1}, Eigen::Vector3d{1.2, 1.8, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{1.8, 1.2, 1}, Eigen::Vector3d{1.8, 1.2, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{1.3, 1.7, 1}, Eigen::Vector3d{1.3, 1.7, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{1, 2, 3}, Eigen::Vector3d{1, 2, 3}});
+    matches.push_back(correspondence{Eigen::Vector3d{2, 2, 2}, Eigen::Vector3d{2, 2, 2}});
+    for (auto &m : matches)
+    {
+        m.measurement1.normalize();
+        m.measurement2.normalize();
+    }
+
+    fundamental_matrix_model model;
+    std::vector<bool> inliers;
+
+    double score = ransac(matches, model, inliers);
+
+    EXPECT_GT(score, 0.7);
+    EXPECT_GE(std::count(inliers.begin(), inliers.end(), true), 8);
+}
+
+TEST(ransac_essential_matrix, ransac_compiles)
+{
+    std::vector<correspondence> matches;
+    essential_matrix_model model;
+    std::vector<bool> inliers;
+
+    double score = ransac(matches, model, inliers);
+
+    EXPECT_EQ(score, 0);
+    EXPECT_EQ(inliers.size(), 0);
+}
+
+TEST(ransac_essential_matrix, fits_identity)
+{
+    std::vector<correspondence> matches;
+    matches.push_back(correspondence{Eigen::Vector3d{1, 2, 1}, Eigen::Vector3d{1, 2, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{2, 2, 1}, Eigen::Vector3d{2, 2, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{2, 1, 1}, Eigen::Vector3d{2, 1, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{1, 1, 1}, Eigen::Vector3d{1, 1, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{1, 2, 3}, Eigen::Vector3d{1, 2, 3}});
+    matches.push_back(correspondence{Eigen::Vector3d{2, 2, 2}, Eigen::Vector3d{2, 2, 2}});
+    for (auto &m : matches)
+    {
+        m.measurement1.normalize();
+        m.measurement2.normalize();
+    }
+
+    essential_matrix_model model;
+    std::vector<bool> inliers;
+
+    double score = ransac(matches, model, inliers);
+
+    EXPECT_GE(score, 0.16);
+    EXPECT_EQ(inliers.size(), 6);
+    EXPECT_GE(std::count(inliers.begin(), inliers.end(), true), 1);
+}
+
+TEST(ransac_essential_matrix, fitInliers_uses_correct_subset)
+{
+    std::vector<correspondence> matches;
+    matches.push_back(correspondence{Eigen::Vector3d{1, 2, 1}, Eigen::Vector3d{1, 2, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{100, 200, 1}, Eigen::Vector3d{200, 100, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{2, 2, 1}, Eigen::Vector3d{2, 2, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{150, 250, 1}, Eigen::Vector3d{250, 150, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{2, 1, 1}, Eigen::Vector3d{2, 1, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{1, 1, 1}, Eigen::Vector3d{1, 1, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{1.5, 1.5, 1}, Eigen::Vector3d{1.5, 1.5, 1}});
+    matches.push_back(correspondence{Eigen::Vector3d{1, 2, 3}, Eigen::Vector3d{1, 2, 3}});
+    for (auto &m : matches)
+    {
+        m.measurement1.normalize();
+        m.measurement2.normalize();
+    }
+
+    std::vector<bool> inliers = {true, false, true, false, true, true, true, true};
+
+    essential_matrix_model model;
+    model.fitInliers(matches, inliers);
+
+    double inlier_error = 0;
+    size_t inlier_count = 0;
+    for (size_t i = 0; i < matches.size(); i++)
+    {
+        if (inliers[i])
+        {
+            inlier_error += std::abs(model.error(matches[i]));
+            inlier_count++;
+        }
+    }
+    double avg_inlier_error = inlier_error / inlier_count;
+
+    double outlier_error = 0;
+    size_t outlier_count = 0;
+    for (size_t i = 0; i < matches.size(); i++)
+    {
+        if (!inliers[i])
+        {
+            outlier_error += std::abs(model.error(matches[i]));
+            outlier_count++;
+        }
+    }
+    double avg_outlier_error = outlier_error / outlier_count;
+
+    EXPECT_LT(avg_inlier_error, 0.01);
+    EXPECT_GT(avg_outlier_error, avg_inlier_error * 2);
+}
+
 INSTANTIATE_TEST_SUITE_P(
     ransac, ransac_p,
     ::testing::Combine(testing::Values(Eigen::Quaterniond::Identity(),

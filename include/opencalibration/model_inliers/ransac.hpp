@@ -1,5 +1,6 @@
 #pragma once
 
+#include <opencalibration/model_inliers/essential_matrix_model.hpp>
 #include <opencalibration/model_inliers/fundamental_matrix_model.hpp>
 #include <opencalibration/model_inliers/homography_model.hpp>
 #include <opencalibration/types/correspondence.hpp>

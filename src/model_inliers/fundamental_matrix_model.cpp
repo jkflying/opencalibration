@@ -3,6 +3,7 @@
 #include <eigen3/Eigen/Dense>
 #include <eigen3/Eigen/Geometry>
 
+#include <cmath>
 #include <iostream>
 
 namespace
@@ -64,16 +65,20 @@ void fundamental_matrix_model::fitInliers(const std::vector<correspondence> &cor
 
     Eigen::Matrix<double, Eigen::Dynamic, 9> A(num_inliers, 9);
 
-    for (size_t i = 0; i < num_inliers; i++)
+    for (size_t i = 0, j = 0; i < corrs.size(); i++)
     {
-        Eigen::Vector2d p1 = corrs[i].measurement1.hnormalized();
-        const double x = p1.x();
-        const double y = p1.y();
-        Eigen::Vector2d p2 = corrs[i].measurement2.hnormalized();
-        const double x_ = p2.x();
-        const double y_ = p2.y();
+        if (inliers[i])
+        {
+            Eigen::Vector2d p1 = corrs[i].measurement1.hnormalized();
+            const double x = p1.x();
+            const double y = p1.y();
+            Eigen::Vector2d p2 = corrs[i].measurement2.hnormalized();
+            const double x_ = p2.x();
+            const double y_ = p2.y();
 
-        A.row(i) << x * x_, x * y_, x, y * x_, y * y_, y, x_, y_, 1;
+            A.row(j) << x * x_, x * y_, x, y * x_, y * y_, y, x_, y_, 1;
+            j++;
+        }
     }
 
     calculateFundamentalMatrix(A, fundamental_matrix);
@@ -85,7 +90,7 @@ size_t fundamental_matrix_model::evaluate(const std::vector<correspondence> &cor
     size_t count = 0;
     for (size_t i = 0; i < corrs.size(); i++)
     {
-        bool in = error(corrs[i]) < inlier_threshold;
+        bool in = std::abs(error(corrs[i])) < inlier_threshold;
         inliers[i] = in;
         if (in)
             count++;

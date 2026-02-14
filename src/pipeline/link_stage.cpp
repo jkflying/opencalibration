@@ -70,38 +70,71 @@ std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph
             }
             const image &near_image = node->payload;
             auto run_func = [i, node_id, near_image, match_node_id, &img, &mtx, &meas]() {
-                PerformanceMeasure p("Link runner match");
+                PerformanceMeasure p("Link runner coarse match");
                 camera_relations relations;
 
-                // match
-                relations.matches = match_features(img.features, near_image.features);
+                const double coarse_spacing_pixels = 40.0;
+                std::vector<size_t> coarse_indices_1 =
+                    spatially_subsample_feature_indices(img.features, coarse_spacing_pixels);
+                std::vector<size_t> coarse_indices_2 =
+                    spatially_subsample_feature_indices(near_image.features, coarse_spacing_pixels);
 
-                // distort
-                p.reset("Link runner undistort");
-                std::vector<correspondence> correspondences = distort_keypoints(
-                    img.features, near_image.features, relations.matches, *img.model, *near_image.model);
+                std::vector<feature_match> coarse_matches =
+                    match_features_subset(img.features, near_image.features, coarse_indices_1, coarse_indices_2);
 
-                // ransac
-                p.reset("Link runner ransac");
+                p.reset("Link runner coarse undistort");
+                std::vector<correspondence> coarse_correspondences =
+                    distort_keypoints(img.features, near_image.features, coarse_matches, *img.model, *near_image.model);
+
+                p.reset("Link runner coarse ransac");
                 homography_model h;
-                std::vector<bool> inliers;
-                ransac(correspondences, h, inliers);
+                std::vector<bool> coarse_inliers;
+                ransac(coarse_correspondences, h, coarse_inliers);
 
-                p.reset("Link runner decompose");
                 relations.ransac_relation = h.homography;
                 relations.relationType = camera_relations::RelationType::HOMOGRAPHY;
 
-                bool can_decompose = h.decompose(correspondences, inliers, relations.relative_poses);
+                bool can_decompose = h.decompose(coarse_correspondences, coarse_inliers, relations.relative_poses);
+                size_t num_coarse_inliers = std::count(coarse_inliers.begin(), coarse_inliers.end(), true);
 
-                size_t num_inliers = std::count(inliers.begin(), inliers.end(), true);
+                spdlog::trace("Coarse matches: {}  inliers: {}  can_decompose: {}", coarse_matches.size(),
+                              num_coarse_inliers, can_decompose);
 
-                spdlog::trace("Matches: {}  inliers: {}  can_decompose: {}", relations.matches.size(), num_inliers,
-                              can_decompose);
-
-                if (can_decompose && num_inliers > h.MINIMUM_POINTS * 1.5)
+                if (can_decompose && num_coarse_inliers > h.MINIMUM_POINTS * 1.5)
                 {
-                    assembleInliers(relations.matches, inliers, img.features, near_image.features,
-                                    relations.inlier_matches);
+                    p.reset("Link runner fine match");
+                    const double search_radius_pixels = 50.0;
+                    std::vector<feature_match> fine_matches =
+                        match_features_local_guided(img.features, near_image.features, h.homography, search_radius_pixels);
+
+                    std::vector<feature_match> all_matches = coarse_matches;
+                    all_matches.insert(all_matches.end(), fine_matches.begin(), fine_matches.end());
+
+                    p.reset("Link runner fine undistort");
+                    std::vector<correspondence> all_correspondences =
+                        distort_keypoints(img.features, near_image.features, all_matches, *img.model, *near_image.model);
+
+                    p.reset("Link runner fine ransac");
+                    std::vector<bool> all_inliers;
+                    ransac(all_correspondences, h, all_inliers);
+
+                    relations.ransac_relation = h.homography;
+                    size_t num_all_inliers = std::count(all_inliers.begin(), all_inliers.end(), true);
+
+                    spdlog::trace("All matches: {}  inliers: {}", all_matches.size(), num_all_inliers);
+
+                    if (num_all_inliers > h.MINIMUM_POINTS * 1.5)
+                    {
+                        relations.matches = all_matches;
+                        assembleInliers(relations.matches, all_inliers, img.features, near_image.features,
+                                        relations.inlier_matches);
+                    }
+                    else
+                    {
+                        relations.matches = coarse_matches;
+                        assembleInliers(relations.matches, coarse_inliers, img.features, near_image.features,
+                                        relations.inlier_matches);
+                    }
                 }
                 std::lock_guard<std::mutex> lock(mtx);
                 meas.emplace_back(edge_payload{i, node_id, match_node_id, std::move(relations)});
