@@ -2,6 +2,7 @@
 
 #include <opencalibration/distort/distort_keypoints.hpp>
 #include <opencalibration/match/match_features.hpp>
+#include <opencalibration/model_inliers/fundamental_matrix_model.hpp>
 #include <opencalibration/model_inliers/ransac.hpp>
 #include <opencalibration/performance/performance.hpp>
 
@@ -103,9 +104,28 @@ std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph
                 if (can_decompose && num_coarse_inliers > h.MINIMUM_POINTS * 1.5)
                 {
                     p.reset("Link runner fine match");
-                    const double search_radius_pixels = 50.0;
-                    std::vector<feature_match> fine_matches =
-                        match_features_local_guided(img.features, near_image.features, h.homography, search_radius_pixels);
+
+                    // Compute pixel-space fundamental matrix from coarse inliers for epipolar filtering
+                    std::vector<correspondence> pixel_correspondences(coarse_matches.size());
+                    for (size_t k = 0; k < coarse_matches.size(); k++)
+                    {
+                        const auto &loc1 = img.features[coarse_matches[k].feature_index_1].location;
+                        const auto &loc2 = near_image.features[coarse_matches[k].feature_index_2].location;
+                        pixel_correspondences[k].measurement1 = loc1.homogeneous();
+                        pixel_correspondences[k].measurement2 = loc2.homogeneous();
+                    }
+
+                    fundamental_matrix_model fm;
+                    fm.inlier_threshold = 15.0;
+                    std::vector<bool> fm_inliers;
+                    ransac(pixel_correspondences, fm, fm_inliers);
+                    fm.fitInliers(pixel_correspondences, fm_inliers);
+
+                    const double search_radius_pixels = 150.0;
+                    const double epipolar_threshold_pixels = 12.0;
+                    std::vector<feature_match> fine_matches = match_features_local_guided(
+                        img.features, near_image.features, h.homography, search_radius_pixels, &fm.fundamental_matrix,
+                        epipolar_threshold_pixels);
 
                     std::vector<feature_match> all_matches = coarse_matches;
                     all_matches.insert(all_matches.end(), fine_matches.begin(), fine_matches.end());

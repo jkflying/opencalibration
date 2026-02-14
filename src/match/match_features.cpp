@@ -154,9 +154,19 @@ std::vector<feature_match> match_features_subset(const std::vector<feature_2d> &
 std::vector<feature_match> match_features_local_guided(const std::vector<feature_2d> &set_1,
                                                          const std::vector<feature_2d> &set_2,
                                                          const Eigen::Matrix3d &homography,
-                                                         double search_radius_pixels)
+                                                         double search_radius_pixels,
+                                                         const Eigen::Matrix3d *fundamental_matrix,
+                                                         double epipolar_threshold_pixels)
 {
     const double ratio_threshold = 0.8;
+
+    // Epipolar line distance: |x2' * F * x1| / ||(Fx1)[0:1]||
+    auto epipolar_distance = [](const Eigen::Matrix3d &F, const Eigen::Vector2d &p1, const Eigen::Vector2d &p2) {
+        Eigen::Vector3d epiline = F * p1.homogeneous();
+        double numerator = std::abs(p2.homogeneous().dot(epiline));
+        double denominator = epiline.head<2>().norm();
+        return denominator > 0 ? numerator / denominator : std::numeric_limits<double>::infinity();
+    };
 
     auto toArray = [](const Eigen::Vector2d &v) -> std::array<double, 2> { return {v.x(), v.y()}; };
     jk::tree::KDTree<size_t, 2, 8> tree;
@@ -187,6 +197,13 @@ std::vector<feature_match> match_features_local_guided(const std::vector<feature
 
         for (const auto &candidate : candidates)
         {
+            if (fundamental_matrix != nullptr &&
+                epipolar_distance(*fundamental_matrix, f1.location, set_2[candidate.payload].location) >
+                    epipolar_threshold_pixels)
+            {
+                continue;
+            }
+
             const auto &f2 = set_2[candidate.payload];
             double distance = descriptor_distance(f1, f2);
             if (distance < second_best_distance)
@@ -223,6 +240,11 @@ std::vector<feature_match> match_features_local_guided(const std::vector<feature
     }
 
     Eigen::Matrix3d inv_homography = homography.inverse();
+    Eigen::Matrix3d F_transpose;
+    if (fundamental_matrix != nullptr)
+    {
+        F_transpose = fundamental_matrix->transpose();
+    }
     auto searcher1 = tree1.searcher();
     std::vector<size_t> backward_best(set_2.size(), SIZE_MAX);
     for (size_t j : matched_in_set2)
@@ -239,6 +261,13 @@ std::vector<feature_match> match_features_local_guided(const std::vector<feature
         double best_distance = std::numeric_limits<double>::infinity();
         for (const auto &candidate : candidates)
         {
+            if (fundamental_matrix != nullptr &&
+                epipolar_distance(F_transpose, f2.location, set_1[candidate.payload].location) >
+                    epipolar_threshold_pixels)
+            {
+                continue;
+            }
+
             double distance = descriptor_distance(f2, set_1[candidate.payload]);
             if (distance < best_distance)
             {

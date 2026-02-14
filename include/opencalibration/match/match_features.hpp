@@ -21,5 +21,7 @@ std::vector<feature_match> match_features_subset(const std::vector<feature_2d> &
 
 std::vector<feature_match> match_features_local_guided(const std::vector<feature_2d> &set_1,
                                                          const std::vector<feature_2d> &set_2,
-                                                         const Eigen::Matrix3d &homography, double search_radius_pixels);
+                                                         const Eigen::Matrix3d &homography, double search_radius_pixels,
+                                                         const Eigen::Matrix3d *fundamental_matrix = nullptr,
+                                                         double epipolar_threshold_pixels = 12.0);
 }
