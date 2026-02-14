@@ -122,4 +122,7 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
                          const std::vector<surface_model> &surfaces, const MeasurementGraph &graph,
                          const opencalibration::GeoCoord &coord_system, const OrthoMosaicConfig &config = {});
 
+void generateTexturedOBJ(const std::vector<surface_model> &surfaces, const std::string &geotiff_path,
+                         const std::string &obj_path);
+
 } // namespace opencalibration::orthomosaic

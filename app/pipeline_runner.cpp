@@ -38,6 +38,7 @@ int main(int argc, char *argv[])
     std::string overlap_file = "";
     std::string geotiff_file = "";
     std::string dsm_file = "";
+    std::string textured_mesh_file = "";
     double ortho_max_megapixels = 0.0;
     std::string checkpoint_save = "";
     std::string checkpoint_load = "";
@@ -64,6 +65,7 @@ int main(int argc, char *argv[])
     args.addArgument({"--overlap-file"}, &overlap_file, "Output overlap count image file");
     args.addArgument({"--ortho-geotiff"}, &geotiff_file, "Output full-resolution georeferenced GeoTIFF orthomosaic");
     args.addArgument({"--dsm-geotiff"}, &dsm_file, "Output Digital Surface Model (DSM) GeoTIFF");
+    args.addArgument({"--textured-mesh"}, &textured_mesh_file, "Output textured OBJ mesh (generates .obj, .mtl, .jpg)");
     args.addArgument({"--ortho-max-megapixels"}, &ortho_max_megapixels,
                      "Maximum orthomosaic output size in megapixels (0 = unlimited)");
     args.addArgument({"-cs", "--checkpoint-save"}, &checkpoint_save, "Save checkpoint to directory after processing");
@@ -101,6 +103,12 @@ int main(int argc, char *argv[])
     if (ortho_max_megapixels < 0.0)
     {
         std::cerr << "--ortho-max-megapixels must be >= 0" << std::endl;
+        return -1;
+    }
+
+    if (!textured_mesh_file.empty() && geotiff_file.empty())
+    {
+        std::cerr << "--textured-mesh requires --ortho-geotiff to be set" << std::endl;
         return -1;
     }
 
@@ -152,6 +160,7 @@ int main(int argc, char *argv[])
     p.set_thumbnail_filenames(thumbnail_file, source_file, overlap_file);
     p.set_geotiff_filename(geotiff_file);
     p.set_dsm_filename(dsm_file);
+    p.set_textured_mesh_filename(textured_mesh_file);
     p.set_orthomosaic_max_megapixels(ortho_max_megapixels);
     p.set_skip_mesh_refinement(skip_mesh_refinement);
     p.set_skip_initial_global_relax(skip_initial_global_relax);

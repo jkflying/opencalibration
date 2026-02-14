@@ -1,4 +1,5 @@
 #include <opencalibration/geo_coord/geo_coord.hpp>
+#include <opencalibration/io/serialize.hpp>
 #include <opencalibration/ortho/blending.hpp>
 #include <opencalibration/ortho/color_balance.hpp>
 #include <opencalibration/ortho/gdal_dataset.hpp>
@@ -14,6 +15,8 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 
 using namespace opencalibration;
 using namespace opencalibration::orthomosaic;
@@ -641,6 +644,290 @@ TEST_F(ortho, single_image_coverage)
     EXPECT_LE(valid_pixel_count, region_size * region_size) << "Valid pixel count exceeds region size";
 
     // Clean up not needed - output directory is for test artifacts
+}
+
+TEST_F(ortho, textured_obj_export)
+{
+    // GIVEN: A scene with images, surface, and a generated orthomosaic GeoTIFF
+    init_cameras();
+
+    surface_model points_surface;
+    points_surface.cloud.push_back(generate_planar_points());
+
+    point_cloud camera_locations;
+    for (const auto &nodePose : nodePoses)
+    {
+        camera_locations.push_back(nodePose.position);
+    }
+    surface_model mesh_surface;
+    mesh_surface.mesh = rebuildMesh(camera_locations, {points_surface});
+
+    for (int i = 0; i < 3; i++)
+    {
+        std::string path = TEST_DATA_OUTPUT_DIR "test_textured_mesh_image_" + std::to_string(i) + ".png";
+        cv::Mat img(600, 800, CV_8UC3, cv::Scalar(i * 80, 100, 200 - i * 60));
+        cv::imwrite(path, img);
+        graph.getNode(id[i])->payload.path = path;
+    }
+
+    GeoCoord coord_system;
+    coord_system.setOrigin(0, 0);
+
+    std::string geotiff_path = TEST_DATA_OUTPUT_DIR "test_textured_mesh_ortho.tif";
+    generateLayeredOrthomosaic({mesh_surface}, graph, coord_system, geotiff_path, 512);
+    ASSERT_TRUE(std::filesystem::exists(geotiff_path));
+
+    // WHEN: we generate a textured OBJ from the mesh and GeoTIFF
+    std::string obj_path = TEST_DATA_OUTPUT_DIR "test_textured_mesh.obj";
+    std::string mtl_path = TEST_DATA_OUTPUT_DIR "test_textured_mesh.mtl";
+    std::string jpg_path = TEST_DATA_OUTPUT_DIR "test_textured_mesh.jpg";
+
+    EXPECT_NO_THROW(generateTexturedOBJ({mesh_surface}, geotiff_path, obj_path));
+
+    // THEN: all three output files should exist
+    EXPECT_TRUE(std::filesystem::exists(obj_path));
+    EXPECT_TRUE(std::filesystem::exists(mtl_path));
+    EXPECT_TRUE(std::filesystem::exists(jpg_path));
+
+    // Verify JPEG texture dimensions match GeoTIFF
+    GDALDatasetPtr dataset = openGDALDataset(geotiff_path);
+    ASSERT_NE(dataset.get(), nullptr);
+    GDALDatasetWrapper ds(dataset.get());
+    int expected_width = ds.GetRasterXSize();
+    int expected_height = ds.GetRasterYSize();
+    dataset.reset();
+
+    cv::Mat texture = cv::imread(jpg_path);
+    ASSERT_FALSE(texture.empty());
+    EXPECT_EQ(texture.cols, expected_width);
+    EXPECT_EQ(texture.rows, expected_height);
+
+    // Verify OBJ file contents
+    std::ifstream obj_file(obj_path);
+    ASSERT_TRUE(obj_file.is_open());
+    std::string obj_contents((std::istreambuf_iterator<char>(obj_file)), std::istreambuf_iterator<char>());
+    obj_file.close();
+
+    // Count vertices, texture coordinates, and faces
+    int vertex_count = 0, vt_count = 0, face_count = 0;
+    bool has_mtllib = false, has_usemtl = false;
+    std::istringstream obj_stream(obj_contents);
+    std::string line;
+    while (std::getline(obj_stream, line))
+    {
+        if (line.substr(0, 2) == "v ")
+            vertex_count++;
+        else if (line.substr(0, 3) == "vt ")
+            vt_count++;
+        else if (line.substr(0, 2) == "f ")
+            face_count++;
+        else if (line.find("mtllib") != std::string::npos)
+            has_mtllib = true;
+        else if (line.find("usemtl") != std::string::npos)
+            has_usemtl = true;
+    }
+
+    EXPECT_GT(vertex_count, 0) << "OBJ should contain vertices";
+    EXPECT_EQ(vt_count, vertex_count) << "Each vertex should have a texture coordinate";
+    EXPECT_GT(face_count, 0) << "OBJ should contain faces";
+    EXPECT_TRUE(has_mtllib) << "OBJ should reference an MTL file";
+    EXPECT_TRUE(has_usemtl) << "OBJ should use a material";
+
+    // Verify UV coordinates are within [0, 1] range
+    std::istringstream uv_stream(obj_contents);
+    while (std::getline(uv_stream, line))
+    {
+        if (line.substr(0, 3) == "vt ")
+        {
+            double u, v;
+            ASSERT_EQ(sscanf(line.c_str(), "vt %lf %lf", &u, &v), 2);
+            EXPECT_GE(u, -0.1) << "UV u coordinate should be near [0,1]: " << u;
+            EXPECT_LE(u, 1.1) << "UV u coordinate should be near [0,1]: " << u;
+            EXPECT_GE(v, -0.1) << "UV v coordinate should be near [0,1]: " << v;
+            EXPECT_LE(v, 1.1) << "UV v coordinate should be near [0,1]: " << v;
+        }
+    }
+
+    // Verify face references are valid (v/vt format with indices in range)
+    std::istringstream face_stream(obj_contents);
+    while (std::getline(face_stream, line))
+    {
+        if (line.substr(0, 2) == "f ")
+        {
+            int v0, vt0, v1, vt1, v2, vt2;
+            ASSERT_EQ(sscanf(line.c_str(), "f %d/%d %d/%d %d/%d", &v0, &vt0, &v1, &vt1, &v2, &vt2), 6)
+                << "Face line should have v/vt format: " << line;
+            EXPECT_GE(v0, 1);
+            EXPECT_LE(v0, vertex_count);
+            EXPECT_GE(v1, 1);
+            EXPECT_LE(v1, vertex_count);
+            EXPECT_GE(v2, 1);
+            EXPECT_LE(v2, vertex_count);
+        }
+    }
+
+    // Verify MTL file references the JPEG texture
+    std::ifstream mtl_file(mtl_path);
+    ASSERT_TRUE(mtl_file.is_open());
+    std::string mtl_contents((std::istreambuf_iterator<char>(mtl_file)), std::istreambuf_iterator<char>());
+    mtl_file.close();
+
+    EXPECT_NE(mtl_contents.find("test_textured_mesh.jpg"), std::string::npos)
+        << "MTL should reference the JPEG texture file";
+    EXPECT_NE(mtl_contents.find("newmtl"), std::string::npos) << "MTL should define a material";
+}
+
+TEST_F(ortho, obj_and_ply_mesh_geometry_match)
+{
+    // GIVEN: A mesh, and both PLY and OBJ exports of it
+    init_cameras();
+
+    surface_model points_surface;
+    points_surface.cloud.push_back(generate_planar_points());
+
+    point_cloud camera_locations;
+    for (const auto &nodePose : nodePoses)
+    {
+        camera_locations.push_back(nodePose.position);
+    }
+    surface_model mesh_surface;
+    mesh_surface.mesh = rebuildMesh(camera_locations, {points_surface});
+
+    for (int i = 0; i < 3; i++)
+    {
+        std::string path = TEST_DATA_OUTPUT_DIR "test_mesh_compare_image_" + std::to_string(i) + ".png";
+        cv::Mat img(600, 800, CV_8UC3, cv::Scalar(i * 80, 100, 200 - i * 60));
+        cv::imwrite(path, img);
+        graph.getNode(id[i])->payload.path = path;
+    }
+
+    GeoCoord coord_system;
+    coord_system.setOrigin(0, 0);
+
+    std::string geotiff_path = TEST_DATA_OUTPUT_DIR "test_mesh_compare_ortho.tif";
+    generateLayeredOrthomosaic({mesh_surface}, graph, coord_system, geotiff_path, 512);
+
+    // Write PLY
+    std::string ply_path = TEST_DATA_OUTPUT_DIR "test_mesh_compare.ply";
+    {
+        std::ofstream ply_out(ply_path, std::ios::binary);
+        ASSERT_TRUE(ply_out.is_open());
+        serialize(mesh_surface.mesh, ply_out);
+    }
+
+    // Write OBJ
+    std::string obj_path = TEST_DATA_OUTPUT_DIR "test_mesh_compare.obj";
+    generateTexturedOBJ({mesh_surface}, geotiff_path, obj_path);
+
+    ASSERT_TRUE(std::filesystem::exists(ply_path));
+    ASSERT_TRUE(std::filesystem::exists(obj_path));
+
+    // Parse PLY vertices and faces
+    struct Vec3
+    {
+        double x, y, z;
+        bool operator==(const Vec3 &o) const
+        {
+            return std::abs(x - o.x) < 1e-6 && std::abs(y - o.y) < 1e-6 && std::abs(z - o.z) < 1e-6;
+        }
+    };
+
+    std::vector<Vec3> ply_vertices;
+    std::vector<std::array<int, 3>> ply_faces;
+    {
+        std::ifstream ply_file(ply_path);
+        ASSERT_TRUE(ply_file.is_open());
+        std::string line;
+
+        // Parse header for counts
+        size_t num_vertices = 0, num_faces = 0;
+        while (std::getline(ply_file, line))
+        {
+            if (sscanf(line.c_str(), "element vertex %zu", &num_vertices) == 1)
+                continue;
+            if (sscanf(line.c_str(), "element face %zu", &num_faces) == 1)
+                continue;
+            if (line == "end_header")
+                break;
+        }
+        ASSERT_GT(num_vertices, 0u);
+        ASSERT_GT(num_faces, 0u);
+
+        // Read vertices
+        for (size_t i = 0; i < num_vertices; i++)
+        {
+            ASSERT_TRUE(std::getline(ply_file, line)) << "Expected vertex line " << i;
+            double x, y, z;
+            int node_id;
+            ASSERT_EQ(sscanf(line.c_str(), "%lf %lf %lf %d", &x, &y, &z, &node_id), 4)
+                << "Failed to parse PLY vertex: " << line;
+            ply_vertices.push_back({x, y, z});
+        }
+
+        // Read exactly num_faces faces (edges follow after)
+        for (size_t i = 0; i < num_faces; i++)
+        {
+            ASSERT_TRUE(std::getline(ply_file, line)) << "Expected face line " << i;
+            int count, v0, v1, v2;
+            ASSERT_EQ(sscanf(line.c_str(), "%d %d %d %d", &count, &v0, &v1, &v2), 4)
+                << "Failed to parse PLY face: " << line;
+            ASSERT_EQ(count, 3);
+            ply_faces.push_back({v0, v1, v2});
+        }
+    }
+
+    // Parse OBJ vertices and faces
+    std::vector<Vec3> obj_vertices;
+    std::vector<std::array<int, 3>> obj_faces;
+    {
+        std::ifstream obj_file(obj_path);
+        ASSERT_TRUE(obj_file.is_open());
+        std::string line;
+        while (std::getline(obj_file, line))
+        {
+            if (line.substr(0, 2) == "v ")
+            {
+                double x, y, z;
+                ASSERT_EQ(sscanf(line.c_str(), "v %lf %lf %lf", &x, &y, &z), 3)
+                    << "Failed to parse OBJ vertex: " << line;
+                obj_vertices.push_back({x, y, z});
+            }
+            else if (line.substr(0, 2) == "f ")
+            {
+                int v0, vt0, v1, vt1, v2, vt2;
+                ASSERT_EQ(sscanf(line.c_str(), "f %d/%d %d/%d %d/%d", &v0, &vt0, &v1, &vt1, &v2, &vt2), 6)
+                    << "Failed to parse OBJ face: " << line;
+                // Convert OBJ 1-based to 0-based for comparison
+                obj_faces.push_back({v0 - 1, v1 - 1, v2 - 1});
+            }
+        }
+    }
+
+    // Compare vertex counts
+    ASSERT_EQ(ply_vertices.size(), obj_vertices.size())
+        << "PLY has " << ply_vertices.size() << " vertices, OBJ has " << obj_vertices.size();
+
+    // Compare vertex positions (both sorted by node ID, so should be in same order)
+    for (size_t i = 0; i < ply_vertices.size(); i++)
+    {
+        EXPECT_TRUE(ply_vertices[i] == obj_vertices[i])
+            << "Vertex " << i << " differs: PLY=(" << ply_vertices[i].x << ", " << ply_vertices[i].y << ", "
+            << ply_vertices[i].z << ") OBJ=(" << obj_vertices[i].x << ", " << obj_vertices[i].y << ", "
+            << obj_vertices[i].z << ")";
+    }
+
+    // Compare face counts
+    ASSERT_EQ(ply_faces.size(), obj_faces.size())
+        << "PLY has " << ply_faces.size() << " faces, OBJ has " << obj_faces.size();
+
+    // Compare faces - both are sorted deterministically, so should match directly
+    for (size_t i = 0; i < ply_faces.size(); i++)
+    {
+        EXPECT_EQ(ply_faces[i], obj_faces[i])
+            << "Face " << i << " differs: PLY=(" << ply_faces[i][0] << ", " << ply_faces[i][1] << ", "
+            << ply_faces[i][2] << ") OBJ=(" << obj_faces[i][0] << ", " << obj_faces[i][1] << ", " << obj_faces[i][2]
+            << ")";
+    }
 }
 
 TEST(Blending_Functional, no_ringing_with_camera_hash_masks)

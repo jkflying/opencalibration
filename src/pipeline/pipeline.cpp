@@ -492,6 +492,11 @@ Pipeline::Transition Pipeline::blend_layers()
 
     _color_balance_result = {};
 
+    if (!_textured_mesh_filename.empty() && !_geotiff_filename.empty())
+    {
+        orthomosaic::generateTexturedOBJ(_surfaces, _geotiff_filename, _textured_mesh_filename);
+    }
+
     if (!_dsm_filename.empty())
     {
         orthomosaic::generateDSMGeoTIFF(_surfaces, _graph, _coordinate_system, _dsm_filename, 1024,

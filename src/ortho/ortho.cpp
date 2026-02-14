@@ -9,16 +9,19 @@
 #include <jk/KDTree.h>
 #include <opencalibration/distort/distort_keypoints.hpp>
 #include <opencalibration/geo_coord/geo_coord.hpp>
+#include <opencalibration/geometry/utils.hpp>
 #include <opencalibration/ortho/gdal_dataset.hpp>
 #include <opencalibration/ortho/image_cache.hpp>
 #include <opencalibration/performance/performance.hpp>
 #include <opencalibration/surface/intersect.hpp>
 
+#include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <spdlog/spdlog.h>
 
 #include <atomic>
 #include <chrono>
+#include <fstream>
 #include <future>
 #include <mutex>
 #include <omp.h>
@@ -1868,6 +1871,214 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
     VSIUnlink(cameras_path.c_str());
 
     spdlog::info("Pass 2 complete: {}", output_path);
+}
+
+void generateTexturedOBJ(const std::vector<surface_model> &surfaces, const std::string &geotiff_path,
+                         const std::string &obj_path)
+{
+    GDALAllRegister();
+    GDALDatasetPtr dataset = openGDALDataset(geotiff_path);
+    if (!dataset)
+    {
+        spdlog::error("Failed to open GeoTIFF: {}", geotiff_path);
+        return;
+    }
+
+    GDALDatasetWrapper ds(dataset.get());
+    int img_width = ds.GetRasterXSize();
+    int img_height = ds.GetRasterYSize();
+
+    double geotransform[6];
+    if (ds.GetGeoTransform(geotransform) != CE_None)
+    {
+        spdlog::error("Failed to read geotransform from {}", geotiff_path);
+        return;
+    }
+
+    double min_x = geotransform[0];
+    double max_y = geotransform[3];
+    double gsd_x = geotransform[1];
+    double gsd_y = -geotransform[5]; // geotransform[5] is negative
+
+    // Derive output paths from obj_path
+    std::string base_path = obj_path;
+    if (base_path.size() >= 4 && base_path.substr(base_path.size() - 4) == ".obj")
+    {
+        base_path = base_path.substr(0, base_path.size() - 4);
+    }
+    std::string mtl_path = base_path + ".mtl";
+    std::string jpg_path = base_path + ".jpg";
+
+    // Extract just filenames for references within OBJ/MTL
+    auto filename_only = [](const std::string &path) {
+        size_t pos = path.find_last_of("/\\");
+        return (pos != std::string::npos) ? path.substr(pos + 1) : path;
+    };
+    std::string mtl_filename = filename_only(mtl_path);
+    std::string jpg_filename = filename_only(jpg_path);
+
+    // Read RGBA from GeoTIFF and write JPEG texture
+    int num_bands = ds.GetRasterCount();
+    int bands_to_read = std::min(num_bands, 3);
+
+    cv::Mat texture(img_height, img_width, CV_8UC3, cv::Scalar(0, 0, 0));
+    for (int b = 0; b < bands_to_read; b++)
+    {
+        std::vector<uint8_t> band_data(img_width * img_height);
+        GDALRasterBandWrapper band(ds.GetRasterBand(b + 1));
+        CPLErr err = band.RasterIO(GF_Read, 0, 0, img_width, img_height, band_data.data(), img_width, img_height,
+                                   GDT_Byte, 0, 0);
+        if (err != CE_None)
+        {
+            spdlog::error("Failed to read band {} from GeoTIFF", b + 1);
+            return;
+        }
+        // GDAL bands are R=1, G=2, B=3; OpenCV channels are BGR
+        int cv_channel = (b == 0) ? 2 : (b == 2) ? 0 : 1;
+        for (int y = 0; y < img_height; y++)
+        {
+            for (int x = 0; x < img_width; x++)
+            {
+                texture.at<cv::Vec3b>(y, x)[cv_channel] = band_data[y * img_width + x];
+            }
+        }
+    }
+    cv::imwrite(jpg_path, texture);
+    spdlog::info("Wrote texture: {} ({}x{})", jpg_path, img_width, img_height);
+
+    // Write MTL file
+    {
+        std::ofstream mtl(mtl_path);
+        if (!mtl.is_open())
+        {
+            spdlog::error("Failed to open MTL file for writing: {}", mtl_path);
+            return;
+        }
+        mtl << "newmtl orthomosaic_material\n";
+        mtl << "Ka 1.0 1.0 1.0\n";
+        mtl << "Kd 1.0 1.0 1.0\n";
+        mtl << "Ks 0.0 0.0 0.0\n";
+        mtl << "map_Kd " << jpg_filename << "\n";
+    }
+    spdlog::info("Wrote material: {}", mtl_path);
+
+    // Write OBJ file
+    std::ofstream obj(obj_path);
+    if (!obj.is_open())
+    {
+        spdlog::error("Failed to open OBJ file for writing: {}", obj_path);
+        return;
+    }
+
+    obj << "mtllib " << mtl_filename << "\n";
+    obj << "usemtl orthomosaic_material\n";
+
+    double extent_x = img_width * gsd_x;
+    double extent_y = img_height * gsd_y;
+
+    size_t global_vertex_offset = 0;
+
+    for (size_t si = 0; si < surfaces.size(); si++)
+    {
+        const auto &mesh = surfaces[si].mesh;
+        if (mesh.size_edges() == 0)
+            continue;
+
+        // Collect and sort vertices
+        std::vector<size_t> sorted_nodes;
+        sorted_nodes.reserve(mesh.size_nodes());
+        std::transform(mesh.cnodebegin(), mesh.cnodeend(), std::back_inserter(sorted_nodes),
+                       [](const auto &iter) { return iter.first; });
+        std::sort(sorted_nodes.begin(), sorted_nodes.end());
+
+        // Map from node ID to sequential index (1-based for OBJ, offset by global count)
+        std::unordered_map<size_t, size_t> node_to_index;
+
+        // Write vertices and UVs
+        for (size_t node_id : sorted_nodes)
+        {
+            const auto &loc = mesh.getNode(node_id)->payload.location;
+            node_to_index[node_id] = global_vertex_offset + node_to_index.size() + 1; // 1-based OBJ indices
+
+            obj << "v " << loc.x() << " " << loc.y() << " " << loc.z() << "\n";
+
+            double u = (loc.x() - min_x) / extent_x;
+            double v = 1.0 - (max_y - loc.y()) / extent_y;
+            obj << "vt " << u << " " << v << "\n";
+        }
+
+        // Extract faces (same logic as PLY serializer)
+        auto nodes_anticlockwise = [&mesh](const std::array<size_t, 3> &face) {
+            std::array<Eigen::Vector3d, 3> corners;
+            Eigen::Index i = 0;
+            for (size_t node_id : face)
+            {
+                corners[i++] = mesh.getNode(node_id)->payload.location;
+            }
+            return anticlockwise(corners);
+        };
+
+        struct ArrayHash
+        {
+            size_t operator()(const std::array<size_t, 3> &arr) const
+            {
+                size_t result = arr.size();
+                for (auto &i : arr)
+                {
+                    result ^= i + 0x9e3779b9 + (result << 6) + (result >> 2);
+                }
+                return result;
+            }
+        };
+
+        std::unordered_set<std::array<size_t, 3>, ArrayHash> faces;
+        std::vector<size_t> sorted_edges;
+        sorted_edges.reserve(mesh.size_edges());
+        std::transform(mesh.cedgebegin(), mesh.cedgeend(), std::back_inserter(sorted_edges),
+                       [](const auto &iter) { return iter.first; });
+        std::sort(sorted_edges.begin(), sorted_edges.end());
+
+        for (size_t edge_id : sorted_edges)
+        {
+            const auto &edge = *mesh.getEdge(edge_id);
+            size_t source = edge.getSource();
+            size_t dest = edge.getDest();
+
+            auto addFace = [&](size_t opposite_corner) {
+                std::array<size_t, 3> face;
+                face[0] = source;
+                face[1] = dest;
+                face[2] = opposite_corner;
+
+                auto sorted_face = face;
+                std::sort(sorted_face.begin(), sorted_face.end());
+                if (nodes_anticlockwise(sorted_face))
+                    std::swap(sorted_face[0], sorted_face[1]);
+                faces.insert(sorted_face);
+            };
+
+            addFace(edge.payload.triangleOppositeNodes[0]);
+            if (!edge.payload.border)
+            {
+                addFace(edge.payload.triangleOppositeNodes[1]);
+            }
+        }
+
+        // Write faces
+        std::vector<std::array<size_t, 3>> sorted_faces(faces.begin(), faces.end());
+        std::sort(sorted_faces.begin(), sorted_faces.end());
+        for (const auto &face : sorted_faces)
+        {
+            size_t v0 = node_to_index[face[0]];
+            size_t v1 = node_to_index[face[1]];
+            size_t v2 = node_to_index[face[2]];
+            obj << "f " << v0 << "/" << v0 << " " << v1 << "/" << v1 << " " << v2 << "/" << v2 << "\n";
+        }
+
+        global_vertex_offset += sorted_nodes.size();
+    }
+
+    spdlog::info("Wrote textured OBJ: {}", obj_path);
 }
 
 } // namespace opencalibration::orthomosaic

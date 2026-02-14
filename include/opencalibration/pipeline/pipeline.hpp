@@ -100,6 +100,11 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
         }
     }
 
+    void set_textured_mesh_filename(const std::string &path)
+    {
+        _textured_mesh_filename = path;
+    }
+
     void set_orthomosaic_max_megapixels(double max_megapixels)
     {
         _orthomosaic_max_megapixels = max_megapixels;
@@ -176,6 +181,7 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
     bool _generate_geotiff = false;
     std::string _geotiff_filename = "";
     std::string _dsm_filename = "";
+    std::string _textured_mesh_filename = "";
     double _orthomosaic_max_megapixels = 0.0;
 
     // Stage skip flags

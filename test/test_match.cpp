@@ -110,12 +110,13 @@ TEST(match, local_guided_respects_homography)
 
     for (const auto &m : guided_matches)
     {
-        Eigen::Vector2d predicted = (identity_homography * feat1[m.feature_index_1].location.homogeneous()).hnormalized();
+        Eigen::Vector2d predicted =
+            (identity_homography * feat1[m.feature_index_1].location.homogeneous()).hnormalized();
         Eigen::Vector2d actual = feat2[m.feature_index_2].location;
         double distance = (predicted - actual).norm();
 
-        EXPECT_LT(distance, search_radius) << "Match at distance " << distance << " exceeds search radius "
-                                            << search_radius;
+        EXPECT_LT(distance, search_radius)
+            << "Match at distance " << distance << " exceeds search radius " << search_radius;
     }
 }
 
@@ -138,7 +139,8 @@ TEST(match, local_guided_with_translation)
 
     for (const auto &m : guided_matches)
     {
-        Eigen::Vector2d predicted = (translation_homography * feat1[m.feature_index_1].location.homogeneous()).hnormalized();
+        Eigen::Vector2d predicted =
+            (translation_homography * feat1[m.feature_index_1].location.homogeneous()).hnormalized();
         Eigen::Vector2d actual = feat2[m.feature_index_2].location;
         double distance = (predicted - actual).norm();
 

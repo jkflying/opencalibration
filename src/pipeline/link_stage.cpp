@@ -131,8 +131,8 @@ std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph
                     all_matches.insert(all_matches.end(), fine_matches.begin(), fine_matches.end());
 
                     p.reset("Link runner fine undistort");
-                    std::vector<correspondence> all_correspondences =
-                        distort_keypoints(img.features, near_image.features, all_matches, *img.model, *near_image.model);
+                    std::vector<correspondence> all_correspondences = distort_keypoints(
+                        img.features, near_image.features, all_matches, *img.model, *near_image.model);
 
                     p.reset("Link runner fine ransac");
                     std::vector<bool> all_inliers;

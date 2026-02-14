@@ -198,7 +198,8 @@ TEST(ransac_fundamental_matrix, fitInliers_uses_correct_subset)
         m.measurement2.normalize();
     }
 
-    std::vector<bool> inliers = {true, false, true, false, true, true, true, false, true, false, true, true, true, true};
+    std::vector<bool> inliers = {true,  false, true,  false, true, true, true,
+                                 false, true,  false, true,  true, true, true};
 
     fundamental_matrix_model model;
     model.fitInliers(matches, inliers);

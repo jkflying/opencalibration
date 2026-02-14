@@ -101,9 +101,9 @@ std::vector<feature_match> match_features(const std::vector<feature_2d> &set_1, 
 }
 
 std::vector<feature_match> match_features_subset(const std::vector<feature_2d> &set_1,
-                                                   const std::vector<feature_2d> &set_2,
-                                                   const std::vector<size_t> &indices_1,
-                                                   const std::vector<size_t> &indices_2)
+                                                 const std::vector<feature_2d> &set_2,
+                                                 const std::vector<size_t> &indices_1,
+                                                 const std::vector<size_t> &indices_2)
 {
     using descriptor_t = std::bitset<feature_2d::DESCRIPTOR_BITS>;
 
@@ -152,11 +152,10 @@ std::vector<feature_match> match_features_subset(const std::vector<feature_2d> &
 }
 
 std::vector<feature_match> match_features_local_guided(const std::vector<feature_2d> &set_1,
-                                                         const std::vector<feature_2d> &set_2,
-                                                         const Eigen::Matrix3d &homography,
-                                                         double search_radius_pixels,
-                                                         const Eigen::Matrix3d *fundamental_matrix,
-                                                         double epipolar_threshold_pixels)
+                                                       const std::vector<feature_2d> &set_2,
+                                                       const Eigen::Matrix3d &homography, double search_radius_pixels,
+                                                       const Eigen::Matrix3d *fundamental_matrix,
+                                                       double epipolar_threshold_pixels)
 {
     const double ratio_threshold = 0.8;
 
@@ -187,7 +186,7 @@ std::vector<feature_match> match_features_local_guided(const std::vector<feature
         Eigen::Vector2d predicted_2d = predicted.hnormalized();
 
         const auto &candidates = searcher.search(toArray(predicted_2d), search_radius_pixels * search_radius_pixels,
-                                                   std::numeric_limits<size_t>::max());
+                                                 std::numeric_limits<size_t>::max());
 
         if (candidates.empty())
             continue;
@@ -254,9 +253,8 @@ std::vector<feature_match> match_features_local_guided(const std::vector<feature
         Eigen::Vector3d predicted = inv_homography * f2.location.homogeneous();
         Eigen::Vector2d predicted_2d = predicted.hnormalized();
 
-        const auto &candidates =
-            searcher1.search(toArray(predicted_2d), search_radius_pixels * search_radius_pixels,
-                             std::numeric_limits<size_t>::max());
+        const auto &candidates = searcher1.search(toArray(predicted_2d), search_radius_pixels * search_radius_pixels,
+                                                  std::numeric_limits<size_t>::max());
 
         double best_distance = std::numeric_limits<double>::infinity();
         for (const auto &candidate : candidates)
