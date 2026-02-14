@@ -639,6 +639,10 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
                     const auto &payload = closestNode->payload;
                     const auto &cc = camera_cache.at(closest.payload);
 
+                    Eigen::Vector3d camera_ray = cc.inv_rotation * (sample_point - payload.position);
+                    if (camera_ray.z() <= 0)
+                        continue;
+
                     // Use overload with precomputed inverse rotation matrix
                     Eigen::Vector2d pixel =
                         image_from_3d(sample_point, *payload.model, payload.position, cc.inv_rotation);
@@ -1309,6 +1313,10 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
                         continue;
                     const Eigen::Matrix3d &inv_rotation = inv_rot_it->second;
 
+                    Eigen::Vector3d camera_ray = inv_rotation * (sample_point - payload.position);
+                    if (camera_ray.z() <= 0)
+                        continue;
+
                     Eigen::Vector2d pixel = image_from_3d(sample_point, *payload.model, payload.position, inv_rotation);
 
                     if (pixel.x() < 0 || pixel.x() >= payload.model->pixels_cols || pixel.y() < 0 ||
@@ -1684,6 +1692,14 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
                             continue;
 
                         Eigen::Vector3d world_pt(wx, wy, context.bounds.mean_surface_z);
+
+                        Eigen::Vector3d camera_ray = inv_rot_it->second * (world_pt - payload.position);
+                        if (camera_ray.z() <= 0)
+                        {
+                            sample.valid = false;
+                            continue;
+                        }
+
                         Eigen::Vector2d pixel =
                             image_from_3d(world_pt, *payload.model, payload.position, inv_rot_it->second);
 

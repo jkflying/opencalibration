@@ -103,6 +103,10 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
     void set_textured_mesh_filename(const std::string &path)
     {
         _textured_mesh_filename = path;
+        if (!path.empty())
+        {
+            _generate_geotiff = true; // textured mesh needs the GeoTIFF
+        }
     }
 
     void set_orthomosaic_max_megapixels(double max_megapixels)
