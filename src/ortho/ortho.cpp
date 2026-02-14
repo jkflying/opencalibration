@@ -1230,9 +1230,8 @@ void readLayeredTileFromGeoTIFF(GDALDatasetH layers_ds, GDALDatasetH cameras_ds,
 } // namespace
 
 void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaicBounds &bounds, double gsd,
-                        int output_width, int output_height, const std::vector<surface_model> &surfaces,
+                        int output_width, int output_height, const std::vector<float> &dsm_tile,
                         const MeasurementGraph &graph, const jk::tree::KDTree<size_t, 2> &imageGPSLocations,
-                        double mean_camera_z,
                         const ankerl::unordered_dense::map<size_t, Eigen::Matrix3d> &inv_rotation_cache,
                         FullResolutionImageCache &image_cache, int num_layers, LayeredTileBuffer &tile_out,
                         std::vector<ColorCorrespondence> &correspondences_out, int correspondence_subsample,
@@ -1251,15 +1250,6 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
 
         PatchSampler sampler;
 
-        std::vector<MeshIntersectionSearcher> mesh_searchers;
-        for (const auto &surface : surfaces)
-        {
-            mesh_searchers.emplace_back();
-            if (!mesh_searchers.back().init(surface.mesh))
-            {
-                mesh_searchers.pop_back();
-            }
-        }
         jk::tree::KDTree<size_t, 2>::Searcher tree_searcher(imageGPSLocations);
         ankerl::unordered_dense::map<uint64_t, cv::Mat> local_image_cache;
 
@@ -1276,25 +1266,10 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
                 const double x = global_col * gsd + bounds.min_x;
                 const double y = bounds.max_y - global_row * gsd;
 
-                const ray_d intersectionRay{{0, 0, -1}, {x, y, mean_camera_z}};
-                double z = NAN;
-                for (auto &mesh_searcher : mesh_searchers)
-                {
-                    if (mesh_searcher.lastResult().type != MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
-                    {
-                        if (!mesh_searcher.reinit())
-                            continue;
-                    }
-                    auto intersection = mesh_searcher.triangleIntersect(intersectionRay);
-                    if (intersection.type == MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
-                    {
-                        z = intersection.intersectionLocation.z();
-                        break;
-                    }
-                }
-
-                if (std::isnan(z))
+                float z_f = dsm_tile[local_row * tile_width + local_col];
+                if (std::isnan(z_f))
                     continue;
+                double z = z_f;
 
                 Eigen::Vector3d sample_point(x, y, z);
                 const auto &closest5 = tree_searcher.search({x, y}, INFINITY, 5);
@@ -1438,42 +1413,61 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
     }
 }
 
-std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surface_model> &surfaces,
-                                                        const MeasurementGraph &graph, const GeoCoord &coord_system,
+std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const MeasurementGraph &graph, const GeoCoord &coord_system,
                                                         const std::string &layers_path, const std::string &cameras_path,
-                                                        const OrthoMosaicConfig &config)
+                                                        const std::string &dsm_path, const OrthoMosaicConfig &config)
 {
     spdlog::info("Pass 1: Generating layered GeoTIFF: {}", layers_path);
-    OrthoMosaicContext context = prepareOrthoMosaicContext(surfaces, graph, ImageResolution::FullResolution);
     PerformanceMeasure p("Ortho stage 1 - setup");
 
-    spdlog::info("x range [{}; {}]  y range [{}; {}]  mean surface {}", context.bounds.min_x, context.bounds.max_x,
-                 context.bounds.min_y, context.bounds.max_y, context.bounds.mean_surface_z);
+    // Open DSM and use its dimensions/geotransform for pixel alignment
+    GDALAllRegister();
+    GDALDatasetPtr dsm_ds(GDALOpen(dsm_path.c_str(), GA_ReadOnly));
+    if (!dsm_ds)
+    {
+        throw std::runtime_error("Failed to open DSM GeoTIFF: " + dsm_path);
+    }
 
-    int width = static_cast<int>((context.bounds.max_x - context.bounds.min_x) / context.gsd);
-    int height = static_cast<int>((context.bounds.max_y - context.bounds.min_y) / context.gsd);
-    if (width <= 0)
-        width = 100;
-    if (height <= 0)
-        height = 100;
+    GDALDatasetWrapper dsm_wrapper(dsm_ds.get());
+    int width = dsm_wrapper.GetRasterXSize();
+    int height = dsm_wrapper.GetRasterYSize();
 
-    clampOutputResolution(context.gsd, width, height, context, graph, "Layered GeoTIFF");
-    clampOutputMegapixels(context.gsd, width, height, config.max_output_megapixels, "Layered GeoTIFF");
+    double dsm_geotransform[6];
+    dsm_wrapper.GetGeoTransform(dsm_geotransform);
 
-    spdlog::info("GSD: {}  Output dimensions: {}x{} pixels, {} layers", context.gsd, width, height, config.num_layers);
+    OrthoMosaicBounds bounds;
+    bounds.min_x = dsm_geotransform[0];
+    bounds.max_y = dsm_geotransform[3];
+    double gsd = dsm_geotransform[1];
+    bounds.max_x = bounds.min_x + width * gsd;
+    bounds.min_y = bounds.max_y - height * gsd;
+
+    // Build involved nodes and KDTree from graph
+    std::unordered_set<size_t> involved_nodes;
+    jk::tree::KDTree<size_t, 2> imageGPSLocations;
+    for (auto iter = graph.cnodebegin(); iter != graph.cnodeend(); ++iter)
+    {
+        if (iter->second.payload.orientation.coeffs().allFinite())
+        {
+            involved_nodes.insert(iter->first);
+            imageGPSLocations.addPoint({iter->second.payload.position.x(), iter->second.payload.position.y()},
+                                       iter->first, false);
+        }
+    }
+    imageGPSLocations.splitOutstanding();
+
+    spdlog::info("GSD: {}  Output dimensions: {}x{} pixels, {} layers", gsd, width, height, config.num_layers);
 
     std::string wkt = coord_system.getWKT();
 
     // Create intermediate multi-band GeoTIFF: N * 4 bands (BGRA per layer)
     int num_color_bands = config.num_layers * 4;
-    GDALDatasetPtr layers_ds =
-        createMultiBandGeoTIFF(layers_path, width, height, context.bounds.min_x, context.bounds.max_y, context.gsd, wkt,
-                               num_color_bands, GDT_Byte);
+    GDALDatasetPtr layers_ds = createMultiBandGeoTIFF(layers_path, width, height, bounds.min_x, bounds.max_y, gsd, wkt,
+                                                      num_color_bands, GDT_Byte);
 
     // Create sidecar camera ID GeoTIFF: N bands of uint32
-    GDALDatasetPtr cameras_ds =
-        createMultiBandGeoTIFF(cameras_path, width, height, context.bounds.min_x, context.bounds.max_y, context.gsd,
-                               wkt, config.num_layers * 2, GDT_UInt32);
+    GDALDatasetPtr cameras_ds = createMultiBandGeoTIFF(cameras_path, width, height, bounds.min_x, bounds.max_y, gsd,
+                                                       wkt, config.num_layers * 2, GDT_UInt32);
 
     ankerl::unordered_dense::map<size_t, Eigen::Matrix3d> inv_rotation_cache;
     for (size_t node_id : context.involved_nodes)
@@ -1508,8 +1502,8 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
     // Prefetch images for the first tile synchronously
     if (!tile_order.empty())
     {
-        auto first_cams = findTileCameras(tile_order[0].first, tile_order[0].second, tile_size, context.bounds,
-                                          context.gsd, width, height, context.imageGPSLocations);
+        auto first_cams = findTileCameras(tile_order[0].first, tile_order[0].second, tile_size, bounds, gsd, width,
+                                          height, imageGPSLocations);
         prefetchImages(first_cams, graph, image_cache);
     }
 
@@ -1528,17 +1522,28 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
             const auto next_tx = next_tile.first;
             const auto next_ty = next_tile.second;
             prefetch_future = std::async(std::launch::async, [&, next_tx, next_ty] {
-                auto cams = findTileCameras(next_tx, next_ty, tile_size, context.bounds, context.gsd, width, height,
-                                            context.imageGPSLocations);
+                auto cams = findTileCameras(next_tx, next_ty, tile_size, bounds, gsd, width, height, imageGPSLocations);
                 prefetchImages(cams, graph, image_cache);
             });
         }
 
+        int x_off_dsm = tile_x * tile_size;
+        int y_off_dsm = tile_y * tile_size;
+        int tw_dsm = std::min(tile_size, width - x_off_dsm);
+        int th_dsm = std::min(tile_size, height - y_off_dsm);
+        std::vector<float> dsm_tile(tw_dsm * th_dsm, NAN);
+        GDALRasterBandWrapper dsm_band(GDALGetRasterBand(dsm_ds.get(), 1));
+        CPLErr dsm_err = dsm_band.RasterIO(GF_Read, x_off_dsm, y_off_dsm, tw_dsm, th_dsm, dsm_tile.data(), tw_dsm,
+                                           th_dsm, GDT_Float32, 0, 0);
+        if (dsm_err != CE_None)
+        {
+            spdlog::warn("Failed to read DSM tile at ({}, {})", tile_x, tile_y);
+        }
+
         LayeredTileBuffer tile_buf;
-        processLayeredTile(tile_x, tile_y, tile_size, context.bounds, context.gsd, width, height, surfaces, graph,
-                           context.imageGPSLocations, context.mean_camera_z, inv_rotation_cache, image_cache,
-                           config.num_layers, tile_buf, all_correspondences, config.correspondence_subsample,
-                           correspondences_mutex);
+        processLayeredTile(tile_x, tile_y, tile_size, bounds, gsd, width, height, dsm_tile, graph, imageGPSLocations,
+                           inv_rotation_cache, image_cache, config.num_layers, tile_buf, all_correspondences,
+                           config.correspondence_subsample, correspondences_mutex);
 
         if (write_future.valid())
             write_future.wait();
@@ -1570,10 +1575,9 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
     return all_correspondences;
 }
 
-void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &cameras_path,
+void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &cameras_path, const std::string &dsm_path,
                          const std::string &output_path, const ColorBalanceResult &color_balance,
-                         const std::vector<surface_model> &surfaces, const MeasurementGraph &graph,
-                         const GeoCoord &coord_system, const OrthoMosaicConfig &config)
+                         const MeasurementGraph &graph, const GeoCoord &coord_system, const OrthoMosaicConfig &config)
 {
     spdlog::info("Pass 2: Blending layered GeoTIFF to: {}", output_path);
 
@@ -1609,8 +1613,15 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
     std::string wkt = coord_system.getWKT();
     GDALDatasetPtr output_ds = createGeoTIFF(output_path, width, height, min_x, max_y, gsd, wkt);
 
-    // Prepare context for recomputing geometry (needed for radiometric correction)
-    OrthoMosaicContext context = prepareOrthoMosaicContext(surfaces, graph, ImageResolution::FullResolution);
+    // Build inv_rotation_cache from graph
+    std::unordered_map<size_t, Eigen::Matrix3d> inv_rotation_cache;
+    for (auto iter = graph.cnodebegin(); iter != graph.cnodeend(); ++iter)
+    {
+        if (iter->second.payload.orientation.coeffs().allFinite())
+        {
+            inv_rotation_cache[iter->first] = iter->second.payload.orientation.inverse().toRotationMatrix();
+        }
+    }
 
     int tile_size = config.tile_size;
     int num_tiles_x = (width + tile_size - 1) / tile_size;
@@ -1623,16 +1634,6 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
     auto start_time = std::chrono::steady_clock::now();
     std::atomic<long long> last_log_seconds{-5};
 
-    ankerl::unordered_dense::map<size_t, Eigen::Matrix3d> inv_rotation_cache;
-    for (size_t node_id : context.involved_nodes)
-    {
-        const auto *node = graph.getNode(node_id);
-        if (node)
-        {
-            inv_rotation_cache[node_id] = node->payload.orientation.inverse().toRotationMatrix();
-        }
-    }
-
     p.reset("");
     std::mutex gdal_write_mutex;
 
@@ -1643,6 +1644,7 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
         // Each thread opens its own read-only handles to avoid serializing reads
         GDALDatasetPtr thread_layers_ds(GDALOpen(layers_path.c_str(), GA_ReadOnly));
         GDALDatasetPtr thread_cameras_ds(GDALOpen(cameras_path.c_str(), GA_ReadOnly));
+        GDALDatasetPtr thread_dsm_ds(GDALOpen(dsm_path.c_str(), GA_ReadOnly));
 
 #pragma omp for schedule(dynamic)
         for (int tile_idx = 0; tile_idx < total_tiles; tile_idx++)
@@ -1659,6 +1661,13 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
             readLayeredTileFromGeoTIFF(thread_layers_ds.get(), thread_cameras_ds.get(), tile_buf, x_offset, y_offset,
                                        tw, th, num_layers);
 
+            std::vector<float> dsm_tile(tw * th, NAN);
+            if (thread_dsm_ds)
+            {
+                GDALRasterBandWrapper dsm_band(GDALGetRasterBand(thread_dsm_ds.get(), 1));
+                dsm_band.RasterIO(GF_Read, x_offset, y_offset, tw, th, dsm_tile.data(), tw, th, GDT_Float32, 0, 0);
+            }
+
             std::vector<cv::Mat> bgr_layers(num_layers);
             std::vector<cv::Mat> weight_maps(num_layers);
             for (int layer = 0; layer < num_layers; layer++)
@@ -1673,8 +1682,12 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
                 {
                     int global_col = x_offset + local_col;
                     int global_row = y_offset + local_row;
-                    const double wx = global_col * gsd + context.bounds.min_x;
-                    const double wy = context.bounds.max_y - global_row * gsd;
+                    const double wx = global_col * gsd + min_x;
+                    const double wy = max_y - global_row * gsd;
+
+                    float dsm_z = dsm_tile[local_row * tw + local_col];
+                    if (std::isnan(dsm_z))
+                        continue;
 
                     for (int layer = 0; layer < num_layers; layer++)
                     {
@@ -1691,7 +1704,7 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
                         if (inv_rot_it == inv_rotation_cache.end())
                             continue;
 
-                        Eigen::Vector3d world_pt(wx, wy, context.bounds.mean_surface_z);
+                        Eigen::Vector3d world_pt(wx, wy, static_cast<double>(dsm_z));
 
                         Eigen::Vector3d camera_ray = inv_rot_it->second * (world_pt - payload.position);
                         if (camera_ray.z() <= 0)

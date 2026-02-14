@@ -250,17 +250,21 @@ struct ortho : public ::testing::Test
     {
         std::string layers_path = output_path + ".layers.tif";
         std::string cameras_path = output_path + ".cameras.tif";
+        std::string dsm_path = output_path + ".dsm.tif";
 
         OrthoMosaicConfig config;
         config.tile_size = tile_size;
         config.max_output_megapixels = max_output_megapixels;
 
-        // Pass 1: Generate layers
-        generateLayeredGeoTIFF(surfaces, graph_ref, coord_system, layers_path, cameras_path, config);
+        // Generate DSM first
+        generateDSMGeoTIFF(surfaces, graph_ref, coord_system, dsm_path, tile_size, max_output_megapixels);
+
+        // Pass 1: Generate layers (reads DSM)
+        generateLayeredGeoTIFF(graph_ref, coord_system, layers_path, cameras_path, dsm_path, config);
 
         // Pass 2: Blend (skip color balance for tests - use empty result)
         ColorBalanceResult color_balance{};
-        blendLayeredGeoTIFF(layers_path, cameras_path, output_path, color_balance, surfaces, graph_ref, coord_system,
+        blendLayeredGeoTIFF(layers_path, cameras_path, dsm_path, output_path, color_balance, graph_ref, coord_system,
                             config);
     }
 };

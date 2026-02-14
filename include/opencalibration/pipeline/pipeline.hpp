@@ -150,6 +150,7 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
     PipelineTransition final_global_relax();
     PipelineTransition mesh_refinement();
     PipelineTransition generate_thumbnail();
+    PipelineTransition generate_dsm();
     PipelineTransition generate_layers();
     PipelineTransition color_balance();
     PipelineTransition blend_layers();
@@ -198,5 +199,6 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
     orthomosaic::ColorBalanceResult _color_balance_result;
     std::string _intermediate_layers_path;
     std::string _intermediate_cameras_path;
+    std::string _intermediate_dsm_path;
 };
 } // namespace opencalibration

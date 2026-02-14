@@ -13,6 +13,7 @@ enum class PipelineState
     FINAL_GLOBAL_RELAX,
     MESH_REFINEMENT,
     GENERATE_THUMBNAIL,
+    GENERATE_DSM,
     GENERATE_LAYERS,
     COLOR_BALANCE,
     BLEND_LAYERS,
@@ -35,6 +36,8 @@ inline std::string pipelineStateToString(PipelineState state)
         return "MESH_REFINEMENT";
     case PipelineState::GENERATE_THUMBNAIL:
         return "GENERATE_THUMBNAIL";
+    case PipelineState::GENERATE_DSM:
+        return "GENERATE_DSM";
     case PipelineState::GENERATE_LAYERS:
         return "GENERATE_LAYERS";
     case PipelineState::COLOR_BALANCE:
@@ -61,6 +64,8 @@ inline PipelineState stringToPipelineState(const std::string &str)
         return PipelineState::MESH_REFINEMENT;
     if (str == "GENERATE_THUMBNAIL")
         return PipelineState::GENERATE_THUMBNAIL;
+    if (str == "GENERATE_DSM")
+        return PipelineState::GENERATE_DSM;
     if (str == "GENERATE_LAYERS" || str == "GENERATE_GEOTIFF")
         return PipelineState::GENERATE_LAYERS;
     if (str == "COLOR_BALANCE")
