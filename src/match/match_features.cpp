@@ -105,26 +105,34 @@ std::vector<feature_match> match_features_subset(const std::vector<feature_2d> &
                                                    const std::vector<size_t> &indices_1,
                                                    const std::vector<size_t> &indices_2)
 {
+    using descriptor_t = std::bitset<feature_2d::DESCRIPTOR_BITS>;
+
+    // Pack subset descriptors contiguously for cache-friendly inner loop
+    std::vector<descriptor_t> packed_2(indices_2.size());
+    for (size_t k = 0; k < indices_2.size(); k++)
+    {
+        packed_2[k] = set_2[indices_2[k]].descriptor;
+    }
+
     std::vector<feature_match> results;
     results.reserve(indices_1.size());
 
     for (size_t i : indices_1)
     {
-        const auto &f1 = set_1[i];
+        const descriptor_t &desc1 = set_1[i].descriptor;
         feature_match best_match{i, 0, std::numeric_limits<double>::infinity()};
         double second_best_distance = std::numeric_limits<double>::infinity();
 
-        for (size_t j : indices_2)
+        for (size_t k = 0; k < packed_2.size(); k++)
         {
-            const auto &f2 = set_2[j];
-            double distance = descriptor_distance(f1, f2);
+            double distance = (desc1 ^ packed_2[k]).count() * (1.0 / feature_2d::DESCRIPTOR_BITS);
             if (distance < second_best_distance)
             {
                 if (distance < best_match.distance)
                 {
                     second_best_distance = best_match.distance;
                     best_match.distance = distance;
-                    best_match.feature_index_2 = j;
+                    best_match.feature_index_2 = indices_2[k];
                 }
                 else
                 {
@@ -208,25 +216,34 @@ std::vector<feature_match> match_features_local_guided(const std::vector<feature
         matched_in_set2.insert(fm.feature_index_2);
     }
 
+    jk::tree::KDTree<size_t, 2, 8> tree1;
+    for (size_t i = 0; i < set_1.size(); i++)
+    {
+        tree1.addPoint(toArray(set_1[i].location), i);
+    }
+
+    Eigen::Matrix3d inv_homography = homography.inverse();
+    auto searcher1 = tree1.searcher();
     std::vector<size_t> backward_best(set_2.size(), SIZE_MAX);
     for (size_t j : matched_in_set2)
     {
         const auto &f2 = set_2[j];
 
-        Eigen::Vector3d predicted = homography.inverse() * f2.location.homogeneous();
+        Eigen::Vector3d predicted = inv_homography * f2.location.homogeneous();
         Eigen::Vector2d predicted_2d = predicted.hnormalized();
 
-        double best_distance = std::numeric_limits<double>::infinity();
-        for (size_t i = 0; i < set_1.size(); i++)
-        {
-            if ((set_1[i].location - predicted_2d).norm() > search_radius_pixels)
-                continue;
+        const auto &candidates =
+            searcher1.search(toArray(predicted_2d), search_radius_pixels * search_radius_pixels,
+                             std::numeric_limits<size_t>::max());
 
-            double distance = descriptor_distance(f2, set_1[i]);
+        double best_distance = std::numeric_limits<double>::infinity();
+        for (const auto &candidate : candidates)
+        {
+            double distance = descriptor_distance(f2, set_1[candidate.payload]);
             if (distance < best_distance)
             {
                 best_distance = distance;
-                backward_best[j] = i;
+                backward_best[j] = candidate.payload;
             }
         }
     }
