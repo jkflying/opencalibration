@@ -14,7 +14,7 @@ TEST(ColorBalance, radiometric_match_cost_zero_residual)
     // GIVEN: Two cameras observing the same point with identical colors and zero corrections
     float lab_a[3] = {128, 128, 128};
     float lab_b[3] = {128, 128, 128};
-    RadiometricMatchCost cost(lab_a, lab_b, 0.5f, 0.5f, 0.1f, 0.1f);
+    RadiometricMatchCost cost(lab_a, lab_b, 0.5f, 0.5f, 0.1f, 0.1f, 0.0f, 0.0f, 0.0f, 0.0f);
 
     double offset_a[3] = {0, 0, 0};
     double brdf_a[1] = {0};
@@ -22,9 +22,11 @@ TEST(ColorBalance, radiometric_match_cost_zero_residual)
     double offset_b[3] = {0, 0, 0};
     double brdf_b[1] = {0};
     double vig_b[3] = {0, 0, 0};
+    double slope_a[2] = {0, 0};
+    double slope_b[2] = {0, 0};
     double residuals[3];
 
-    cost(offset_a, brdf_a, vig_a, offset_b, brdf_b, vig_b, residuals);
+    cost(offset_a, brdf_a, vig_a, offset_b, brdf_b, vig_b, slope_a, slope_b, residuals);
 
     EXPECT_DOUBLE_EQ(residuals[0], 0.0);
     EXPECT_DOUBLE_EQ(residuals[1], 0.0);
@@ -36,7 +38,7 @@ TEST(ColorBalance, radiometric_match_cost_offset_difference)
     // GIVEN: Two cameras with different L channel values
     float lab_a[3] = {150, 128, 128};
     float lab_b[3] = {130, 128, 128};
-    RadiometricMatchCost cost(lab_a, lab_b, 0.0f, 0.0f, 0.0f, 0.0f);
+    RadiometricMatchCost cost(lab_a, lab_b, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
 
     // With zero corrections, residual should be the difference
     double offset_a[3] = {0, 0, 0};
@@ -45,9 +47,11 @@ TEST(ColorBalance, radiometric_match_cost_offset_difference)
     double offset_b[3] = {0, 0, 0};
     double brdf_b[1] = {0};
     double vig_b[3] = {0, 0, 0};
+    double slope_a[2] = {0, 0};
+    double slope_b[2] = {0, 0};
     double residuals[3];
 
-    cost(offset_a, brdf_a, vig_a, offset_b, brdf_b, vig_b, residuals);
+    cost(offset_a, brdf_a, vig_a, offset_b, brdf_b, vig_b, slope_a, slope_b, residuals);
 
     EXPECT_DOUBLE_EQ(residuals[0], 20.0); // 150 - 130
     EXPECT_DOUBLE_EQ(residuals[1], 0.0);
@@ -59,7 +63,7 @@ TEST(ColorBalance, radiometric_match_cost_offset_correction)
     // GIVEN: Two cameras with L difference of 20, corrected by offsets
     float lab_a[3] = {150, 128, 128};
     float lab_b[3] = {130, 128, 128};
-    RadiometricMatchCost cost(lab_a, lab_b, 0.0f, 0.0f, 0.0f, 0.0f);
+    RadiometricMatchCost cost(lab_a, lab_b, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
 
     // Correct: offset_a = 10, offset_b = -10 -> (150-10) - (130+10) = 0
     double offset_a[3] = {10, 0, 0};
@@ -68,11 +72,101 @@ TEST(ColorBalance, radiometric_match_cost_offset_correction)
     double offset_b[3] = {-10, 0, 0};
     double brdf_b[1] = {0};
     double vig_b[3] = {0, 0, 0};
+    double slope_a[2] = {0, 0};
+    double slope_b[2] = {0, 0};
     double residuals[3];
 
-    cost(offset_a, brdf_a, vig_a, offset_b, brdf_b, vig_b, residuals);
+    cost(offset_a, brdf_a, vig_a, offset_b, brdf_b, vig_b, slope_a, slope_b, residuals);
 
     EXPECT_DOUBLE_EQ(residuals[0], 0.0);
+}
+
+TEST(ColorBalance, radiometric_match_cost_slope_zero_residual)
+{
+    // GIVEN: Two cameras with an L difference caused by directional brightness,
+    // corrected by slope parameters
+    float lab_a[3] = {130, 128, 128};
+    float lab_b[3] = {120, 128, 128};
+    // Image A: pixel at nx=0.5, ny=0.0; Image B: pixel at nx=-0.5, ny=0.0
+    RadiometricMatchCost cost(lab_a, lab_b, 0.0f, 0.0f, 0.0f, 0.0f, 0.5f, 0.0f, -0.5f, 0.0f);
+
+    double offset_a[3] = {0, 0, 0};
+    double brdf_a[1] = {0};
+    double vig_a[3] = {0, 0, 0};
+    double offset_b[3] = {0, 0, 0};
+    double brdf_b[1] = {0};
+    double vig_b[3] = {0, 0, 0};
+    // slope_x=10 for both: corr_a = 130 - 10*0.5 = 125, corr_b = 120 - 10*(-0.5) = 125
+    double slope_a[2] = {10, 0};
+    double slope_b[2] = {10, 0};
+    double residuals[3];
+
+    cost(offset_a, brdf_a, vig_a, offset_b, brdf_b, vig_b, slope_a, slope_b, residuals);
+
+    EXPECT_NEAR(residuals[0], 0.0, 1e-10);
+    EXPECT_DOUBLE_EQ(residuals[1], 0.0);
+    EXPECT_DOUBLE_EQ(residuals[2], 0.0);
+}
+
+TEST(ColorBalance, radiometric_match_cost_slope_correction_effect)
+{
+    // GIVEN: Same colors at different image positions, slope should create a residual
+    float lab_a[3] = {100, 128, 128};
+    float lab_b[3] = {100, 128, 128};
+    RadiometricMatchCost cost(lab_a, lab_b, 0.0f, 0.0f, 0.0f, 0.0f, 0.8f, 0.0f, -0.2f, 0.0f);
+
+    double offset_a[3] = {0, 0, 0};
+    double brdf_a[1] = {0};
+    double vig_a[3] = {0, 0, 0};
+    double offset_b[3] = {0, 0, 0};
+    double brdf_b[1] = {0};
+    double vig_b[3] = {0, 0, 0};
+    double slope_a[2] = {5, 0};
+    double slope_b[2] = {5, 0};
+    double residuals[3];
+
+    cost(offset_a, brdf_a, vig_a, offset_b, brdf_b, vig_b, slope_a, slope_b, residuals);
+
+    // corr_a = 100 - 5*0.8 = 96, corr_b = 100 - 5*(-0.2) = 101, residual = -5
+    EXPECT_NEAR(residuals[0], -5.0, 1e-6);
+}
+
+TEST(ColorBalance, slope_prior_penalizes_slope)
+{
+    SlopePrior prior(0.1);
+    double slope[2] = {3.0, -4.0};
+    double residuals[2];
+
+    prior(slope, residuals);
+
+    EXPECT_DOUBLE_EQ(residuals[0], 0.3);
+    EXPECT_DOUBLE_EQ(residuals[1], -0.4);
+}
+
+TEST(ColorBalance, slope_smoothness_penalizes_difference)
+{
+    SlopeSmoothnessCost cost(1.0);
+    double slope_a[2] = {5.0, -3.0};
+    double slope_b[2] = {2.0, 1.0};
+    double residuals[2];
+
+    cost(slope_a, slope_b, residuals);
+
+    EXPECT_DOUBLE_EQ(residuals[0], 3.0);  // 5 - 2
+    EXPECT_DOUBLE_EQ(residuals[1], -4.0); // -3 - 1
+}
+
+TEST(ColorBalance, slope_smoothness_zero_for_equal_slopes)
+{
+    SlopeSmoothnessCost cost(2.0);
+    double slope_a[2] = {4.0, -1.0};
+    double slope_b[2] = {4.0, -1.0};
+    double residuals[2];
+
+    cost(slope_a, slope_b, residuals);
+
+    EXPECT_DOUBLE_EQ(residuals[0], 0.0);
+    EXPECT_DOUBLE_EQ(residuals[1], 0.0);
 }
 
 TEST(ColorBalance, solve_synthetic_exposure_difference)
@@ -211,4 +305,61 @@ TEST(ColorBalance, vignetting_prior_penalizes_coeffs)
     EXPECT_DOUBLE_EQ(residuals[0], 0.1);
     EXPECT_DOUBLE_EQ(residuals[1], 0.2);
     EXPECT_DOUBLE_EQ(residuals[2], 0.3);
+}
+
+TEST(ColorBalance, solve_synthetic_directional_slope)
+{
+    // GIVEN: Two cameras where one has a directional brightness gradient (left-right)
+    // Camera A: slope_x = +8 (right side brighter), Camera B: no slope
+    // Both see the same scene points from different image positions.
+    std::vector<ColorCorrespondence> correspondences;
+
+    std::mt19937 rng(123);
+    std::uniform_real_distribution<float> nx_dist(-0.9f, 0.9f);
+    std::uniform_real_distribution<float> ny_dist(-0.9f, 0.9f);
+
+    const float true_slope_x = 8.0f;
+
+    for (int i = 0; i < 400; i++)
+    {
+        float true_L = 80.0f + (i % 40);
+        float nx_a = nx_dist(rng);
+        float ny_a = ny_dist(rng);
+        float nx_b = nx_dist(rng);
+        float ny_b = ny_dist(rng);
+
+        ColorCorrespondence corr;
+        // Camera A observes L shifted by slope: observed = true + slope_x * nx
+        corr.lab_a = {true_L + true_slope_x * nx_a, 128.0f, 128.0f};
+        corr.lab_b = {true_L, 128.0f, 128.0f};
+        corr.camera_id_a = 10;
+        corr.camera_id_b = 20;
+        corr.model_id_a = 1;
+        corr.model_id_b = 1;
+        corr.normalized_radius_a = 0.3f;
+        corr.normalized_radius_b = 0.3f;
+        corr.view_angle_a = 0.05f;
+        corr.view_angle_b = 0.05f;
+        corr.normalized_x_a = nx_a;
+        corr.normalized_y_a = ny_a;
+        corr.normalized_x_b = nx_b;
+        corr.normalized_y_b = ny_b;
+        correspondences.push_back(corr);
+    }
+
+    auto result = solveColorBalance(correspondences);
+    EXPECT_TRUE(result.success);
+
+    // Camera A should have a significant positive slope_x
+    double slope_x_a = result.per_image_params.at(10).slope[0];
+    double slope_y_a = result.per_image_params.at(10).slope[1];
+    double slope_x_b = result.per_image_params.at(20).slope[0];
+    double slope_y_b = result.per_image_params.at(20).slope[1];
+
+    // The relative slope_x difference should approximate the true directional gradient
+    EXPECT_NEAR(slope_x_a - slope_x_b, true_slope_x, 2.0);
+
+    // Y slopes should be near zero (no vertical gradient in synthetic data)
+    EXPECT_NEAR(slope_y_a, 0.0, 2.0);
+    EXPECT_NEAR(slope_y_b, 0.0, 2.0);
 }

@@ -105,6 +105,16 @@ float normalizedImageRadius(double pixel_x, double pixel_y, int width, int heigh
     return static_cast<float>(std::clamp(radius, 0.0, 1.0));
 }
 
+std::pair<float, float> normalizedImagePosition(double pixel_x, double pixel_y, int width, int height)
+{
+    if (width <= 0 || height <= 0)
+        return {0.0f, 0.0f};
+
+    float nx = static_cast<float>((pixel_x - width * 0.5) / (width * 0.5));
+    float ny = static_cast<float>((pixel_y - height * 0.5) / (height * 0.5));
+    return {std::clamp(nx, -1.0f, 1.0f), std::clamp(ny, -1.0f, 1.0f)};
+}
+
 class PatchSampler
 {
   public:
@@ -1329,6 +1339,11 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
                     sample.normalized_radius = normalizedImageRadius(pixel.x(), pixel.y(), payload.model->pixels_cols,
                                                                      payload.model->pixels_rows);
 
+                    auto [nx, ny] = normalizedImagePosition(pixel.x(), pixel.y(), payload.model->pixels_cols,
+                                                            payload.model->pixels_rows);
+                    sample.normalized_x = nx;
+                    sample.normalized_y = ny;
+
                     Eigen::Vector3d to_point = sample_point - payload.position;
                     Eigen::Vector3d camera_down = payload.orientation.inverse() * Eigen::Vector3d(0, 0, 1);
                     double cos_angle = camera_down.dot(to_point.normalized());
@@ -1364,7 +1379,14 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
                         }
                     }
 
+                    bool sample_this_pixel = false;
                     if (is_boundary && ((local_row + local_col) % correspondence_subsample == 0))
+                        sample_this_pixel = true;
+                    else if (!is_boundary && layer_idx >= 2 && (local_row % correspondence_subsample == 0) &&
+                             (local_col % correspondence_subsample == 0))
+                        sample_this_pixel = true;
+
+                    if (sample_this_pixel)
                     {
                         for (int a = 0; a < layer_idx; a++)
                         {
@@ -1395,6 +1417,10 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
                                 corr.normalized_radius_b = sb.normalized_radius;
                                 corr.view_angle_a = sa.view_angle;
                                 corr.view_angle_b = sb.view_angle;
+                                corr.normalized_x_a = sa.normalized_x;
+                                corr.normalized_y_a = sa.normalized_y;
+                                corr.normalized_x_b = sb.normalized_x;
+                                corr.normalized_y_b = sb.normalized_y;
 
                                 local_correspondences.push_back(corr);
                             }
@@ -1719,6 +1745,11 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
                         sample.normalized_radius = normalizedImageRadius(
                             pixel.x(), pixel.y(), payload.model->pixels_cols, payload.model->pixels_rows);
 
+                        auto [nx, ny] = normalizedImagePosition(pixel.x(), pixel.y(), payload.model->pixels_cols,
+                                                                payload.model->pixels_rows);
+                        sample.normalized_x = nx;
+                        sample.normalized_y = ny;
+
                         Eigen::Vector3d to_point = world_pt - payload.position;
                         Eigen::Vector3d cam_down = payload.orientation.inverse() * Eigen::Vector3d(0, 0, 1);
                         double cos_angle = cam_down.dot(to_point.normalized());
@@ -1774,6 +1805,8 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
                             lab[0] -= vig_corr;
                         }
                         lab[0] -= static_cast<float>(img_params.brdf_coeff) * sample.view_angle * sample.view_angle;
+                        lab[0] -= static_cast<float>(img_params.slope[0]) * sample.normalized_x +
+                                  static_cast<float>(img_params.slope[1]) * sample.normalized_y;
 
                         lab[0] = std::clamp(lab[0], 0.0f, 100.0f);
                         lab[1] = std::clamp(lab[1], -127.0f, 127.0f);

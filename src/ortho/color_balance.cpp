@@ -11,6 +11,7 @@
 #include <eigen3/Eigen/Dense>
 
 #include <limits>
+#include <map>
 #include <set>
 
 namespace opencalibration::orthomosaic
@@ -66,26 +67,30 @@ ColorBalanceResult solveColorBalance(const std::vector<ColorCorrespondence> &cor
             using CostType = RadiometricMatchCostSharedVig;
             auto *cost = new ceres::AutoDiffCostFunction<CostType, CostType::NUM_RESIDUALS, CostType::NUM_PARAMETERS_1,
                                                          CostType::NUM_PARAMETERS_2, CostType::NUM_PARAMETERS_3,
-                                                         CostType::NUM_PARAMETERS_4, CostType::NUM_PARAMETERS_5>(
+                                                         CostType::NUM_PARAMETERS_4, CostType::NUM_PARAMETERS_5,
+                                                         CostType::NUM_PARAMETERS_6, CostType::NUM_PARAMETERS_7>(
                 new CostType(corr.lab_a.data(), corr.lab_b.data(), corr.normalized_radius_a, corr.normalized_radius_b,
-                             corr.view_angle_a, corr.view_angle_b));
+                             corr.view_angle_a, corr.view_angle_b, corr.normalized_x_a, corr.normalized_y_a,
+                             corr.normalized_x_b, corr.normalized_y_b));
 
             problem.AddResidualBlock(cost, new ceres::HuberLoss(5.0), params_a.lab_offset.data(), &params_a.brdf_coeff,
-                                     params_b.lab_offset.data(), &params_b.brdf_coeff, vig_a.coeffs.data());
+                                     params_b.lab_offset.data(), &params_b.brdf_coeff, vig_a.coeffs.data(),
+                                     params_a.slope.data(), params_b.slope.data());
         }
         else
         {
             using CostType = RadiometricMatchCost;
-            auto *cost = new ceres::AutoDiffCostFunction<CostType, CostType::NUM_RESIDUALS, CostType::NUM_PARAMETERS_1,
-                                                         CostType::NUM_PARAMETERS_2, CostType::NUM_PARAMETERS_3,
-                                                         CostType::NUM_PARAMETERS_4, CostType::NUM_PARAMETERS_5,
-                                                         CostType::NUM_PARAMETERS_6>(
+            auto *cost = new ceres::AutoDiffCostFunction<
+                CostType, CostType::NUM_RESIDUALS, CostType::NUM_PARAMETERS_1, CostType::NUM_PARAMETERS_2,
+                CostType::NUM_PARAMETERS_3, CostType::NUM_PARAMETERS_4, CostType::NUM_PARAMETERS_5,
+                CostType::NUM_PARAMETERS_6, CostType::NUM_PARAMETERS_7, CostType::NUM_PARAMETERS_8>(
                 new CostType(corr.lab_a.data(), corr.lab_b.data(), corr.normalized_radius_a, corr.normalized_radius_b,
-                             corr.view_angle_a, corr.view_angle_b));
+                             corr.view_angle_a, corr.view_angle_b, corr.normalized_x_a, corr.normalized_y_a,
+                             corr.normalized_x_b, corr.normalized_y_b));
 
             problem.AddResidualBlock(cost, new ceres::HuberLoss(5.0), params_a.lab_offset.data(), &params_a.brdf_coeff,
                                      vig_a.coeffs.data(), params_b.lab_offset.data(), &params_b.brdf_coeff,
-                                     vig_b.coeffs.data());
+                                     vig_b.coeffs.data(), params_a.slope.data(), params_b.slope.data());
         }
     }
 
@@ -99,6 +104,40 @@ ColorBalanceResult solveColorBalance(const std::vector<ColorCorrespondence> &cor
             new ceres::AutoDiffCostFunction<BRDFPrior, BRDFPrior::NUM_RESIDUALS, BRDFPrior::NUM_PARAMETERS_1>(
                 new BRDFPrior(0.1));
         problem.AddResidualBlock(brdf_cost, nullptr, &params.brdf_coeff);
+
+        auto *slope_cost =
+            new ceres::AutoDiffCostFunction<SlopePrior, SlopePrior::NUM_RESIDUALS, SlopePrior::NUM_PARAMETERS_1>(
+                new SlopePrior(0.1));
+        problem.AddResidualBlock(slope_cost, nullptr, params.slope.data());
+    }
+
+    // Pairwise slope smoothness: count correspondences per camera pair, then add one
+    // smoothness cost per pair weighted by sqrt(count). This directly prevents neighboring
+    // cameras from developing opposite slopes (oscillation).
+    {
+        std::map<std::pair<size_t, size_t>, int> pair_counts;
+        for (const auto &corr : correspondences)
+        {
+            size_t lo = std::min(corr.camera_id_a, corr.camera_id_b);
+            size_t hi = std::max(corr.camera_id_a, corr.camera_id_b);
+            pair_counts[{lo, hi}]++;
+        }
+
+        int smoothness_count = 0;
+        for (const auto &[pair, count] : pair_counts)
+        {
+            auto &params_a = result.per_image_params[pair.first];
+            auto &params_b = result.per_image_params[pair.second];
+
+            double weight = 0.1 * std::sqrt(static_cast<double>(count));
+            auto *cost =
+                new ceres::AutoDiffCostFunction<SlopeSmoothnessCost, SlopeSmoothnessCost::NUM_RESIDUALS,
+                                                SlopeSmoothnessCost::NUM_PARAMETERS_1,
+                                                SlopeSmoothnessCost::NUM_PARAMETERS_2>(new SlopeSmoothnessCost(weight));
+            problem.AddResidualBlock(cost, nullptr, params_a.slope.data(), params_b.slope.data());
+            smoothness_count++;
+        }
+        spdlog::info("Color balance: added {} slope smoothness priors", smoothness_count);
     }
 
     for (auto &[model_id, vig] : result.per_model_params)
@@ -220,11 +259,13 @@ ColorBalanceResult solveColorBalance(const std::vector<ColorCorrespondence> &cor
     }
 
     double max_L_offset = 0;
+    double max_slope = 0;
     for (const auto &[cam_id, params] : result.per_image_params)
     {
         max_L_offset = std::max(max_L_offset, std::abs(params.lab_offset[0]));
+        max_slope = std::max(max_slope, std::max(std::abs(params.slope[0]), std::abs(params.slope[1])));
     }
-    spdlog::info("Color balance: max L offset after detrending: {:.2f}", max_L_offset);
+    spdlog::info("Color balance: max L offset after detrending: {:.2f}, max slope: {:.2f}", max_L_offset, max_slope);
 
     return result;
 }

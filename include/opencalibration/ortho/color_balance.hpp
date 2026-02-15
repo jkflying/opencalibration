@@ -14,6 +14,7 @@ struct RadiometricParams
 {
     std::array<double, 3> lab_offset = {0, 0, 0};
     double brdf_coeff = 0;
+    std::array<double, 2> slope = {0, 0}; // directional brightness: slope_x, slope_y in image space
 };
 
 struct VignettingParams
@@ -39,6 +40,12 @@ struct ColorCorrespondence
     // View angle (radians) for BRDF correction
     float view_angle_a;
     float view_angle_b;
+
+    // Normalized pixel position in source image, [-1,1] from center
+    float normalized_x_a = 0;
+    float normalized_y_a = 0;
+    float normalized_x_b = 0;
+    float normalized_y_b = 0;
 };
 
 struct ColorBalanceResult
