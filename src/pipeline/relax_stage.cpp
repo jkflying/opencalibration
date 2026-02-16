@@ -73,8 +73,6 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
             for (size_t edge_id : graph.getNode(node_id)->getEdges())
             {
                 const auto *edge = graph.getEdge(edge_id);
-                // TODO: add weight for edges which were cut during the last graph partitioning, so they are less likely
-                // to get cut next time
                 _k_groups->addLink(edge->getSource(), edge->getDest(), 1);
             }
         }
@@ -87,6 +85,7 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
         {
             _k_groups->iterate();
         }
+
     }
     else
     {

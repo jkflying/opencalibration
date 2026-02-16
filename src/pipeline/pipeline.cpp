@@ -77,8 +77,6 @@ PipelineState Pipeline::chooseNextState(PipelineState currentState, Transition t
         USM_STATE(transition, State::FINAL_GLOBAL_RELAX,
                   USM_MAP(Transition::NEXT, State::GENERATE_THUMBNAIL, s));
         USM_STATE(transition, State::GENERATE_THUMBNAIL,
-                  USM_MAP(Transition::NEXT, State::GENERATE_DSM, s));
-        USM_STATE(transition, State::GENERATE_DSM,
                   USM_MAP(Transition::NEXT, State::GENERATE_LAYERS, s));
         USM_STATE(transition, State::GENERATE_LAYERS,
                   USM_MAP(Transition::NEXT, State::COLOR_BALANCE, s));
@@ -106,7 +104,6 @@ Pipeline::Transition Pipeline::runCurrentState(PipelineState currentState)
               USM_MAP(State::MESH_REFINEMENT, mesh_refinement(), t);
               USM_MAP(State::COMPLETE, complete(), t);
               USM_MAP(State::GENERATE_THUMBNAIL, generate_thumbnail(), t);
-              USM_MAP(State::GENERATE_DSM, generate_dsm(), t);
               USM_MAP(State::GENERATE_LAYERS, generate_layers(), t);
               USM_MAP(State::COLOR_BALANCE, color_balance(), t);
               USM_MAP(State::BLEND_LAYERS, blend_layers(), t)
@@ -421,37 +418,6 @@ Pipeline::Transition Pipeline::generate_thumbnail()
     USM_DECISION_TABLE(Transition::NEXT, );
 }
 
-Pipeline::Transition Pipeline::generate_dsm()
-{
-    if (!_generate_geotiff || _geotiff_filename.empty())
-    {
-        USM_DECISION_TABLE(Transition::NEXT, USM_MAKE_DECISION(!_generate_geotiff, Transition::NEXT));
-    }
-
-    if (_surfaces.empty())
-    {
-        spdlog::warn("No surfaces available for DSM generation");
-        USM_DECISION_TABLE(Transition::NEXT, USM_MAKE_DECISION(_surfaces.empty(), Transition::NEXT));
-    }
-
-    if (!_dsm_filename.empty())
-    {
-        _intermediate_dsm_path = _dsm_filename;
-    }
-    else
-    {
-        _intermediate_dsm_path = _geotiff_filename + ".dsm.tif";
-    }
-
-    orthomosaic::OrthoMosaicConfig config;
-    config.max_output_megapixels = _orthomosaic_max_megapixels;
-
-    orthomosaic::generateDSMGeoTIFF(_surfaces, _graph, _coordinate_system, _intermediate_dsm_path, config.tile_size,
-                                    _orthomosaic_max_megapixels);
-
-    USM_DECISION_TABLE(Transition::NEXT, );
-}
-
 Pipeline::Transition Pipeline::generate_layers()
 {
     if (!_generate_geotiff || _geotiff_filename.empty())
@@ -467,12 +433,14 @@ Pipeline::Transition Pipeline::generate_layers()
 
     _intermediate_layers_path = _geotiff_filename + ".layers.tif";
     _intermediate_cameras_path = _geotiff_filename + ".cameras.tif";
+    _intermediate_dsm_path = !_dsm_filename.empty() ? _dsm_filename : _geotiff_filename + ".dsm.tif";
 
     orthomosaic::OrthoMosaicConfig config;
     config.max_output_megapixels = _orthomosaic_max_megapixels;
 
-    _correspondences = orthomosaic::generateLayeredGeoTIFF(_graph, _coordinate_system, _intermediate_layers_path,
-                                                           _intermediate_cameras_path, _intermediate_dsm_path, config);
+    _correspondences = orthomosaic::generateLayeredGeoTIFF(_surfaces, _graph, _coordinate_system,
+                                                           _intermediate_layers_path, _intermediate_cameras_path,
+                                                           _intermediate_dsm_path, config);
 
     USM_DECISION_TABLE(Transition::NEXT, );
 }
@@ -556,8 +524,6 @@ std::string Pipeline::toString(PipelineState state)
         return "Mesh Refinement";
     case State::GENERATE_THUMBNAIL:
         return "Generate Thumbnail";
-    case State::GENERATE_DSM:
-        return "Generate DSM";
     case State::GENERATE_LAYERS:
         return "Generate Layers";
     case State::COLOR_BALANCE:
@@ -571,7 +537,7 @@ std::string Pipeline::toString(PipelineState state)
     return "Error";
 }
 
-PipelineState Pipeline::fromString(const std::string &str)
+std::optional<PipelineState> Pipeline::fromString(const std::string &str)
 {
     if (str == "INITIAL_PROCESSING" || str == "Initial Processing")
         return State::INITIAL_PROCESSING;
@@ -585,9 +551,7 @@ PipelineState Pipeline::fromString(const std::string &str)
         return State::MESH_REFINEMENT;
     if (str == "GENERATE_THUMBNAIL" || str == "Generate Thumbnail")
         return State::GENERATE_THUMBNAIL;
-    if (str == "GENERATE_DSM" || str == "Generate DSM")
-        return State::GENERATE_DSM;
-    if (str == "GENERATE_LAYERS" || str == "Generate Layers")
+    if (str == "GENERATE_LAYERS" || str == "Generate Layers" || str == "GENERATE_DSM" || str == "Generate DSM")
         return State::GENERATE_LAYERS;
     if (str == "COLOR_BALANCE" || str == "Color Balance")
         return State::COLOR_BALANCE;
@@ -596,8 +560,7 @@ PipelineState Pipeline::fromString(const std::string &str)
     if (str == "COMPLETE" || str == "Complete")
         return State::COMPLETE;
 
-    spdlog::warn("Unknown pipeline state: {}, defaulting to INITIAL_PROCESSING", str);
-    return State::INITIAL_PROCESSING;
+    return std::nullopt;
 }
 
 void Pipeline::rebuildGPSLocationsTree()

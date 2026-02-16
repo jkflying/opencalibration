@@ -74,7 +74,7 @@ int main(int argc, char *argv[])
                      "Update data/camera_database.json with optimized parameters after pipeline completes");
     args.addArgument({"--resume-from"}, &resume_from,
                      "Resume from specific stage (INITIAL_GLOBAL_RELAX, CAMERA_PARAMETER_RELAX, FINAL_GLOBAL_RELAX, "
-                     "GENERATE_THUMBNAIL, GENERATE_DSM, GENERATE_LAYERS, COLOR_BALANCE, BLEND_LAYERS)");
+                     "GENERATE_THUMBNAIL, GENERATE_LAYERS, COLOR_BALANCE, BLEND_LAYERS)");
     args.addArgument({"--skip-mesh-refinement"}, &skip_mesh_refinement,
                      "Skip the mesh refinement stage (uses grid mesh instead of adaptive refinement)");
     args.addArgument({"--skip-initial-global-relax"}, &skip_initial_global_relax,
@@ -155,6 +155,15 @@ int main(int argc, char *argv[])
         spdlog::info("Orthomosaic max output set to {} MP", ortho_max_megapixels);
     }
 
+    if (!resume_from.empty() && !Pipeline::fromString(resume_from))
+    {
+        spdlog::error("Unrecognized --resume-from state: '{}'. Valid states: INITIAL_GLOBAL_RELAX, "
+                      "CAMERA_PARAMETER_RELAX, FINAL_GLOBAL_RELAX, GENERATE_THUMBNAIL, GENERATE_LAYERS, "
+                      "COLOR_BALANCE, BLEND_LAYERS",
+                      resume_from);
+        return -1;
+    }
+
     Pipeline p(batch_size);
     p.set_generate_thumbnails(generate_thumbnails);
     p.set_thumbnail_filenames(thumbnail_file, source_file, overlap_file);
@@ -179,7 +188,7 @@ int main(int argc, char *argv[])
 
         if (!resume_from.empty())
         {
-            PipelineState target_state = Pipeline::fromString(resume_from);
+            PipelineState target_state = *Pipeline::fromString(resume_from);
             if (!p.resumeFromState(target_state))
             {
                 spdlog::error("Failed to resume from state {}", resume_from);
@@ -213,7 +222,6 @@ int main(int argc, char *argv[])
             break;
         }
         case PipelineState::GENERATE_THUMBNAIL:
-        case PipelineState::GENERATE_DSM:
         case PipelineState::GENERATE_LAYERS:
         case PipelineState::COLOR_BALANCE:
         case PipelineState::BLEND_LAYERS:

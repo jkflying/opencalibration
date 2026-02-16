@@ -83,7 +83,8 @@ bool loadMetadata(CheckpointData &data, const std::filesystem::path &checkpoint_
 
     if (doc.HasMember("state"))
     {
-        data.state = stringToPipelineState(doc["state"].GetString());
+        auto parsed_state = stringToPipelineState(doc["state"].GetString());
+        data.state = parsed_state.value_or(PipelineState::INITIAL_PROCESSING);
     }
 
     if (doc.HasMember("state_run_count"))

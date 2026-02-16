@@ -111,10 +111,11 @@ void generateDSMGeoTIFF(const std::vector<surface_model> &surfaces, const Measur
                         const opencalibration::GeoCoord &coord_system, const std::string &output_path,
                         int tile_size = 1024, double max_output_megapixels = 0.0);
 
-std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const MeasurementGraph &graph,
+std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surface_model> &surfaces,
+                                                        const MeasurementGraph &graph,
                                                         const opencalibration::GeoCoord &coord_system,
                                                         const std::string &layers_path, const std::string &cameras_path,
-                                                        const std::string &dsm_path,
+                                                        const std::string &dsm_output_path,
                                                         const OrthoMosaicConfig &config = {});
 
 void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &cameras_path, const std::string &dsm_path,

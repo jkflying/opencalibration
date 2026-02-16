@@ -256,11 +256,8 @@ struct ortho : public ::testing::Test
         config.tile_size = tile_size;
         config.max_output_megapixels = max_output_megapixels;
 
-        // Generate DSM first
-        generateDSMGeoTIFF(surfaces, graph_ref, coord_system, dsm_path, tile_size, max_output_megapixels);
-
-        // Pass 1: Generate layers (reads DSM)
-        generateLayeredGeoTIFF(graph_ref, coord_system, layers_path, cameras_path, dsm_path, config);
+        // Pass 1: Generate layers and DSM together
+        generateLayeredGeoTIFF(surfaces, graph_ref, coord_system, layers_path, cameras_path, dsm_path, config);
 
         // Pass 2: Blend (skip color balance for tests - use empty result)
         ColorBalanceResult color_balance{};

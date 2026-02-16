@@ -166,11 +166,8 @@ class PatchSampler
     bool sampleWithJacobian(const cv::Mat &bgr_image, const Eigen::Vector3d &world_point,
                             const opencalibration::DifferentiableCameraModel<double> &model,
                             const Eigen::Vector3d &camera_position, const Eigen::Matrix3d &camera_orientation_inverse,
-                            double output_gsd, cv::Vec3b &result)
+                            double output_gsd, const Eigen::Vector2d &pixel, cv::Vec3b &result)
     {
-        Eigen::Vector2d pixel =
-            opencalibration::image_from_3d(world_point, model, camera_position, camera_orientation_inverse);
-
         if (pixel.x() < 0 || pixel.x() >= bgr_image.cols || pixel.y() < 0 || pixel.y() >= bgr_image.rows)
         {
             return false;
@@ -723,6 +720,7 @@ GDALDatasetPtr createGeoTIFF(const std::string &path, int width, int height, dou
     options = CSLSetNameValue(options, "PREDICTOR", "2");
     options = CSLSetNameValue(options, "PHOTOMETRIC", "RGB");
     options = CSLSetNameValue(options, "BIGTIFF", "IF_SAFER");
+    options = CSLSetNameValue(options, "SPARSE_OK", "YES");
 
     GDALDatasetH dataset = GDALCreate(driver, path.c_str(), width, height, 4, GDT_Byte, options);
 
@@ -811,6 +809,7 @@ GDALDatasetPtr createDSMGeoTIFF(const std::string &path, int width, int height, 
     options = CSLSetNameValue(options, "COMPRESS", "DEFLATE");
     options = CSLSetNameValue(options, "PREDICTOR", "2");
     options = CSLSetNameValue(options, "BIGTIFF", "IF_SAFER");
+    options = CSLSetNameValue(options, "SPARSE_OK", "YES");
 
     GDALDatasetH dataset = GDALCreate(driver, path.c_str(), width, height, 1, GDT_Float32, options);
 
@@ -840,9 +839,9 @@ GDALDatasetPtr createDSMGeoTIFF(const std::string &path, int width, int height, 
     return GDALDatasetPtr(dataset);
 }
 
-void processDSMTile(GDALDatasetH dataset, int tile_x, int tile_y, int tile_size, const OrthoMosaicBounds &bounds,
-                    double gsd, int output_width, int output_height, const std::vector<surface_model> &surfaces,
-                    double mean_camera_z)
+std::vector<float> computeDSMTile(int tile_x, int tile_y, int tile_size, const OrthoMosaicBounds &bounds, double gsd,
+                                  int output_width, int output_height, const std::vector<surface_model> &surfaces,
+                                  double mean_camera_z)
 {
     int x_offset = tile_x * tile_size;
     int y_offset = tile_y * tile_size;
@@ -902,9 +901,21 @@ void processDSMTile(GDALDatasetH dataset, int tile_x, int tile_y, int tile_size,
         }
     }
 
+    return tile_buffer;
+}
+
+void writeDSMTile(GDALDatasetH dataset, int tile_x, int tile_y, int tile_size, int output_width, int output_height,
+                  const std::vector<float> &tile_buffer)
+{
+    int x_offset = tile_x * tile_size;
+    int y_offset = tile_y * tile_size;
+    int tile_width = std::min(tile_size, output_width - x_offset);
+    int tile_height = std::min(tile_size, output_height - y_offset);
+
     GDALRasterBandWrapper band_wrapper(GDALGetRasterBand(dataset, 1));
-    CPLErr err = band_wrapper.RasterIO(GF_Write, x_offset, y_offset, tile_width, tile_height, tile_buffer.data(),
-                                       tile_width, tile_height, GDT_Float32, 0, 0);
+    CPLErr err = band_wrapper.RasterIO(GF_Write, x_offset, y_offset, tile_width, tile_height,
+                                       const_cast<float *>(tile_buffer.data()), tile_width, tile_height, GDT_Float32,
+                                       0, 0);
 
     if (err != CE_None)
     {
@@ -960,8 +971,9 @@ void generateDSMGeoTIFF(const std::vector<surface_model> &surfaces, const Measur
     {
         for (int tile_x = 0; tile_x < num_tiles_x; tile_x++)
         {
-            processDSMTile(dataset.get(), tile_x, tile_y, tile_size, context.bounds, context.gsd, width, height,
-                           surfaces, context.mean_camera_z);
+            auto dsm_tile = computeDSMTile(tile_x, tile_y, tile_size, context.bounds, context.gsd, width, height,
+                                           surfaces, context.mean_camera_z);
+            writeDSMTile(dataset.get(), tile_x, tile_y, tile_size, width, height, dsm_tile);
 
             completed_tiles++;
 
@@ -1021,6 +1033,7 @@ GDALDatasetPtr createMultiBandGeoTIFF(const std::string &path, int width, int he
     options = CSLSetNameValue(options, "COMPRESS", "DEFLATE");
     options = CSLSetNameValue(options, "PREDICTOR", "2");
     options = CSLSetNameValue(options, "BIGTIFF", "IF_SAFER");
+    options = CSLSetNameValue(options, "SPARSE_OK", "YES");
 
     GDALDatasetH dataset = GDALCreate(driver, path.c_str(), width, height, num_bands, data_type, options);
     CSLDestroy(options);
@@ -1326,8 +1339,8 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
                         continue;
 
                     cv::Vec3b color_bgr;
-                    if (!sampler.sampleWithJacobian(full_image, sample_point, *payload.model, payload.position,
-                                                    inv_rotation, gsd, color_bgr))
+                    if (!sampler.sampleWithJacobian(full_image, sample_point, *payload.model,
+                                                    payload.position, inv_rotation, gsd, pixel, color_bgr))
                         continue;
 
                     auto &sample = tile_out.at(layer_idx, local_row, local_col);
@@ -1382,7 +1395,7 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
                     bool sample_this_pixel = false;
                     if (is_boundary && ((local_row + local_col) % correspondence_subsample == 0))
                         sample_this_pixel = true;
-                    else if (!is_boundary && layer_idx >= 2 && (local_row % correspondence_subsample == 0) &&
+                    else if (!is_boundary && (local_row % correspondence_subsample == 0) &&
                              (local_col % correspondence_subsample == 0))
                         sample_this_pixel = true;
 
@@ -1439,48 +1452,32 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
     }
 }
 
-std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const MeasurementGraph &graph, const GeoCoord &coord_system,
+std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surface_model> &surfaces,
+                                                        const MeasurementGraph &graph, const GeoCoord &coord_system,
                                                         const std::string &layers_path, const std::string &cameras_path,
-                                                        const std::string &dsm_path, const OrthoMosaicConfig &config)
+                                                        const std::string &dsm_output_path,
+                                                        const OrthoMosaicConfig &config)
 {
     spdlog::info("Pass 1: Generating layered GeoTIFF: {}", layers_path);
     PerformanceMeasure p("Ortho stage 1 - setup");
 
-    // Open DSM and use its dimensions/geotransform for pixel alignment
     GDALAllRegister();
-    GDALDatasetPtr dsm_ds(GDALOpen(dsm_path.c_str(), GA_ReadOnly));
-    if (!dsm_ds)
-    {
-        throw std::runtime_error("Failed to open DSM GeoTIFF: " + dsm_path);
-    }
 
-    GDALDatasetWrapper dsm_wrapper(dsm_ds.get());
-    int width = dsm_wrapper.GetRasterXSize();
-    int height = dsm_wrapper.GetRasterYSize();
+    OrthoMosaicContext context = prepareOrthoMosaicContext(surfaces, graph, ImageResolution::FullResolution);
 
-    double dsm_geotransform[6];
-    dsm_wrapper.GetGeoTransform(dsm_geotransform);
+    int width = static_cast<int>((context.bounds.max_x - context.bounds.min_x) / context.gsd);
+    int height = static_cast<int>((context.bounds.max_y - context.bounds.min_y) / context.gsd);
 
-    OrthoMosaicBounds bounds;
-    bounds.min_x = dsm_geotransform[0];
-    bounds.max_y = dsm_geotransform[3];
-    double gsd = dsm_geotransform[1];
-    bounds.max_x = bounds.min_x + width * gsd;
-    bounds.min_y = bounds.max_y - height * gsd;
+    if (width <= 0)
+        width = 100;
+    if (height <= 0)
+        height = 100;
 
-    // Build involved nodes and KDTree from graph
-    std::unordered_set<size_t> involved_nodes;
-    jk::tree::KDTree<size_t, 2> imageGPSLocations;
-    for (auto iter = graph.cnodebegin(); iter != graph.cnodeend(); ++iter)
-    {
-        if (iter->second.payload.orientation.coeffs().allFinite())
-        {
-            involved_nodes.insert(iter->first);
-            imageGPSLocations.addPoint({iter->second.payload.position.x(), iter->second.payload.position.y()},
-                                       iter->first, false);
-        }
-    }
-    imageGPSLocations.splitOutstanding();
+    clampOutputResolution(context.gsd, width, height, context, graph, "Layered");
+    clampOutputMegapixels(context.gsd, width, height, config.max_output_megapixels, "Layered");
+
+    const OrthoMosaicBounds &bounds = context.bounds;
+    double gsd = context.gsd;
 
     spdlog::info("GSD: {}  Output dimensions: {}x{} pixels, {} layers", gsd, width, height, config.num_layers);
 
@@ -1494,6 +1491,10 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const MeasurementGraph &
     // Create sidecar camera ID GeoTIFF: N bands of uint32
     GDALDatasetPtr cameras_ds = createMultiBandGeoTIFF(cameras_path, width, height, bounds.min_x, bounds.max_y, gsd,
                                                        wkt, config.num_layers * 2, GDT_UInt32);
+
+    // Create DSM GeoTIFF alongside layers
+    GDALDatasetPtr dsm_ds =
+        createDSMGeoTIFF(dsm_output_path, width, height, bounds.min_x, bounds.max_y, gsd, wkt);
 
     ankerl::unordered_dense::map<size_t, Eigen::Matrix3d> inv_rotation_cache;
     for (size_t node_id : context.involved_nodes)
@@ -1529,7 +1530,7 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const MeasurementGraph &
     if (!tile_order.empty())
     {
         auto first_cams = findTileCameras(tile_order[0].first, tile_order[0].second, tile_size, bounds, gsd, width,
-                                          height, imageGPSLocations);
+                                          height, context.imageGPSLocations);
         prefetchImages(first_cams, graph, image_cache);
     }
 
@@ -1548,28 +1549,19 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const MeasurementGraph &
             const auto next_tx = next_tile.first;
             const auto next_ty = next_tile.second;
             prefetch_future = std::async(std::launch::async, [&, next_tx, next_ty] {
-                auto cams = findTileCameras(next_tx, next_ty, tile_size, bounds, gsd, width, height, imageGPSLocations);
+                auto cams = findTileCameras(next_tx, next_ty, tile_size, bounds, gsd, width, height,
+                                            context.imageGPSLocations);
                 prefetchImages(cams, graph, image_cache);
             });
         }
 
-        int x_off_dsm = tile_x * tile_size;
-        int y_off_dsm = tile_y * tile_size;
-        int tw_dsm = std::min(tile_size, width - x_off_dsm);
-        int th_dsm = std::min(tile_size, height - y_off_dsm);
-        std::vector<float> dsm_tile(tw_dsm * th_dsm, NAN);
-        GDALRasterBandWrapper dsm_band(GDALGetRasterBand(dsm_ds.get(), 1));
-        CPLErr dsm_err = dsm_band.RasterIO(GF_Read, x_off_dsm, y_off_dsm, tw_dsm, th_dsm, dsm_tile.data(), tw_dsm,
-                                           th_dsm, GDT_Float32, 0, 0);
-        if (dsm_err != CE_None)
-        {
-            spdlog::warn("Failed to read DSM tile at ({}, {})", tile_x, tile_y);
-        }
+        std::vector<float> dsm_tile = computeDSMTile(tile_x, tile_y, tile_size, bounds, gsd, width, height, surfaces,
+                                                      context.mean_camera_z);
 
         LayeredTileBuffer tile_buf;
-        processLayeredTile(tile_x, tile_y, tile_size, bounds, gsd, width, height, dsm_tile, graph, imageGPSLocations,
-                           inv_rotation_cache, image_cache, config.num_layers, tile_buf, all_correspondences,
-                           config.correspondence_subsample, correspondences_mutex);
+        processLayeredTile(tile_x, tile_y, tile_size, bounds, gsd, width, height, dsm_tile, graph,
+                           context.imageGPSLocations, inv_rotation_cache, image_cache, config.num_layers, tile_buf,
+                           all_correspondences, config.correspondence_subsample, correspondences_mutex);
 
         if (write_future.valid())
             write_future.wait();
@@ -1577,9 +1569,12 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const MeasurementGraph &
         int x_off = tile_x * tile_size;
         int y_off = tile_y * tile_size;
         auto tile_buf_ptr = std::make_shared<LayeredTileBuffer>(std::move(tile_buf));
-        write_future = std::async(std::launch::async, [&, tile_buf_ptr, x_off, y_off] {
-            writeLayeredTileToGeoTIFF(layers_ds.get(), cameras_ds.get(), *tile_buf_ptr, x_off, y_off);
-        });
+        auto dsm_tile_ptr = std::make_shared<std::vector<float>>(std::move(dsm_tile));
+        write_future =
+            std::async(std::launch::async, [&, tile_buf_ptr, dsm_tile_ptr, x_off, y_off, tile_x, tile_y] {
+                writeLayeredTileToGeoTIFF(layers_ds.get(), cameras_ds.get(), *tile_buf_ptr, x_off, y_off);
+                writeDSMTile(dsm_ds.get(), tile_x, tile_y, tile_size, width, height, *dsm_tile_ptr);
+            });
 
         completed_tiles++;
         auto now = std::chrono::steady_clock::now();
@@ -1596,6 +1591,25 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const MeasurementGraph &
 
     if (write_future.valid())
         write_future.wait();
+
+    // Build DSM overviews
+    spdlog::info("Building DSM overviews...");
+    std::vector<int> overview_levels;
+    int min_dim = std::min(width, height);
+    for (int level = 2; level < min_dim; level *= 2)
+    {
+        overview_levels.push_back(level);
+    }
+    if (!overview_levels.empty())
+    {
+        GDALDatasetWrapper dsm_wrapper(dsm_ds.get());
+        CPLErr err =
+            dsm_wrapper.BuildOverviews("AVERAGE", static_cast<int>(overview_levels.size()), overview_levels.data());
+        if (err != CE_None)
+        {
+            spdlog::warn("Failed to build DSM overviews");
+        }
+    }
 
     spdlog::info("Pass 1 complete: {} correspondences collected", all_correspondences.size());
     return all_correspondences;

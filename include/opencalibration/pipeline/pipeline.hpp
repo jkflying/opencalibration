@@ -137,7 +137,7 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
     bool resumeFromState(PipelineState target_state);
 
     static std::string toString(PipelineState state);
-    static PipelineState fromString(const std::string &str);
+    static std::optional<PipelineState> fromString(const std::string &str);
 
   protected:
     PipelineState chooseNextState(PipelineState currentState, PipelineTransition transition) override;
@@ -150,7 +150,6 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
     PipelineTransition final_global_relax();
     PipelineTransition mesh_refinement();
     PipelineTransition generate_thumbnail();
-    PipelineTransition generate_dsm();
     PipelineTransition generate_layers();
     PipelineTransition color_balance();
     PipelineTransition blend_layers();
@@ -193,7 +192,7 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
     bool _skip_mesh_refinement = false;
     bool _skip_initial_global_relax = false;
     bool _skip_camera_param_relax = false;
-    bool _skip_final_global_relax = false;
+    bool _skip_final_global_relax = true;
 
     std::vector<orthomosaic::ColorCorrespondence> _correspondences;
     orthomosaic::ColorBalanceResult _color_balance_result;

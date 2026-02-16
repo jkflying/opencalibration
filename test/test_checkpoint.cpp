@@ -125,19 +125,21 @@ TEST_F(CheckpointTest, fromString_toString_roundtrip)
 {
     std::vector<PipelineState> states = {PipelineState::INITIAL_PROCESSING,     PipelineState::INITIAL_GLOBAL_RELAX,
                                          PipelineState::CAMERA_PARAMETER_RELAX, PipelineState::FINAL_GLOBAL_RELAX,
-                                         PipelineState::GENERATE_THUMBNAIL,     PipelineState::GENERATE_DSM,
-                                         PipelineState::GENERATE_LAYERS,        PipelineState::COLOR_BALANCE,
-                                         PipelineState::BLEND_LAYERS,           PipelineState::COMPLETE};
+                                         PipelineState::GENERATE_THUMBNAIL,     PipelineState::GENERATE_LAYERS,
+                                         PipelineState::COLOR_BALANCE,          PipelineState::BLEND_LAYERS,
+                                         PipelineState::COMPLETE};
 
     std::vector<std::string> state_strings = {"INITIAL_PROCESSING",     "INITIAL_GLOBAL_RELAX",
                                               "CAMERA_PARAMETER_RELAX", "FINAL_GLOBAL_RELAX",
-                                              "GENERATE_THUMBNAIL",     "GENERATE_DSM",
-                                              "GENERATE_LAYERS",        "COLOR_BALANCE",
-                                              "BLEND_LAYERS",           "COMPLETE"};
+                                              "GENERATE_THUMBNAIL",     "GENERATE_LAYERS",
+                                              "COLOR_BALANCE",          "BLEND_LAYERS",
+                                              "COMPLETE"};
 
     for (size_t i = 0; i < states.size(); i++)
     {
-        EXPECT_EQ(states[i], Pipeline::fromString(state_strings[i]));
+        auto parsed = Pipeline::fromString(state_strings[i]);
+        ASSERT_TRUE(parsed.has_value()) << "Failed to parse: " << state_strings[i];
+        EXPECT_EQ(states[i], *parsed);
     }
 }
 

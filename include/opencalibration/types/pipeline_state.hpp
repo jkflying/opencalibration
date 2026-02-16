@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <string>
 
 namespace opencalibration
@@ -13,7 +14,6 @@ enum class PipelineState
     FINAL_GLOBAL_RELAX,
     MESH_REFINEMENT,
     GENERATE_THUMBNAIL,
-    GENERATE_DSM,
     GENERATE_LAYERS,
     COLOR_BALANCE,
     BLEND_LAYERS,
@@ -36,8 +36,6 @@ inline std::string pipelineStateToString(PipelineState state)
         return "MESH_REFINEMENT";
     case PipelineState::GENERATE_THUMBNAIL:
         return "GENERATE_THUMBNAIL";
-    case PipelineState::GENERATE_DSM:
-        return "GENERATE_DSM";
     case PipelineState::GENERATE_LAYERS:
         return "GENERATE_LAYERS";
     case PipelineState::COLOR_BALANCE:
@@ -47,10 +45,10 @@ inline std::string pipelineStateToString(PipelineState state)
     case PipelineState::COMPLETE:
         return "COMPLETE";
     }
-    return "UNKNOWN";
+    return "";
 }
 
-inline PipelineState stringToPipelineState(const std::string &str)
+inline std::optional<PipelineState> stringToPipelineState(const std::string &str)
 {
     if (str == "INITIAL_PROCESSING")
         return PipelineState::INITIAL_PROCESSING;
@@ -64,9 +62,7 @@ inline PipelineState stringToPipelineState(const std::string &str)
         return PipelineState::MESH_REFINEMENT;
     if (str == "GENERATE_THUMBNAIL")
         return PipelineState::GENERATE_THUMBNAIL;
-    if (str == "GENERATE_DSM")
-        return PipelineState::GENERATE_DSM;
-    if (str == "GENERATE_LAYERS" || str == "GENERATE_GEOTIFF")
+    if (str == "GENERATE_LAYERS" || str == "GENERATE_GEOTIFF" || str == "GENERATE_DSM")
         return PipelineState::GENERATE_LAYERS;
     if (str == "COLOR_BALANCE")
         return PipelineState::COLOR_BALANCE;
@@ -74,7 +70,7 @@ inline PipelineState stringToPipelineState(const std::string &str)
         return PipelineState::BLEND_LAYERS;
     if (str == "COMPLETE")
         return PipelineState::COMPLETE;
-    return PipelineState::INITIAL_PROCESSING;
+    return std::nullopt;
 }
 
 } // namespace opencalibration
