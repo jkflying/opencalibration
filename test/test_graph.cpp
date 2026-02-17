@@ -1,5 +1,6 @@
 #include <opencalibration/types/graph.hpp>
 
+#include <algorithm>
 #include <gtest/gtest.h>
 
 using namespace opencalibration;

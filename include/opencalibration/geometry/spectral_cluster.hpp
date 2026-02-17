@@ -100,12 +100,12 @@ template <typename T, size_t D> class SpectralClustering
 
             using Op = Spectra::SparseSymMatProd<double>;
             Op op(normalizedLaplacian);
-            Spectra::SymEigsSolver<double, Spectra::SMALLEST_MAGN, Op> eigen_solver(&op, D + 1, D + 3);
+            Spectra::SymEigsSolver<Op> eigen_solver(op, D + 1, D + 3);
 
             eigen_solver.init();
-            int nconv = eigen_solver.compute();
+            int nconv = eigen_solver.compute(Spectra::SortRule::SmallestMagn);
 
-            if (eigen_solver.info() == Spectra::SUCCESSFUL && nconv == D + 1)
+            if (eigen_solver.info() == Spectra::CompInfo::Successful && nconv == D + 1)
             {
 
                 const Eigen::MatrixXd evectors = eigen_solver.eigenvectors();

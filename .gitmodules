@@ -4,3 +4,6 @@
 [submodule "external/opencv"]
 	path = external/opencv
 	url = https://github.com/opencv/opencv.git
+[submodule "external/spectra"]
+	path = external/spectra
+	url = https://github.com/yixuan/spectra.git
