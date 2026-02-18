@@ -5,7 +5,7 @@
 #include <iostream>
 
 #include <set>
-#include <unordered_set>
+#include <ankerl/unordered_dense.h>
 
 namespace
 {
@@ -51,7 +51,7 @@ template <> class Serializer<MeshGraph>
             return anticlockwise(corners);
         };
 
-        std::unordered_set<std::array<size_t, 3>, ArrayHash> faces;
+        ankerl::unordered_dense::set<std::array<size_t, 3>, ArrayHash> faces;
         std::vector<size_t> sortedEdges;
         sortedEdges.reserve(graph.size_edges());
         std::transform(graph.cedgebegin(), graph.cedgeend(), std::back_inserter(sortedEdges),
@@ -96,7 +96,7 @@ template <> class Serializer<MeshGraph>
         out << "property int oppositeCorner2" << newline;
         out << "end_header" << newline;
 
-        std::unordered_map<size_t, size_t> nodeSequenceLookup;
+        ankerl::unordered_dense::map<size_t, size_t> nodeSequenceLookup;
         std::vector<size_t> sortedNodes;
         sortedNodes.reserve(graph.size_nodes());
         std::transform(graph.cnodebegin(), graph.cnodeend(), std::back_inserter(sortedNodes),

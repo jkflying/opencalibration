@@ -29,7 +29,7 @@ struct ortho : public ::testing::Test
     size_t id[3];
     MeasurementGraph graph;
     std::vector<NodePose> nodePoses;
-    std::unordered_map<size_t, CameraModel> cam_models;
+    ankerl::unordered_dense::map<size_t, CameraModel> cam_models;
     std::shared_ptr<CameraModel> model;
     Eigen::Quaterniond ground_ori[3];
     Eigen::Vector3d ground_pos[3];
@@ -389,7 +389,7 @@ TEST_F(ortho_, measurement_3_images_plane)
     add_ori_noise({-0.1, 0.1, 0.1});
 
     // WHEN: we relax them with relative orientation
-    std::unordered_set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
+    ankerl::unordered_dense::set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
     relax(graph, np, cam_models, edges, {Option::ORIENTATION, Option::GROUND_PLANE}, {});
     // and again to re-init the inliers
     relax(graph, np, cam_models, edges, {Option::ORIENTATION, Option::GROUND_PLANE}, {});

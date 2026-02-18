@@ -5,7 +5,7 @@
 #include <iomanip>
 #include <mutex>
 #include <sstream>
-#include <unordered_map>
+#include <ankerl/unordered_dense.h>
 #include <unordered_set>
 #include <vector>
 
@@ -29,7 +29,7 @@ struct TimePoint
 
 std::atomic<bool> _enable_counters = false;
 std::vector<TimePoint> _time_points;
-std::unordered_map<std::string_view, int64_t> _time_totals;
+ankerl::unordered_dense::map<std::string_view, int64_t> _time_totals;
 std::mutex _globals_mutex;
 
 } // namespace
@@ -126,7 +126,7 @@ std::string TotalPerformanceSummary()
 
     // iterate over timeline keeping amount of parallelism into account.
     // divide elapsed time by parallelism to get effective latency of each
-    std::unordered_map<std::string_view, int64_t> wall_time_weighted;
+    ankerl::unordered_dense::map<std::string_view, int64_t> wall_time_weighted;
     std::unordered_multiset<std::string_view> in_progress;
     std::chrono::time_point<std::chrono::high_resolution_clock> last_timestamp;
     for (const auto &p : timeline)

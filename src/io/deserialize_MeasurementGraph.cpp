@@ -39,7 +39,7 @@ template <> class Deserializer<MeasurementGraph>
         rapidjson::MemoryPoolAllocator<> valueAllocator(valueBuffer, sizeof(valueBuffer));
         rapidjson::MemoryPoolAllocator<> parseAllocator(parseBuffer, sizeof(parseBuffer));
 
-        std::unordered_map<size_t, std::shared_ptr<CameraModel>> camera_models;
+        ankerl::unordered_dense::map<size_t, std::shared_ptr<CameraModel>> camera_models;
 
         DocumentType d(&valueAllocator, sizeof(parseBuffer), &parseAllocator);
         d.Parse(json);

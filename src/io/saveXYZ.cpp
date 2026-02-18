@@ -49,7 +49,7 @@ bool toXYZ(const std::vector<surface_model> &surfaces, std::ostream &out,
 
 std::array<std::pair<int64_t, int64_t>, 3> filterOutliers(const std::vector<surface_model> &surfaces)
 {
-    std::array<std::unordered_map<int64_t, size_t>, 3> count_map{};
+    std::array<ankerl::unordered_dense::map<int64_t, size_t>, 3> count_map{};
 
     size_t total = 0;
     for (const auto &s : surfaces)
@@ -67,7 +67,7 @@ std::array<std::pair<int64_t, int64_t>, 3> filterOutliers(const std::vector<surf
         }
     }
 
-    auto dimbox = [](const std::unordered_map<int64_t, size_t> &count_map,
+    auto dimbox = [](const ankerl::unordered_dense::map<int64_t, size_t> &count_map,
                      size_t total) -> std::pair<int64_t, int64_t> {
         std::vector<std::pair<int64_t, size_t>> counts;
         counts.insert(counts.end(), count_map.begin(), count_map.end());

@@ -179,7 +179,7 @@ struct ortho : public ::testing::Test
     size_t id[3];
     MeasurementGraph graph;
     std::vector<NodePose> nodePoses;
-    std::unordered_map<size_t, CameraModel> cam_models;
+    ankerl::unordered_dense::map<size_t, CameraModel> cam_models;
     std::shared_ptr<CameraModel> model;
     Eigen::Quaterniond ground_ori[3];
     Eigen::Vector3d ground_pos[3];
