@@ -6,7 +6,6 @@
 #include <mutex>
 #include <sstream>
 #include <ankerl/unordered_dense.h>
-#include <unordered_set>
 #include <vector>
 
 namespace
@@ -127,22 +126,24 @@ std::string TotalPerformanceSummary()
     // iterate over timeline keeping amount of parallelism into account.
     // divide elapsed time by parallelism to get effective latency of each
     ankerl::unordered_dense::map<std::string_view, int64_t> wall_time_weighted;
-    std::unordered_multiset<std::string_view> in_progress;
+    ankerl::unordered_dense::map<std::string_view, size_t> in_progress;
     std::chrono::time_point<std::chrono::high_resolution_clock> last_timestamp;
     for (const auto &p : timeline)
     {
         int64_t duration = std::chrono::duration_cast<std::chrono::nanoseconds>(p.timestamp - last_timestamp).count();
-        for (const auto &key : in_progress)
-        {
-            wall_time_weighted[key] += duration / in_progress.size();
-        }
+        size_t total = 0;
+        for (const auto &[key, count] : in_progress)
+            total += count;
+        for (const auto &[key, count] : in_progress)
+            wall_time_weighted[key] += duration * static_cast<int64_t>(count) / static_cast<int64_t>(total);
         switch (p.pointtype)
         {
         case TimePoint::PointType::BEGINNING:
-            in_progress.insert(p.key);
+            in_progress[p.key]++;
             break;
         case TimePoint::PointType::ENDING:
-            in_progress.erase(in_progress.find(p.key));
+            if (--in_progress[p.key] == 0)
+                in_progress.erase(p.key);
             break;
         }
         last_timestamp = p.timestamp;
