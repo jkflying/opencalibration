@@ -18,24 +18,12 @@ jobs:
       uses: hendrikmuhs/ccache-action@v1.2
     - name: install dependencies
       run: tools/install_dependencies.sh
-    - name: validate state machine
-      run: python3 external/usm/generate_flow_diagram.py src/pipeline/pipeline.cpp
-    - name: check formatting
-      run: tools/check_style.sh
-    - name: cmake
-      run: mkdir build && cd build && PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH" cmake .. -G Ninja -DCMAKE_BUILD_TYPE=asan
-    - name: Address Sanitizer Build
-      run: cd build && ninja
-    - name: Address Sanitizer Test
-      run: cd build && ASAN_OPTIONS=detect_leaks=0 ninja test
-    - name: Coverage Build
-      run: cd build && cmake -DCMAKE_BUILD_TYPE=Coverage .. && ninja
-    - name: Coverage Test
-      run: cd build && ninja test_coverage_html
+    - name: build and test
+      run: tools/ci_local.sh
     - uses: codecov/codecov-action@v5
       with:
         fail_ci_if_error: true
-        files: build/clean_coverage.info
+        files: build_coverage/clean_coverage.info
         token: ${{ secrets.CODECOV_TOKEN }}
         verbose: true
         disable_search: true
