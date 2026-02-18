@@ -818,13 +818,13 @@ struct incremental_relax : public ::testing::Test
     }
 
     // Get the center camera index (has the most neighbors)
-    size_t get_center_camera_idx() const
+    [[nodiscard]] size_t get_center_camera_idx() const
     {
         return (GRID_HEIGHT / 2) * GRID_WIDTH + (GRID_WIDTH / 2); // Center of 5x5 grid = index 12
     }
 
     // Count how many edges a camera has
-    size_t count_camera_edges(size_t cam_idx) const
+    [[nodiscard]] size_t count_camera_edges(size_t cam_idx) const
     {
         return graph.getNode(camera_ids[cam_idx])->getEdges().size();
     }

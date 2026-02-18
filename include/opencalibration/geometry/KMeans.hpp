@@ -74,7 +74,7 @@ template <typename T, size_t D> class KMeans
         return true;
     }
 
-    const std::vector<cluster> &getClusters() const
+    [[nodiscard]] const std::vector<cluster> &getClusters() const
     {
         return _clusters;
     }

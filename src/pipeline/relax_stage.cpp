@@ -67,9 +67,8 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
     {
         spdlog::info("Splitting relax into {} group(s)", num_groups);
 
-        for (size_t i = 0; i < actual_node_ids.size(); i++)
+        for (size_t node_id : actual_node_ids)
         {
-            size_t node_id = actual_node_ids[i];
             _k_groups->addLink(node_id, node_id, 0.1);
             for (size_t edge_id : graph.getNode(node_id)->getEdges())
             {

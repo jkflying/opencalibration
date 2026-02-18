@@ -16,7 +16,7 @@ class EXIFStreamPath final : public TinyEXIF::EXIFStream
     {
     }
 
-    virtual ~EXIFStreamPath() = default;
+    ~EXIFStreamPath() override = default;
 
     bool IsValid() const override
     {

@@ -45,7 +45,7 @@ class RelaxOptionSet
         }
     }
 
-    bool get(Option o) const
+    [[nodiscard]] bool get(Option o) const
     {
         return enabled[static_cast<int32_t>(o)];
     }
@@ -55,12 +55,12 @@ class RelaxOptionSet
         enabled[static_cast<int32_t>(o)] = value;
     }
 
-    bool hasAll(const RelaxOptionSet &other) const
+    [[nodiscard]] bool hasAll(const RelaxOptionSet &other) const
     {
         return (other.enabled | enabled) == enabled;
     }
 
-    bool hasAny(const RelaxOptionSet &other) const
+    [[nodiscard]] bool hasAny(const RelaxOptionSet &other) const
     {
         return (enabled & other.enabled).count() > 0;
     }
@@ -70,12 +70,12 @@ class RelaxOptionSet
         return other.enabled == enabled;
     }
 
-    int32_t count() const
+    [[nodiscard]] int32_t count() const
     {
         return static_cast<int32_t>(enabled.count());
     }
 
-    int32_t excess(const RelaxOptionSet &other) const
+    [[nodiscard]] int32_t excess(const RelaxOptionSet &other) const
     {
         return count() - other.count();
     }

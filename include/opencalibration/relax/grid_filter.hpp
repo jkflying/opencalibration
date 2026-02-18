@@ -50,7 +50,7 @@ template <typename T> class GridFilter
         }
     }
 
-    const ankerl::unordered_dense::set<T> &getBestMeasurementsPerCell() const
+    [[nodiscard]] const ankerl::unordered_dense::set<T> &getBestMeasurementsPerCell() const
     {
         return _best;
     }

@@ -25,7 +25,7 @@ template <typename NodePayload, typename EdgePayload> class DirectedGraph
 
         NodePayload payload;
 
-        const ankerl::unordered_dense::set<size_t> &getEdges() const
+        [[nodiscard]] const ankerl::unordered_dense::set<size_t> &getEdges() const
         {
             return _edges;
         }
@@ -46,17 +46,17 @@ template <typename NodePayload, typename EdgePayload> class DirectedGraph
     class Edge
     {
       public:
-        Edge(EdgePayload &&p, size_t source, size_t dest) : payload(std::move(p)), _source(source), _dest(dest)
+        Edge(EdgePayload p, size_t source, size_t dest) : payload(std::move(p)), _source(source), _dest(dest)
         {
         }
 
         EdgePayload payload;
 
-        size_t getSource() const
+        [[nodiscard]] size_t getSource() const
         {
             return _source;
         }
-        size_t getDest() const
+        [[nodiscard]] size_t getDest() const
         {
             return _dest;
         }
@@ -71,18 +71,19 @@ template <typename NodePayload, typename EdgePayload> class DirectedGraph
         size_t _dest;
     };
 
-    size_t addNode(NodePayload &&node_payload)
+    size_t addNode(NodePayload node_payload)
     {
         size_t identifier = distribution(generator);
-        while (_nodes.emplace(identifier, std::move(node_payload)).second == false)
+        while (_nodes.count(identifier) > 0)
         {
             identifier = distribution(generator);
         }
+        _nodes.emplace(identifier, std::move(node_payload));
 
         return identifier;
     }
 
-    size_t addEdge(EdgePayload &&edge_payload, size_t source, size_t dest)
+    size_t addEdge(EdgePayload edge_payload, size_t source, size_t dest)
     {
         size_t identifier = distribution(generator);
         Edge e(std::move(edge_payload), source, dest);
@@ -98,7 +99,7 @@ template <typename NodePayload, typename EdgePayload> class DirectedGraph
         return identifier;
     }
 
-    const Node *getNode(size_t node_id) const
+    [[nodiscard]] const Node *getNode(size_t node_id) const
     {
         auto iter = _nodes.find(node_id);
         if (iter == _nodes.end())
@@ -118,7 +119,7 @@ template <typename NodePayload, typename EdgePayload> class DirectedGraph
         return &(iter->second);
     }
 
-    const Edge *getEdge(size_t edge_id) const
+    [[nodiscard]] const Edge *getEdge(size_t edge_id) const
     {
         auto iter = _edges.find(edge_id);
         if (iter == _edges.end())
@@ -138,7 +139,7 @@ template <typename NodePayload, typename EdgePayload> class DirectedGraph
         return &(iter->second);
     }
 
-    const Edge *getEdge(size_t source_node_id, size_t dest_node_id) const
+    [[nodiscard]] const Edge *getEdge(size_t source_node_id, size_t dest_node_id) const
     {
         SourceDestIndex idx{source_node_id, dest_node_id};
         auto iter = _edge_id_from_nodes_lookup.find(idx);
@@ -232,21 +233,21 @@ template <typename NodePayload, typename EdgePayload> class DirectedGraph
     }
 
     using CNodeIterator = typename ankerl::unordered_dense::map<size_t, Node>::const_iterator;
-    CNodeIterator cnodebegin() const
+    [[nodiscard]] CNodeIterator cnodebegin() const
     {
         return _nodes.cbegin();
     }
-    CNodeIterator cnodeend() const
+    [[nodiscard]] CNodeIterator cnodeend() const
     {
         return _nodes.cend();
     }
 
     using CEdgeIterator = typename ankerl::unordered_dense::map<size_t, Edge>::const_iterator;
-    CEdgeIterator cedgebegin() const
+    [[nodiscard]] CEdgeIterator cedgebegin() const
     {
         return _edges.cbegin();
     }
-    CEdgeIterator cedgeend() const
+    [[nodiscard]] CEdgeIterator cedgeend() const
     {
         return _edges.cend();
     }
@@ -257,11 +258,11 @@ template <typename NodePayload, typename EdgePayload> class DirectedGraph
                _edge_id_from_nodes_lookup == other._edge_id_from_nodes_lookup;
     }
 
-    size_t size_nodes() const
+    [[nodiscard]] size_t size_nodes() const
     {
         return _nodes.size();
     }
-    size_t size_edges() const
+    [[nodiscard]] size_t size_edges() const
     {
         return _edges.size();
     }

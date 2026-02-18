@@ -1,0 +1,26 @@
+---
+Checks: >-
+  -*,
+  bugprone-unchecked-optional-access,
+  bugprone-use-after-move,
+  bugprone-dangling-handle,
+  bugprone-spurious-semicolon,
+  bugprone-sizeof-expression,
+  clang-analyzer-core.*,
+  clang-analyzer-cplusplus.*,
+  concurrency-mt-unsafe,
+  performance-move-const-arg,
+  performance-unnecessary-copy-initialization,
+  performance-no-automatic-move,
+  modernize-use-nodiscard,
+  modernize-use-default-member-init,
+  modernize-use-override,
+  modernize-loop-convert,
+  readability-const-return-type,
+  readability-qualified-auto,
+  readability-redundant-member-init,
+  cppcoreguidelines-pro-type-static-cast-downcast
+
+WarningsAsErrors: "*"
+
+HeaderFilterRegex: ".*include/opencalibration/.*"

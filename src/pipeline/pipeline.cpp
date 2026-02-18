@@ -30,7 +30,7 @@ namespace
 void run_parallel(fvec &funcs, int parallelism)
 {
 #pragma omp parallel for schedule(dynamic, 1) num_threads(parallelism)
-    for (int i = 0; i < (int)funcs.size(); i++)
+    for (int i = 0; i < (int)funcs.size(); i++) // NOLINT(modernize-loop-convert)
     {
         funcs[i]();
     }

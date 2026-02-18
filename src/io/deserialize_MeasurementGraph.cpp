@@ -52,25 +52,25 @@ template <> class Deserializer<MeasurementGraph>
             if (base.HasMember("version") && base["version"].IsInt64() && base["version"].GetInt64() == 1)
             {
                 const auto &nodes = base["nodes"].GetObject();
-                for (auto niter = nodes.begin(); niter != nodes.end(); ++niter)
+                for (const auto &node_member : nodes)
                 {
-                    size_t node_id = std::strtoull(niter->name.GetString(), &end, 10);
+                    size_t node_id = std::strtoull(node_member.name.GetString(), &end, 10);
                     image img;
-                    img.path = niter->value.GetObject()["path"].GetString();
+                    img.path = node_member.value.GetObject()["path"].GetString();
 
-                    const auto &position = niter->value.GetObject()["position"].GetArray();
+                    const auto &position = node_member.value.GetObject()["position"].GetArray();
                     for (int i = 0; i < 3; i++)
                     {
                         img.position[i] = position[i].GetDouble();
                     }
 
-                    const auto &orientation = niter->value.GetObject()["orientation"].GetArray();
+                    const auto &orientation = node_member.value.GetObject()["orientation"].GetArray();
                     for (int i = 0; i < 4; i++)
                     {
                         img.orientation.coeffs()[i] = orientation[i].GetDouble();
                     }
 
-                    const char *base64_thumbnail = niter->value.GetObject()["thumbnail"].GetString();
+                    const char *base64_thumbnail = node_member.value.GetObject()["thumbnail"].GetString();
                     std::vector<uchar> thumbnail;
                     thumbnail.resize(Base64decode_len(base64_thumbnail), '\0');
                     int actual_size = Base64decode(reinterpret_cast<char *>(thumbnail.data()), base64_thumbnail);
@@ -79,7 +79,7 @@ template <> class Deserializer<MeasurementGraph>
                     cv::imdecode(thumbnail, cv::IMREAD_COLOR, &cvThumbnail);
                     img.thumbnail = RasterToRGB(cvToRaster(cvThumbnail));
 
-                    const auto &model = niter->value.GetObject()["model"].GetObject();
+                    const auto &model = node_member.value.GetObject()["model"].GetObject();
 
                     // TODO: dedup this by looking at the other image models for model ID
 
@@ -111,14 +111,14 @@ template <> class Deserializer<MeasurementGraph>
 
                     MeasurementGraph::Node node(std::move(img));
 
-                    const auto &edge_ids = niter->value.GetObject()["edges"].GetArray();
+                    const auto &edge_ids = node_member.value.GetObject()["edges"].GetArray();
                     for (const auto &edge_id : edge_ids)
                     {
                         node._edges.insert(std::strtoull(edge_id.GetString(), &end, 10));
                     }
 
                     {
-                        const auto &metadata = niter->value.GetObject()["metadata"].GetObject();
+                        const auto &metadata = node_member.value.GetObject()["metadata"].GetObject();
                         {
                             const auto &camera_info_j = metadata["camera_info"].GetObject();
                             auto &camera_info = node.payload.metadata.camera_info;
@@ -158,21 +158,21 @@ template <> class Deserializer<MeasurementGraph>
                         }
                     }
 
-                    const auto &features = niter->value.GetObject()["features"].GetArray();
+                    const auto &features = node_member.value.GetObject()["features"].GetArray();
                     std::string descriptor;
-                    for (auto fiter = features.begin(); fiter != features.end(); ++fiter)
+                    for (const auto &feat : features)
                     {
                         feature_2d f;
-                        const char *base64_descriptor = fiter->GetObject()["descriptor"].GetString();
+                        const char *base64_descriptor = feat.GetObject()["descriptor"].GetString();
                         descriptor.resize(Base64decode_len(base64_descriptor), '\0');
                         int actual_size = Base64decode(const_cast<char *>(descriptor.c_str()), base64_descriptor);
                         descriptor.resize(actual_size);
                         f.descriptor = bitset_from_bytes<feature_2d::DESCRIPTOR_BITS>(descriptor);
 
-                        f.location.x() = fiter->GetObject()["location"].GetArray()[0].GetDouble();
-                        f.location.y() = fiter->GetObject()["location"].GetArray()[1].GetDouble();
+                        f.location.x() = feat.GetObject()["location"].GetArray()[0].GetDouble();
+                        f.location.y() = feat.GetObject()["location"].GetArray()[1].GetDouble();
 
-                        f.strength = fiter->GetObject()["strength"].GetDouble();
+                        f.strength = feat.GetObject()["strength"].GetDouble();
 
                         node.payload.features.push_back(f);
                     }
@@ -180,16 +180,16 @@ template <> class Deserializer<MeasurementGraph>
                     graph._nodes.emplace(node_id, std::move(node));
                 }
                 const auto &edges = base["edges"].GetObject();
-                for (auto eiter = edges.begin(); eiter != edges.end(); ++eiter)
+                for (const auto &edge_member : edges)
                 {
-                    size_t edge_id = std::strtoull(eiter->name.GetString(), &end, 10);
-                    size_t source = std::strtoull(eiter->value.GetObject()["source"].GetString(), &end, 10);
-                    size_t dest = std::strtoull(eiter->value.GetObject()["dest"].GetString(), &end, 10);
+                    size_t edge_id = std::strtoull(edge_member.name.GetString(), &end, 10);
+                    size_t source = std::strtoull(edge_member.value.GetObject()["source"].GetString(), &end, 10);
+                    size_t dest = std::strtoull(edge_member.value.GetObject()["dest"].GetString(), &end, 10);
 
                     graph._edge_id_from_nodes_lookup.emplace(MeasurementGraph::SourceDestIndex{source, dest}, edge_id);
 
                     camera_relations relations;
-                    const auto &matches = eiter->value.GetObject()["matches"].GetArray();
+                    const auto &matches = edge_member.value.GetObject()["matches"].GetArray();
                     relations.matches.reserve(matches.Size());
                     for (const auto &m : matches)
                     {
@@ -201,7 +201,7 @@ template <> class Deserializer<MeasurementGraph>
                         relations.matches.push_back(fm);
                     }
 
-                    const auto &inlier_matches = eiter->value.GetObject()["inlier_matches"].GetArray();
+                    const auto &inlier_matches = edge_member.value.GetObject()["inlier_matches"].GetArray();
                     relations.inlier_matches.reserve(inlier_matches.Size());
                     for (const auto &kp : inlier_matches)
                     {
@@ -215,7 +215,7 @@ template <> class Deserializer<MeasurementGraph>
                         fmd.match_index = kp[4].GetInt64();
                         relations.inlier_matches.push_back(fmd);
                     }
-                    const auto &relation = eiter->value.GetObject()["relation"].GetArray();
+                    const auto &relation = edge_member.value.GetObject()["relation"].GetArray();
                     for (int i = 0; i < 3; i++)
                     {
                         for (int j = 0; j < 3; j++)
@@ -224,7 +224,7 @@ template <> class Deserializer<MeasurementGraph>
                         }
                     }
 
-                    std::string rel_type = eiter->value.GetObject()["relation_type"].GetString();
+                    std::string rel_type = edge_member.value.GetObject()["relation_type"].GetString();
                     if (rel_type == "homography")
                     {
                         relations.relationType = camera_relations::RelationType::HOMOGRAPHY;
@@ -238,7 +238,7 @@ template <> class Deserializer<MeasurementGraph>
                         relations.relationType = camera_relations::RelationType::UNKNOWN;
                     }
 
-                    const auto &rel_pose = eiter->value.GetObject()["relative_pose"].GetArray();
+                    const auto &rel_pose = edge_member.value.GetObject()["relative_pose"].GetArray();
                     for (size_t i = 0; i < rel_pose.Size(); i++)
                     {
                         relations.relative_poses[i].score = rel_pose[i].GetObject()["score"].GetInt();

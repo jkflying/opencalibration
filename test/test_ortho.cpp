@@ -130,11 +130,12 @@ TEST_F(ortho, calculate_bounds_mesh)
 {
     // GIVEN: a surface model with a mesh
     surface_model s;
-    MeshNode n;
-    n.location = {1, 2, 3};
-    s.mesh.addNode(std::move(n));
-    n.location = {5, 6, 7};
-    s.mesh.addNode(std::move(n));
+    MeshNode n1;
+    n1.location = {1, 2, 3};
+    s.mesh.addNode(n1);
+    MeshNode n2;
+    n2.location = {5, 6, 7};
+    s.mesh.addNode(n2);
 
     // WHEN: we calculate the bounds
     auto bounds = calculateBoundsAndMeanZ({s});
@@ -648,7 +649,7 @@ class TestPatchSampler
 
                 if (ellipse_dist <= 1.0)
                 {
-                    cv::Vec3b bgr = bgr_image.at<cv::Vec3b>(py, px);
+                    const cv::Vec3b &bgr = bgr_image.at<cv::Vec3b>(py, px);
 
                     _lab_pixel.at<cv::Vec3b>(0, 0) = bgr;
                     cv::cvtColor(_lab_pixel, _bgr_pixel, cv::COLOR_BGR2Lab);

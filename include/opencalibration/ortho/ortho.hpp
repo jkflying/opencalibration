@@ -38,7 +38,7 @@ class RayTraceContext
     // Ray-trace to find height at world position (x, y)
     double traceHeight(double x, double y, double mean_camera_z);
 
-    bool isValid() const
+    [[nodiscard]] bool isValid() const
     {
         return !_searchers.empty();
     }

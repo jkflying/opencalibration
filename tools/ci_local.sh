@@ -15,6 +15,12 @@ group "Check formatting"
 tools/check_style.sh
 endgroup
 
+group "clang-tidy"
+mkdir -p build_tidy
+cmake -S . -B build_tidy -G Ninja -DCMAKE_BUILD_TYPE=Debug -DOPENCALIBRATION_CLANG_TIDY=ON
+ninja -C build_tidy
+endgroup
+
 group "CMake (asan)"
 mkdir -p build_asan
 cmake -S . -B build_asan -G Ninja -DCMAKE_BUILD_TYPE=asan

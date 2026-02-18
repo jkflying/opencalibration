@@ -12,7 +12,7 @@ struct feature_2d
 
     Eigen::Vector2d location = {NAN, NAN};
     float strength = 0;
-    std::bitset<DESCRIPTOR_BITS> descriptor{};
+    std::bitset<DESCRIPTOR_BITS> descriptor;
 
     bool operator==(const feature_2d &other) const
     {

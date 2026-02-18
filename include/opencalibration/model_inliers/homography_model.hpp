@@ -25,7 +25,7 @@ struct homography_model
                    std::array<decomposed_pose, 4> &poses);
     double error(const correspondence &cor);
 
-    double inlier_threshold;
+    double inlier_threshold = 0.005;
     Eigen::Matrix3d homography;
 };
 

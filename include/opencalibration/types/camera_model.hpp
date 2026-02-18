@@ -42,7 +42,7 @@ template <typename T, CameraModelTag tag> struct DifferentiableCameraModelBase
                projection_type == other.projection_type;
     }
 
-    template <typename K, CameraModelTag result_tag = tag> DifferentiableCameraModelBase<K, result_tag> cast() const
+    template <typename K, CameraModelTag result_tag = tag> [[nodiscard]] DifferentiableCameraModelBase<K, result_tag> cast() const
     {
         DifferentiableCameraModelBase<K, result_tag> model;
 

@@ -6,5 +6,5 @@ target_link_libraries(oc_ortho PUBLIC spdlog::spdlog
                                       ${OpenCV_LIBS}
                                       ${CERES_LIBRARIES}
 )
-target_include_directories(oc_ortho PRIVATE ${PROJECT_SOURCE_DIR}/external/jk-tree/include
-                                            ${GDAL_INCLUDE_DIRS})
+target_include_directories(oc_ortho SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/external/jk-tree/include
+                                                  ${GDAL_INCLUDE_DIRS})

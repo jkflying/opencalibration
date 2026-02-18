@@ -41,20 +41,20 @@ class GDALDatasetWrapper
     {
     }
 
-    int GetRasterXSize() const
+    [[nodiscard]] int GetRasterXSize() const
     {
         return GDALGetRasterXSize(m_handle);
     }
-    int GetRasterYSize() const
+    [[nodiscard]] int GetRasterYSize() const
     {
         return GDALGetRasterYSize(m_handle);
     }
-    int GetRasterCount() const
+    [[nodiscard]] int GetRasterCount() const
     {
         return GDALGetRasterCount(m_handle);
     }
 
-    const char *GetProjectionRef() const
+    [[nodiscard]] const char *GetProjectionRef() const
     {
         return GDALGetProjectionRef(m_handle);
     }
@@ -86,7 +86,7 @@ class GDALDatasetWrapper
                                   pProgressData);
     }
 
-    GDALDatasetH Handle() const
+    [[nodiscard]] GDALDatasetH Handle() const
     {
         return m_handle;
     }
@@ -103,7 +103,7 @@ class GDALRasterBandWrapper
     {
     }
 
-    GDALColorInterp GetColorInterpretation() const
+    [[nodiscard]] GDALColorInterp GetColorInterpretation() const
     {
         return GDALGetRasterColorInterpretation(m_handle);
     }
@@ -132,7 +132,7 @@ class GDALRasterBandWrapper
         GDALGetBlockSize(m_handle, pnXSize, pnYSize);
     }
 
-    GDALRasterBandH Handle() const
+    [[nodiscard]] GDALRasterBandH Handle() const
     {
         return m_handle;
     }

@@ -218,7 +218,7 @@ void RelaxProblem::gridFilterMatchesPerImage(const MeasurementGraph &graph,
 {
     for (size_t edge_id : edges_to_optimize)
     {
-        auto *edge_ptr = graph.getEdge(edge_id);
+        const auto *edge_ptr = graph.getEdge(edge_id);
         if (edge_ptr == nullptr)
             continue;
 

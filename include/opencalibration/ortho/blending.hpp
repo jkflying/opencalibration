@@ -45,7 +45,7 @@ struct LayeredTileBuffer
         return layers[layer][row * width + col];
     }
 
-    const PixelSample &at(int layer, int row, int col) const
+    [[nodiscard]] const PixelSample &at(int layer, int row, int col) const
     {
         return layers[layer][row * width + col];
     }

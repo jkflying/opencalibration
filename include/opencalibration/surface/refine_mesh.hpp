@@ -91,7 +91,7 @@ class TriangleLocator
 {
   public:
     explicit TriangleLocator(const MeshGraph &mesh);
-    TriangleId find(double x, double y) const;
+    [[nodiscard]] TriangleId find(double x, double y) const;
 
   private:
     jk::tree::KDTree<TriangleId, 2> _centroidTree;

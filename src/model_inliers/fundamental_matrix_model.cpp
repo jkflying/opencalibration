@@ -30,7 +30,7 @@ namespace opencalibration
 {
 
 fundamental_matrix_model::fundamental_matrix_model()
-    : inlier_threshold(0.001), fundamental_matrix(Eigen::Matrix3d::Constant(NAN))
+    : fundamental_matrix(Eigen::Matrix3d::Constant(NAN))
 {
 }
 

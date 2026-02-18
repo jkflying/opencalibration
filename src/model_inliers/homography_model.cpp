@@ -9,7 +9,7 @@
 namespace opencalibration
 {
 
-homography_model::homography_model() : inlier_threshold(0.005), homography(Eigen::Matrix3d::Constant(NAN))
+homography_model::homography_model() : homography(Eigen::Matrix3d::Constant(NAN))
 {
 }
 

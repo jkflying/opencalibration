@@ -31,7 +31,7 @@ template <> class Serializer<MeshGraph>
   public:
     static bool to_ply(const MeshGraph &graph, std::ostream &out)
     {
-        const auto newline = "\n";
+        const auto *const newline = "\n";
         out << "ply" << newline;
         out << "format ascii 1.0" << newline;
         out << "comment exported from OpenCalibration" << newline;

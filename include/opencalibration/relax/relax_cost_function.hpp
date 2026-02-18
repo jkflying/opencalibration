@@ -201,10 +201,10 @@ struct MultiDecomposedRotationCost
         T lowest_res_norm(std::numeric_limits<double>::infinity());
         VectorRT lowest_res;
         lowest_res.fill(T(NAN));
-        for (size_t i = 0; i < decompose.size(); i++)
+        for (const auto &d : decompose)
         {
             VectorRT res;
-            if (decompose[i](rotation1, rotation2, res.data()) && res.allFinite() &&
+            if (d(rotation1, rotation2, res.data()) && res.allFinite() &&
                 res.squaredNorm() < lowest_res_norm)
             {
                 lowest_res_norm = res.squaredNorm();

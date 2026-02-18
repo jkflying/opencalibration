@@ -220,7 +220,7 @@ class PatchSampler
 
                 if (ellipse_dist <= 1.0)
                 {
-                    cv::Vec3b bgr = bgr_image.at<cv::Vec3b>(py, px);
+                    const cv::Vec3b &bgr = bgr_image.at<cv::Vec3b>(py, px);
 
                     _lab_pixel.at<cv::Vec3b>(0, 0) = bgr;
                     cv::cvtColor(_lab_pixel, _bgr_pixel, cv::COLOR_BGR2Lab);
@@ -747,9 +747,9 @@ void writeTileToGeoTIFF(GDALDatasetH dataset, int x_offset, int y_offset, int wi
 {
     // Deinterleave RGBA -> separate bands
     std::vector<uint8_t> band_data[4];
-    for (int i = 0; i < 4; i++)
+    for (auto &bd : band_data)
     {
-        band_data[i].resize(width * height);
+        bd.resize(width * height);
     }
 
     for (int i = 0; i < width * height; i++)
@@ -1513,7 +1513,9 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
         {
             if (prefetch_future.valid())
                 prefetch_future.wait();
-            const auto &[next_tx, next_ty] = tile_order[i + 1];
+            const auto &next_tile = tile_order[i + 1];
+            const auto next_tx = next_tile.first;
+            const auto next_ty = next_tile.second;
             prefetch_future = std::async(std::launch::async, [&, next_tx, next_ty] {
                 auto cams = findTileCameras(next_tx, next_ty, tile_size, context.bounds, context.gsd, width, height,
                                             context.imageGPSLocations);

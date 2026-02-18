@@ -169,7 +169,7 @@ surface_model relax(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
 
     for (size_t i = 0; i < backends.size(); i++)
     {
-        auto &backend = backends[i];
+        const auto &backend = backends[i];
 
         if (backend.capabilities.hasAll(options))
         {

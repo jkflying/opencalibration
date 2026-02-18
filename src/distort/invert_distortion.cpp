@@ -37,7 +37,7 @@ struct InverseDistortionFunctor
         return true;
     }
 
-    int NumResiduals() const
+    [[nodiscard]] int NumResiduals() const
     {
         return static_cast<int>(correspondences.size()) * 3;
     }
@@ -81,7 +81,7 @@ struct ForwardDistortionFunctor
         return true;
     }
 
-    int NumResiduals() const
+    [[nodiscard]] int NumResiduals() const
     {
         return static_cast<int>(correspondences.size()) * 2;
     }

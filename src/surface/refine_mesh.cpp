@@ -220,20 +220,20 @@ BisectionResult bisectEdge(MeshGraph &mesh, size_t edgeId)
     // src -> mid
     MeshEdge srcMidEdge;
     srcMidEdge.border = isBorder;
-    size_t srcMidId = mesh.addEdge(std::move(srcMidEdge), srcId, midId);
+    size_t srcMidId = mesh.addEdge(srcMidEdge, srcId, midId);
     result.splitEdgeIds.push_back(srcMidId);
 
     // mid -> dst
     MeshEdge midDstEdge;
     midDstEdge.border = isBorder;
-    size_t midDstId = mesh.addEdge(std::move(midDstEdge), midId, dstId);
+    size_t midDstId = mesh.addEdge(midDstEdge, midId, dstId);
     result.splitEdgeIds.push_back(midDstId);
 
     // Create edges from midpoint to opposite corners
     // mid -> opp0
     MeshEdge midOpp0Edge;
     midOpp0Edge.border = false;
-    size_t midOpp0Id = mesh.addEdge(std::move(midOpp0Edge), midId, opp0);
+    size_t midOpp0Id = mesh.addEdge(midOpp0Edge, midId, opp0);
 
     // mid -> opp1 (if not border)
     size_t midOpp1Id = 0;
@@ -241,7 +241,7 @@ BisectionResult bisectEdge(MeshGraph &mesh, size_t edgeId)
     {
         MeshEdge midOpp1Edge;
         midOpp1Edge.border = false;
-        midOpp1Id = mesh.addEdge(std::move(midOpp1Edge), midId, opp1);
+        midOpp1Id = mesh.addEdge(midOpp1Edge, midId, opp1);
     }
 
     // Now update all the triangle connectivity
@@ -917,7 +917,7 @@ surface_model mergeSurfaceModels(const std::vector<surface_model> &surfaces)
         auto &threadLocal = threadLocalWeights[surfIdx];
         for (const auto &[nodeId, pointCount] : vertexPointCounts)
         {
-            auto nodePtr = surf.mesh.getNode(nodeId);
+            const auto *nodePtr = surf.mesh.getNode(nodeId);
             if (!nodePtr)
                 continue;
 

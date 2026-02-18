@@ -181,7 +181,7 @@ template <typename T, size_t D> class SpectralClustering
         }
     }
 
-    const std::vector<typename KMeans::cluster> &getClusters() const
+    [[nodiscard]] const std::vector<typename KMeans::cluster> &getClusters() const
     {
         if (!_sub_clusters.empty())
             return _combined_view;

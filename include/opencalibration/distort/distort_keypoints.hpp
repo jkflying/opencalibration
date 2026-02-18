@@ -48,7 +48,7 @@ Eigen::Matrix<T, 2, 1> image_from_3d(const Eigen::Matrix<T, 3, 1> &ray, const Di
     switch (model.projection_type)
     {
     case ProjectionType::PLANAR: {
-        const T z = ray.z();
+        const auto &z = ray.z();
         const T min_z = T(1e-3);
         const T clamped_z = (z < min_z) ? min_z : z;
         ray_projected = ray.template head<2>() / clamped_z;

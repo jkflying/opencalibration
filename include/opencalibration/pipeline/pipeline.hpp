@@ -50,12 +50,12 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
     void add(const std::vector<std::string> &filename);
 
     // warning - not threadsafe, only access from callback or when finished
-    const MeasurementGraph &getGraph()
+    [[nodiscard]] const MeasurementGraph &getGraph()
     {
         return _graph;
     }
 
-    const GeoCoord &getCoord() const
+    [[nodiscard]] const GeoCoord &getCoord() const
     {
         return _coordinate_system;
     }

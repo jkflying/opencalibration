@@ -10,7 +10,11 @@ if(NOT DEFINED OPENCALIBRATION_APP)
     option(OPENCALIBRATION_APP "" ON)
 endif()
 
+option(OPENCALIBRATION_CLANG_TIDY "Run clang-tidy during compilation" OFF)
+
 # =====================================
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -18,22 +22,22 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # ======= DEPENDENCIES ================
 find_package(Eigen3 3.3.7 REQUIRED)
-include_directories(${EIGEN3_INCLUDE_DIRS})
+include_directories(SYSTEM ${EIGEN3_INCLUDE_DIRS})
 
 find_package(Ceres 2.0 REQUIRED )
 add_compile_definitions(CERES_USE_CXX11 TRUE)
-include_directories(${CERES_INCLUDE_DIRS})
+include_directories(SYSTEM ${CERES_INCLUDE_DIRS})
 
 find_package(OpenCV REQUIRED HINTS external/install/lib/cmake/)
-include_directories( ${OpenCV_INCLUDE_DIRS} )
+include_directories(SYSTEM ${OpenCV_INCLUDE_DIRS})
 
 find_package(GDAL 2.4 REQUIRED)
-include_directories(${GDAL_INCLUDE_DIRS})
+include_directories(SYSTEM ${GDAL_INCLUDE_DIRS})
 
 find_package(RapidJSON 1.1 REQUIRED)
-include_directories(${RAPIDJSON_INCLUDE_DIRS})
+include_directories(SYSTEM ${RAPIDJSON_INCLUDE_DIRS})
 
-include_directories(external/unordered_dense/include)
+include_directories(SYSTEM external/unordered_dense/include)
 
 find_package(OpenMP REQUIRED)
 find_package(spdlog REQUIRED)
@@ -60,6 +64,27 @@ if ("${CMAKE_BUILD_TYPE}" STREQUAL "Release")
 endif()
 
 include_directories(include)
+
+if(OPENCALIBRATION_CLANG_TIDY)
+    find_program(CLANG_TIDY_EXE
+        NAMES clang-tidy-18 clang-tidy-17 clang-tidy-16 clang-tidy-15 clang-tidy-14 clang-tidy
+        REQUIRED)
+    message(STATUS "clang-tidy: ${CLANG_TIDY_EXE}")
+    # Use clang's resource dir so clang-tidy can find omp.h (libomp-18-dev) without GCC's incompatible headers.
+    string(REPLACE "clang-tidy" "clang" CLANG_EXE "${CLANG_TIDY_EXE}")
+    execute_process(COMMAND ${CLANG_EXE} --print-resource-dir
+                    OUTPUT_VARIABLE CLANG_RESOURCE_DIR
+                    OUTPUT_STRIP_TRAILING_WHITESPACE
+                    RESULT_VARIABLE CLANG_RESOURCE_RESULT)
+    if(CLANG_RESOURCE_RESULT EQUAL 0)
+        message(STATUS "clang resource dir: ${CLANG_RESOURCE_DIR}")
+        set(CMAKE_CXX_CLANG_TIDY "${CLANG_TIDY_EXE}"
+            "--extra-arg=-isystem${CLANG_RESOURCE_DIR}/include")
+    else()
+        message(WARNING "Could not determine clang resource dir; falling back to -U_OPENMP")
+        set(CMAKE_CXX_CLANG_TIDY "${CLANG_TIDY_EXE}" "--extra-arg=-U_OPENMP")
+    endif()
+endif()
 
 # Camera database bundled resource
 set(CAMERA_DATABASE_SOURCE "${CMAKE_SOURCE_DIR}/data/camera_database.json")

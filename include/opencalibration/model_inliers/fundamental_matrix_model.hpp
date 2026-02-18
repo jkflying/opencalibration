@@ -25,7 +25,7 @@ struct fundamental_matrix_model
 
     double error(const correspondence &cor);
 
-    double inlier_threshold;
+    double inlier_threshold = 0.001;
     Eigen::Matrix3d fundamental_matrix;
 };
 

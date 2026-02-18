@@ -346,32 +346,32 @@ MeshGraph buildMinimalMesh(const point_cloud &cameraLocations, const std::vector
     MeshEdge bottomEdge;
     bottomEdge.border = true;
     bottomEdge.triangleOppositeNodes[0] = v3;
-    size_t e_bottom = mesh.addEdge(std::move(bottomEdge), v0, v1);
+    size_t e_bottom = mesh.addEdge(bottomEdge, v0, v1);
 
     // Right edge: v1 - v3 (border, triangle is v0-v1-v3)
     MeshEdge rightEdge;
     rightEdge.border = true;
     rightEdge.triangleOppositeNodes[0] = v0;
-    size_t e_right = mesh.addEdge(std::move(rightEdge), v1, v3);
+    size_t e_right = mesh.addEdge(rightEdge, v1, v3);
 
     // Top edge: v2 - v3 (border, triangle is v0-v3-v2)
     MeshEdge topEdge;
     topEdge.border = true;
     topEdge.triangleOppositeNodes[0] = v0;
-    size_t e_top = mesh.addEdge(std::move(topEdge), v2, v3);
+    size_t e_top = mesh.addEdge(topEdge, v2, v3);
 
     // Left edge: v0 - v2 (border, triangle is v0-v3-v2)
     MeshEdge leftEdge;
     leftEdge.border = true;
     leftEdge.triangleOppositeNodes[0] = v3;
-    size_t e_left = mesh.addEdge(std::move(leftEdge), v0, v2);
+    size_t e_left = mesh.addEdge(leftEdge, v0, v2);
 
     // Diagonal edge: v0 - v3 (internal, two triangles)
     MeshEdge diagEdge;
     diagEdge.border = false;
     diagEdge.triangleOppositeNodes[0] = v1; // Triangle v0-v1-v3
     diagEdge.triangleOppositeNodes[1] = v2; // Triangle v0-v3-v2
-    size_t e_diag = mesh.addEdge(std::move(diagEdge), v0, v3);
+    size_t e_diag = mesh.addEdge(diagEdge, v0, v3);
 
     spdlog::info("Built minimal mesh with bounds [{}, {}] x [{}, {}]", xMin, xMax, yMin, yMax);
     spdlog::debug("Added edges {} {} {} {} {}", e_bottom, e_right, e_top, e_left, e_diag);

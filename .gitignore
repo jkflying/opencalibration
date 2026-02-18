@@ -33,6 +33,7 @@
 
 # Build dir
 build/
+build_*/
 external/install
 
 # KDevelop

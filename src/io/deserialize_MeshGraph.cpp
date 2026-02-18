@@ -128,7 +128,7 @@ template <> class Deserializer<MeshGraph>
             edge.border = static_cast<bool>(std::stoi(words[3]));
             edge.triangleOppositeNodes = {std::stoull(words[4]), std::stoull(words[5])};
 
-            graph._edges.emplace(edge_id, MeshGraph::Edge(std::move(edge), source_id, dest_id));
+            graph._edges.emplace(edge_id, MeshGraph::Edge(edge, source_id, dest_id));
             graph._edge_id_from_nodes_lookup.emplace(MeshGraph::SourceDestIndex{source_id, dest_id}, edge_id);
             auto niter = graph._nodes.find(source_id);
             if (niter == graph._nodes.end())

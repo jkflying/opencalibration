@@ -11,8 +11,7 @@ class MeshIntersectionSearcher
   public:
     struct IntersectionInfo
     {
-        IntersectionInfo()
-            : type(PENDING), nodeIndexes({}), nodeLocations({}), intersectionLocation(NAN, NAN, NAN), steps(0)
+        IntersectionInfo() : intersectionLocation(NAN, NAN, NAN)
         {
         }
         enum INTERSECTION_TYPE
@@ -24,11 +23,11 @@ class MeshIntersectionSearcher
             RAY_PARALLEL_TO_PLANE,
             GRAPH_STRUCTURE_INCONSISTENT
 
-        } type;
-        std::array<size_t, 3> nodeIndexes;
-        std::array<const Eigen::Vector3d *, 3> nodeLocations;
+        } type = PENDING;
+        std::array<size_t, 3> nodeIndexes = {};
+        std::array<const Eigen::Vector3d *, 3> nodeLocations = {};
         Eigen::Vector3d intersectionLocation;
-        size_t steps;
+        size_t steps = 0;
     };
 
     [[nodiscard]] bool init(const MeshGraph &meshGraph, const IntersectionInfo &info = {});
@@ -40,7 +39,7 @@ class MeshIntersectionSearcher
     const IntersectionInfo &triangleIntersect(const ray_d &r);
     const IntersectionInfo &lastResult();
 
-    bool initialized() const
+    [[nodiscard]] bool initialized() const
     {
         return _meshGraph != nullptr;
     }
