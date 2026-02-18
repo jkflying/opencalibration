@@ -13,10 +13,11 @@ static const Eigen::Quaterniond DOWN_ORIENTED_NORTH(Eigen::AngleAxisd(M_PI, Eige
 
 struct Backend
 {
-    using run_f = std::function<surface_model(
-        const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-        ankerl::unordered_dense::map<size_t, CameraModel> &cam_models, const ankerl::unordered_dense::set<size_t> &edges_to_optimize,
-        const RelaxOptionSet &options, const std::vector<surface_model> &previousSurfaces)>;
+    using run_f =
+        std::function<surface_model(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                                    ankerl::unordered_dense::map<size_t, CameraModel> &cam_models,
+                                    const ankerl::unordered_dense::set<size_t> &edges_to_optimize,
+                                    const RelaxOptionSet &options, const std::vector<surface_model> &previousSurfaces)>;
     Backend(const RelaxOptionSet &caps, run_f &&func) : capabilities(caps), runner(func)
     {
     }
@@ -29,8 +30,8 @@ std::vector<Backend> getBackends()
     std::vector<Backend> backends;
     auto points_solver = [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                             ankerl::unordered_dense::map<size_t, CameraModel> &cam_models,
-                            const ankerl::unordered_dense::set<size_t> &edges_to_optimize, const RelaxOptionSet &options,
-                            const std::vector<surface_model> &) -> surface_model {
+                            const ankerl::unordered_dense::set<size_t> &edges_to_optimize,
+                            const RelaxOptionSet &options, const std::vector<surface_model> &) -> surface_model {
         PerformanceMeasure p("Relax runner 3d points");
         RelaxProblem rp;
         rp.setup3dPointProblem(graph, nodes, cam_models, edges_to_optimize, options);
@@ -55,8 +56,8 @@ std::vector<Backend> getBackends()
 
     auto ground_plane_solver = [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                                   ankerl::unordered_dense::map<size_t, CameraModel> &cam_models,
-                                  const ankerl::unordered_dense::set<size_t> &edges_to_optimize, const RelaxOptionSet &options,
-                                  const std::vector<surface_model> &) -> surface_model {
+                                  const ankerl::unordered_dense::set<size_t> &edges_to_optimize,
+                                  const RelaxOptionSet &options, const std::vector<surface_model> &) -> surface_model {
         PerformanceMeasure p("Relax runner ground plane");
 
         Eigen::Quaterniond previous_node_orientation = DOWN_ORIENTED_NORTH;
@@ -100,8 +101,8 @@ std::vector<Backend> getBackends()
 
     auto relative_orientation_solver = [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                                           ankerl::unordered_dense::map<size_t, CameraModel> &cam_models,
-                                          const ankerl::unordered_dense::set<size_t> &edges_to_optimize, const RelaxOptionSet &,
-                                          const std::vector<surface_model> &) -> surface_model {
+                                          const ankerl::unordered_dense::set<size_t> &edges_to_optimize,
+                                          const RelaxOptionSet &, const std::vector<surface_model> &) -> surface_model {
         // doesn't use the camera model at all, just decomposed relative orientations
         (void)cam_models;
 

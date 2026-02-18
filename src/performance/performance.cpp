@@ -1,11 +1,11 @@
 #include <opencalibration/performance/performance.hpp>
 
 #include <algorithm>
+#include <ankerl/unordered_dense.h>
 #include <atomic>
 #include <iomanip>
 #include <mutex>
 #include <sstream>
-#include <ankerl/unordered_dense.h>
 #include <vector>
 
 namespace

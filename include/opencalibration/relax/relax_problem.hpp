@@ -45,16 +45,18 @@ class RelaxProblem
 
     void setupGroundPlaneProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                                  ankerl::unordered_dense::map<size_t, CameraModel> &cam_models,
-                                 const ankerl::unordered_dense::set<size_t> &edges_to_optimize, const RelaxOptionSet &options);
+                                 const ankerl::unordered_dense::set<size_t> &edges_to_optimize,
+                                 const RelaxOptionSet &options);
 
     void setupGroundMeshProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                                 ankerl::unordered_dense::map<size_t, CameraModel> &cam_models,
-                                const ankerl::unordered_dense::set<size_t> &edges_to_optimize, const RelaxOptionSet &options,
-                                const std::vector<surface_model> &previousSurfaces);
+                                const ankerl::unordered_dense::set<size_t> &edges_to_optimize,
+                                const RelaxOptionSet &options, const std::vector<surface_model> &previousSurfaces);
 
     void setup3dPointProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                              ankerl::unordered_dense::map<size_t, CameraModel> &cam_models,
-                             const ankerl::unordered_dense::set<size_t> &edges_to_optimize, const RelaxOptionSet &options);
+                             const ankerl::unordered_dense::set<size_t> &edges_to_optimize,
+                             const RelaxOptionSet &options);
 
     void relaxObservedModelOnly(); // only 3d points and ground plane
     void solve();
@@ -70,7 +72,8 @@ class RelaxProblem
 
     void addRelationCost(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge);
 
-    void gridFilterMatchesPerImage(const MeasurementGraph &graph, const ankerl::unordered_dense::set<size_t> &edges_to_optimize,
+    void gridFilterMatchesPerImage(const MeasurementGraph &graph,
+                                   const ankerl::unordered_dense::set<size_t> &edges_to_optimize,
                                    double grid_cell_image_fraction);
 
     void addPointMeasurementsCost(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge,
@@ -100,7 +103,9 @@ class RelaxProblem
 
     std::unique_ptr<ceres::Problem> _problem;
 
-    ankerl::unordered_dense::map<size_t, ankerl::unordered_dense::map<size_t, GridFilter<const feature_match_denormalized *>>> _grid_filter;
+    ankerl::unordered_dense::map<size_t,
+                                 ankerl::unordered_dense::map<size_t, GridFilter<const feature_match_denormalized *>>>
+        _grid_filter;
 
     ceres::Solver::Summary _summary;
     ceres::Solver _solver;

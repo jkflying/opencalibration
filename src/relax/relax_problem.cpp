@@ -125,7 +125,8 @@ void RelaxProblem::setup3dPointProblem(const MeasurementGraph &graph, std::vecto
     _solver_options.linear_solver_type = ceres::SPARSE_SCHUR;
 }
 
-void RelaxProblem::initialize(std::vector<NodePose> &nodes, ankerl::unordered_dense::map<size_t, CameraModel> &cam_models)
+void RelaxProblem::initialize(std::vector<NodePose> &nodes,
+                              ankerl::unordered_dense::map<size_t, CameraModel> &cam_models)
 {
     _nodes_to_optimize.reserve(nodes.size());
     for (NodePose &n : nodes)
@@ -140,7 +141,8 @@ void RelaxProblem::initialize(std::vector<NodePose> &nodes, ankerl::unordered_de
     }
 }
 
-bool RelaxProblem::shouldAddEdgeToOptimization(const ankerl::unordered_dense::set<size_t> &edges_to_optimize, size_t edge_id)
+bool RelaxProblem::shouldAddEdgeToOptimization(const ankerl::unordered_dense::set<size_t> &edges_to_optimize,
+                                               size_t edge_id)
 {
     // skip edges not whitelisted
     if (edges_to_optimize.find(edge_id) == edges_to_optimize.end())

@@ -27,6 +27,7 @@ class LoadStage
 
     std::default_random_engine generator;
     std::uniform_int_distribution<size_t> distribution;
-    ankerl::unordered_dense::map<size_t, std::pair<image_metadata::camera_info_t, std::shared_ptr<CameraModel>>> _camera_models;
+    ankerl::unordered_dense::map<size_t, std::pair<image_metadata::camera_info_t, std::shared_ptr<CameraModel>>>
+        _camera_models;
 };
 } // namespace opencalibration

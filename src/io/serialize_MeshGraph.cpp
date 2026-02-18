@@ -4,8 +4,8 @@
 
 #include <iostream>
 
-#include <set>
 #include <ankerl/unordered_dense.h>
+#include <set>
 
 namespace
 {

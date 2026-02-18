@@ -1027,9 +1027,9 @@ GDALDatasetPtr createMultiBandGeoTIFF(const std::string &path, int width, int he
 }
 
 ankerl::unordered_dense::set<size_t> findTileCameras(int tile_x, int tile_y, int tile_size,
-                                           const opencalibration::orthomosaic::OrthoMosaicBounds &bounds, double gsd,
-                                           int output_width, int output_height,
-                                           const jk::tree::KDTree<size_t, 2> &imageGPSLocations)
+                                                     const opencalibration::orthomosaic::OrthoMosaicBounds &bounds,
+                                                     double gsd, int output_width, int output_height,
+                                                     const jk::tree::KDTree<size_t, 2> &imageGPSLocations)
 {
     PerformanceMeasure thread_perf("Ortho Stage 1 - read");
 
@@ -1068,7 +1068,8 @@ ankerl::unordered_dense::set<size_t> findTileCameras(int tile_x, int tile_y, int
     return camera_ids;
 }
 
-void prefetchImages(const ankerl::unordered_dense::set<size_t> &camera_ids, const opencalibration::MeasurementGraph &graph,
+void prefetchImages(const ankerl::unordered_dense::set<size_t> &camera_ids,
+                    const opencalibration::MeasurementGraph &graph,
                     opencalibration::orthomosaic::FullResolutionImageCache &image_cache)
 {
     PerformanceMeasure thread_perf("Ortho Stage 1 - read");
@@ -1224,7 +1225,8 @@ void readLayeredTileFromGeoTIFF(GDALDatasetH layers_ds, GDALDatasetH cameras_ds,
 void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaicBounds &bounds, double gsd,
                         int output_width, int output_height, const std::vector<surface_model> &surfaces,
                         const MeasurementGraph &graph, const jk::tree::KDTree<size_t, 2> &imageGPSLocations,
-                        double mean_camera_z, const ankerl::unordered_dense::map<size_t, Eigen::Matrix3d> &inv_rotation_cache,
+                        double mean_camera_z,
+                        const ankerl::unordered_dense::map<size_t, Eigen::Matrix3d> &inv_rotation_cache,
                         FullResolutionImageCache &image_cache, int num_layers, LayeredTileBuffer &tile_out,
                         std::vector<ColorCorrespondence> &correspondences_out, int correspondence_subsample,
                         std::mutex &correspondences_mutex)

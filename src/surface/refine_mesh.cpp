@@ -880,7 +880,8 @@ surface_model mergeSurfaceModels(const std::vector<surface_model> &surfaces)
         vertexWeights[it->first] = {Eigen::Vector3d::Zero(), 0.0};
     }
 
-    std::vector<ankerl::unordered_dense::map<size_t, std::pair<Eigen::Vector3d, double>>> threadLocalWeights(surfaces.size());
+    std::vector<ankerl::unordered_dense::map<size_t, std::pair<Eigen::Vector3d, double>>> threadLocalWeights(
+        surfaces.size());
 
 #pragma omp parallel for schedule(dynamic)
     for (size_t surfIdx = 0; surfIdx < surfaces.size(); surfIdx++)
