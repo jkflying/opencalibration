@@ -112,7 +112,7 @@ template <typename T, size_t D> class SpectralClustering
 
                 for (size_t i = 0; i < _items.size(); i++)
                 {
-                    auto location = toArray<D>(evectors.block<1, D>(i, 0).normalized());
+                    auto location = toArray<D>(evectors.block<1, D>(i, 0).normalized().transpose());
                     T identifier = _items[i].second;
                     _kmeans.add(location, identifier);
                 }

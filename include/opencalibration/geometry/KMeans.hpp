@@ -194,11 +194,6 @@ template <typename T, size_t D> class KMeans
                 nearest_cluster_index = i;
                 nearest_distance = distance;
             }
-            if (!_initialized && _clusters[i].points.size() == 0)
-            {
-                nearest_cluster_index = i;
-                nearest_distance = 0;
-            }
         }
         return nearest_cluster_index;
     }
@@ -261,7 +256,6 @@ template <typename T, size_t D> class KMeans
         return dist;
     }
 
-    std::default_random_engine _random_generator{42};
     std::vector<cluster> _clusters;
     bool _initialized{false};
 };
