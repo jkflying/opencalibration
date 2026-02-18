@@ -33,6 +33,8 @@ include_directories(${GDAL_INCLUDE_DIRS})
 find_package(RapidJSON 1.1 REQUIRED)
 include_directories(${RAPIDJSON_INCLUDE_DIRS})
 
+include_directories(external/unordered_dense/include)
+
 find_package(OpenMP REQUIRED)
 find_package(spdlog REQUIRED)
 # =======================================
