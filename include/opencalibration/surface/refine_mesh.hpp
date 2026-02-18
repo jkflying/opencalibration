@@ -5,6 +5,7 @@
 #include <opencalibration/types/point_cloud.hpp>
 #include <opencalibration/types/surface_model.hpp>
 
+#include <ankerl/unordered_dense.h>
 #include <jk/KDTree.h>
 
 #include <functional>
@@ -174,7 +175,7 @@ struct TrianglePointStats
  * @param points Vector of point clouds containing 3D points to count
  * @return Map from TriangleId to per-triangle statistics
  */
-std::unordered_map<TriangleId, TrianglePointStats, TriangleIdHash> countPointsPerTriangle(
+ankerl::unordered_dense::map<TriangleId, TrianglePointStats, TriangleIdHash> countPointsPerTriangle(
     const MeshGraph &mesh, const std::vector<point_cloud> &points);
 
 /**

@@ -5,13 +5,13 @@
 #include <opencalibration/types/relax_options.hpp>
 #include <opencalibration/types/surface_model.hpp>
 
-#include <unordered_set>
+#include <ankerl/unordered_dense.h>
 
 namespace opencalibration
 {
 surface_model relax(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                    std::unordered_map<size_t, CameraModel> &cam_models,
-                    const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options,
+                    ankerl::unordered_dense::map<size_t, CameraModel> &cam_models,
+                    const ankerl::unordered_dense::set<size_t> &edges_to_optimize, const RelaxOptionSet &options,
                     const std::vector<surface_model> &previousSurfaces);
 
 } // namespace opencalibration

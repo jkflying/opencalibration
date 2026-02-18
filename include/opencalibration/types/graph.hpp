@@ -1,11 +1,10 @@
 #pragma once
 
+#include <ankerl/unordered_dense.h>
 #include <deque>
 #include <functional>
 #include <optional>
 #include <random>
-#include <unordered_map>
-#include <unordered_set>
 
 namespace opencalibration
 {
@@ -26,7 +25,7 @@ template <typename NodePayload, typename EdgePayload> class DirectedGraph
 
         NodePayload payload;
 
-        const std::unordered_set<size_t> &getEdges() const
+        const ankerl::unordered_dense::set<size_t> &getEdges() const
         {
             return _edges;
         }
@@ -37,7 +36,7 @@ template <typename NodePayload, typename EdgePayload> class DirectedGraph
         }
 
       private:
-        std::unordered_set<size_t> _edges;
+        ankerl::unordered_dense::set<size_t> _edges;
         friend DirectedGraph;
 
         friend Serializer<DirectedGraph>;
@@ -212,7 +211,7 @@ template <typename NodePayload, typename EdgePayload> class DirectedGraph
         return true;
     }
 
-    using NodeIterator = typename std::unordered_map<size_t, Node>::iterator;
+    using NodeIterator = typename ankerl::unordered_dense::map<size_t, Node>::iterator;
     NodeIterator nodebegin()
     {
         return _nodes.begin();
@@ -222,7 +221,7 @@ template <typename NodePayload, typename EdgePayload> class DirectedGraph
         return _nodes.end();
     }
 
-    using EdgeIterator = typename std::unordered_map<size_t, Edge>::iterator;
+    using EdgeIterator = typename ankerl::unordered_dense::map<size_t, Edge>::iterator;
     EdgeIterator edgebegin()
     {
         return _edges.begin();
@@ -232,7 +231,7 @@ template <typename NodePayload, typename EdgePayload> class DirectedGraph
         return _edges.end();
     }
 
-    using CNodeIterator = typename std::unordered_map<size_t, Node>::const_iterator;
+    using CNodeIterator = typename ankerl::unordered_dense::map<size_t, Node>::const_iterator;
     CNodeIterator cnodebegin() const
     {
         return _nodes.cbegin();
@@ -242,7 +241,7 @@ template <typename NodePayload, typename EdgePayload> class DirectedGraph
         return _nodes.cend();
     }
 
-    using CEdgeIterator = typename std::unordered_map<size_t, Edge>::const_iterator;
+    using CEdgeIterator = typename ankerl::unordered_dense::map<size_t, Edge>::const_iterator;
     CEdgeIterator cedgebegin() const
     {
         return _edges.cbegin();
@@ -286,9 +285,9 @@ template <typename NodePayload, typename EdgePayload> class DirectedGraph
 
     std::default_random_engine generator;
     std::uniform_int_distribution<size_t> distribution;
-    std::unordered_map<size_t, Node> _nodes;
-    std::unordered_map<size_t, Edge> _edges;
-    std::unordered_map<SourceDestIndex, size_t, SourceDestIndex> _edge_id_from_nodes_lookup;
+    ankerl::unordered_dense::map<size_t, Node> _nodes;
+    ankerl::unordered_dense::map<size_t, Edge> _edges;
+    ankerl::unordered_dense::map<SourceDestIndex, size_t, SourceDestIndex> _edge_id_from_nodes_lookup;
 
     friend Serializer<DirectedGraph>;
     friend Deserializer<DirectedGraph>;

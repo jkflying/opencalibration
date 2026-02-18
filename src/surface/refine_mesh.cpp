@@ -5,8 +5,6 @@
 
 #include <omp.h>
 #include <queue>
-#include <unordered_map>
-#include <unordered_set>
 
 namespace opencalibration
 {
@@ -484,7 +482,7 @@ size_t refineWhere(MeshGraph &mesh, std::function<bool(double x, double y, doubl
     for (int iter = 0; iter < maxIterations; iter++)
     {
         // Collect triangles to refine (using a set to avoid duplicates)
-        std::unordered_set<size_t> visitedEdges;
+        ankerl::unordered_dense::set<size_t> visitedEdges;
         std::vector<TriangleId> toRefine;
 
         for (auto it = mesh.cedgebegin(); it != mesh.cedgeend(); ++it)
@@ -714,7 +712,7 @@ TriangleId TriangleLocator::find(double x, double y) const
     return findTriangleContainingPoint(_mesh, x, y);
 }
 
-std::unordered_map<TriangleId, TrianglePointStats, TriangleIdHash> countPointsPerTriangle(
+ankerl::unordered_dense::map<TriangleId, TrianglePointStats, TriangleIdHash> countPointsPerTriangle(
     const MeshGraph &mesh, const std::vector<point_cloud> &points)
 {
     struct Accumulator
@@ -724,14 +722,14 @@ std::unordered_map<TriangleId, TrianglePointStats, TriangleIdHash> countPointsPe
         double sumDistSq = 0;
     };
 
-    std::unordered_map<TriangleId, Accumulator, TriangleIdHash> accumulators;
+    ankerl::unordered_dense::map<TriangleId, Accumulator, TriangleIdHash> accumulators;
 
     struct TrianglePlane
     {
         Eigen::Vector3d normal;
         Eigen::Vector3d origin;
     };
-    std::unordered_map<TriangleId, TrianglePlane, TriangleIdHash> planeCache;
+    ankerl::unordered_dense::map<TriangleId, TrianglePlane, TriangleIdHash> planeCache;
 
     spdlog::debug("countPointsPerTriangle: mesh has {} nodes, {} edges", mesh.size_nodes(), mesh.size_edges());
 
@@ -773,7 +771,7 @@ std::unordered_map<TriangleId, TrianglePointStats, TriangleIdHash> countPointsPe
         }
     }
 
-    std::unordered_map<TriangleId, TrianglePointStats, TriangleIdHash> result;
+    ankerl::unordered_dense::map<TriangleId, TrianglePointStats, TriangleIdHash> result;
     for (const auto &[tri, acc] : accumulators)
     {
         TrianglePointStats stats;
@@ -874,7 +872,7 @@ surface_model mergeSurfaceModels(const std::vector<surface_model> &surfaces)
 
     // For each surface, count points per vertex (sum of points in adjacent triangles)
     // vertex_id -> (weighted_position_sum, total_weight)
-    std::unordered_map<size_t, std::pair<Eigen::Vector3d, double>> vertexWeights;
+    ankerl::unordered_dense::map<size_t, std::pair<Eigen::Vector3d, double>> vertexWeights;
 
     // Initialize with zero weights
     for (auto it = result.mesh.cnodebegin(); it != result.mesh.cnodeend(); ++it)
@@ -882,7 +880,7 @@ surface_model mergeSurfaceModels(const std::vector<surface_model> &surfaces)
         vertexWeights[it->first] = {Eigen::Vector3d::Zero(), 0.0};
     }
 
-    std::vector<std::unordered_map<size_t, std::pair<Eigen::Vector3d, double>>> threadLocalWeights(surfaces.size());
+    std::vector<ankerl::unordered_dense::map<size_t, std::pair<Eigen::Vector3d, double>>> threadLocalWeights(surfaces.size());
 
 #pragma omp parallel for schedule(dynamic)
     for (size_t surfIdx = 0; surfIdx < surfaces.size(); surfIdx++)
@@ -898,7 +896,7 @@ surface_model mergeSurfaceModels(const std::vector<surface_model> &surfaces)
         auto triangleCounts = countPointsPerTriangle(surf.mesh, surf.cloud);
 
         // For each vertex, accumulate weights from adjacent triangles
-        std::unordered_map<size_t, size_t> vertexPointCounts;
+        ankerl::unordered_dense::map<size_t, size_t> vertexPointCounts;
 
         for (const auto &[tri, triStats] : triangleCounts)
         {

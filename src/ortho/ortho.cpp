@@ -380,7 +380,7 @@ OrthoMosaicBounds calculateBoundsAndMeanZ(const std::vector<surface_model> &surf
     return {min_x, max_x, min_y, max_y, mean_surface_z};
 }
 
-double calculateGSD(const MeasurementGraph &graph, const std::unordered_set<size_t> &involved_nodes,
+double calculateGSD(const MeasurementGraph &graph, const ankerl::unordered_dense::set<size_t> &involved_nodes,
                     double mean_surface_z, ImageResolution resolution)
 {
     double arc_per_pixel = 0;
@@ -557,7 +557,7 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
         double thumb_scale;
         Eigen::Vector2i thumb_size;
     };
-    std::unordered_map<size_t, CameraCache> camera_cache;
+    ankerl::unordered_dense::map<size_t, CameraCache> camera_cache;
     for (size_t node_id : context.involved_nodes)
     {
         const auto *node = graph.getNode(node_id);
@@ -1026,7 +1026,7 @@ GDALDatasetPtr createMultiBandGeoTIFF(const std::string &path, int width, int he
     return GDALDatasetPtr(dataset);
 }
 
-std::unordered_set<size_t> findTileCameras(int tile_x, int tile_y, int tile_size,
+ankerl::unordered_dense::set<size_t> findTileCameras(int tile_x, int tile_y, int tile_size,
                                            const opencalibration::orthomosaic::OrthoMosaicBounds &bounds, double gsd,
                                            int output_width, int output_height,
                                            const jk::tree::KDTree<size_t, 2> &imageGPSLocations)
@@ -1038,7 +1038,7 @@ std::unordered_set<size_t> findTileCameras(int tile_x, int tile_y, int tile_size
     int tile_width = std::min(tile_size, output_width - x_offset);
     int tile_height = std::min(tile_size, output_height - y_offset);
 
-    std::unordered_set<size_t> camera_ids;
+    ankerl::unordered_dense::set<size_t> camera_ids;
     jk::tree::KDTree<size_t, 2>::Searcher searcher(imageGPSLocations);
 
     int N = 10;
@@ -1068,7 +1068,7 @@ std::unordered_set<size_t> findTileCameras(int tile_x, int tile_y, int tile_size
     return camera_ids;
 }
 
-void prefetchImages(const std::unordered_set<size_t> &camera_ids, const opencalibration::MeasurementGraph &graph,
+void prefetchImages(const ankerl::unordered_dense::set<size_t> &camera_ids, const opencalibration::MeasurementGraph &graph,
                     opencalibration::orthomosaic::FullResolutionImageCache &image_cache)
 {
     PerformanceMeasure thread_perf("Ortho Stage 1 - read");
@@ -1224,7 +1224,7 @@ void readLayeredTileFromGeoTIFF(GDALDatasetH layers_ds, GDALDatasetH cameras_ds,
 void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaicBounds &bounds, double gsd,
                         int output_width, int output_height, const std::vector<surface_model> &surfaces,
                         const MeasurementGraph &graph, const jk::tree::KDTree<size_t, 2> &imageGPSLocations,
-                        double mean_camera_z, const std::unordered_map<size_t, Eigen::Matrix3d> &inv_rotation_cache,
+                        double mean_camera_z, const ankerl::unordered_dense::map<size_t, Eigen::Matrix3d> &inv_rotation_cache,
                         FullResolutionImageCache &image_cache, int num_layers, LayeredTileBuffer &tile_out,
                         std::vector<ColorCorrespondence> &correspondences_out, int correspondence_subsample,
                         std::mutex &correspondences_mutex)
@@ -1252,7 +1252,7 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
             }
         }
         jk::tree::KDTree<size_t, 2>::Searcher tree_searcher(imageGPSLocations);
-        std::unordered_map<uint64_t, cv::Mat> local_image_cache;
+        ankerl::unordered_dense::map<uint64_t, cv::Mat> local_image_cache;
 
         std::vector<ColorCorrespondence> local_correspondences;
 
@@ -1462,7 +1462,7 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
         createMultiBandGeoTIFF(cameras_path, width, height, context.bounds.min_x, context.bounds.max_y, context.gsd,
                                wkt, config.num_layers * 2, GDT_UInt32);
 
-    std::unordered_map<size_t, Eigen::Matrix3d> inv_rotation_cache;
+    ankerl::unordered_dense::map<size_t, Eigen::Matrix3d> inv_rotation_cache;
     for (size_t node_id : context.involved_nodes)
     {
         const auto *node = graph.getNode(node_id);
@@ -1608,7 +1608,7 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
     auto start_time = std::chrono::steady_clock::now();
     std::atomic<long long> last_log_seconds{-5};
 
-    std::unordered_map<size_t, Eigen::Matrix3d> inv_rotation_cache;
+    ankerl::unordered_dense::map<size_t, Eigen::Matrix3d> inv_rotation_cache;
     for (size_t node_id : context.involved_nodes)
     {
         const auto *node = graph.getNode(node_id);

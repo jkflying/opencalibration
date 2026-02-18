@@ -1,10 +1,10 @@
 #pragma once
 
+#include <ankerl/unordered_dense.h>
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 namespace opencalibration::orthomosaic
@@ -43,8 +43,8 @@ struct ColorCorrespondence
 
 struct ColorBalanceResult
 {
-    std::unordered_map<size_t, RadiometricParams> per_image_params;
-    std::unordered_map<uint32_t, VignettingParams> per_model_params;
+    ankerl::unordered_dense::map<size_t, RadiometricParams> per_image_params;
+    ankerl::unordered_dense::map<uint32_t, VignettingParams> per_model_params;
     bool success = false;
     double final_cost = 0;
     int num_iterations = 0;
@@ -56,6 +56,6 @@ struct CameraPosition
 };
 
 ColorBalanceResult solveColorBalance(const std::vector<ColorCorrespondence> &correspondences,
-                                     const std::unordered_map<size_t, CameraPosition> &camera_positions = {});
+                                     const ankerl::unordered_dense::map<size_t, CameraPosition> &camera_positions = {});
 
 } // namespace opencalibration::orthomosaic

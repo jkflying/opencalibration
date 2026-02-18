@@ -1,9 +1,8 @@
 #pragma once
 
+#include <ankerl/unordered_dense.h>
 #include <math.h>
 #include <tuple>
-#include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 namespace opencalibration
@@ -51,15 +50,15 @@ template <typename T> class GridFilter
         }
     }
 
-    const std::unordered_set<T> &getBestMeasurementsPerCell() const
+    const ankerl::unordered_dense::set<T> &getBestMeasurementsPerCell() const
     {
         return _best;
     }
 
   private:
     double _grid_resolution;
-    std::unordered_map<uint64_t, std::pair<double, T>> _map;
-    std::unordered_set<T> _best;
+    ankerl::unordered_dense::map<uint64_t, std::pair<double, T>> _map;
+    ankerl::unordered_dense::set<T> _best;
 };
 
 } // namespace opencalibration

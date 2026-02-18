@@ -1,11 +1,10 @@
 #pragma once
 
+#include <ankerl/unordered_dense.h>
 #include <condition_variable>
 #include <mutex>
 #include <opencv2/opencv.hpp>
 #include <string>
-#include <unordered_map>
-#include <unordered_set>
 
 namespace opencalibration
 {
@@ -20,8 +19,8 @@ class FullResolutionImageCache
         size_t last_access_time;
     };
 
-    std::unordered_map<size_t, CachedImage> cache_;
-    std::unordered_set<size_t> loading_;
+    ankerl::unordered_dense::map<size_t, CachedImage> cache_;
+    ankerl::unordered_dense::set<size_t> loading_;
     size_t max_cache_size_;
     size_t access_counter_ = 0;
     mutable std::mutex cache_mutex_;

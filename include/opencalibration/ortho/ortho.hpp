@@ -7,8 +7,8 @@
 
 #include <jk/KDTree.h>
 
+#include <ankerl/unordered_dense.h>
 #include <string>
-#include <unordered_set>
 #include <vector>
 
 namespace opencalibration
@@ -67,7 +67,7 @@ struct OrthoMosaicContext
 {
     OrthoMosaicBounds bounds;
     double gsd;
-    std::unordered_set<size_t> involved_nodes;
+    ankerl::unordered_dense::set<size_t> involved_nodes;
     jk::tree::KDTree<size_t, 2> imageGPSLocations;
     double mean_camera_z;
     double average_camera_elevation;
@@ -82,7 +82,7 @@ enum class ImageResolution
     FullResolution
 };
 
-double calculateGSD(const MeasurementGraph &graph, const std::unordered_set<size_t> &involved_nodes,
+double calculateGSD(const MeasurementGraph &graph, const ankerl::unordered_dense::set<size_t> &involved_nodes,
                     double mean_surface_z, ImageResolution resolution = ImageResolution::Thumbnail);
 
 OrthoMosaicContext prepareOrthoMosaicContext(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph,

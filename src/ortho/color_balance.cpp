@@ -17,7 +17,7 @@ namespace opencalibration::orthomosaic
 {
 
 ColorBalanceResult solveColorBalance(const std::vector<ColorCorrespondence> &correspondences,
-                                     const std::unordered_map<size_t, CameraPosition> &camera_positions)
+                                     const ankerl::unordered_dense::map<size_t, CameraPosition> &camera_positions)
 {
     ColorBalanceResult result;
 

@@ -34,11 +34,11 @@ RelaxProblem::RelaxProblem()
 }
 
 void RelaxProblem::setupDecompositionProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                                             const std::unordered_set<size_t> &edges_to_optimize)
+                                             const ankerl::unordered_dense::set<size_t> &edges_to_optimize)
 {
 
     _loss.Reset(new ceres::HuberLoss(10 * M_PI / 180), ceres::TAKE_OWNERSHIP);
-    std::unordered_map<size_t, CameraModel> cam_models;
+    ankerl::unordered_dense::map<size_t, CameraModel> cam_models;
     initialize(nodes, cam_models);
     _solver_options.initial_trust_region_radius = 0.1;
 
@@ -55,8 +55,8 @@ void RelaxProblem::setupDecompositionProblem(const MeasurementGraph &graph, std:
 }
 
 void RelaxProblem::setupGroundPlaneProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                                           std::unordered_map<size_t, CameraModel> &cam_models,
-                                           const std::unordered_set<size_t> &edges_to_optimize,
+                                           ankerl::unordered_dense::map<size_t, CameraModel> &cam_models,
+                                           const ankerl::unordered_dense::set<size_t> &edges_to_optimize,
                                            const RelaxOptionSet &options)
 {
     initialize(nodes, cam_models);
@@ -77,8 +77,8 @@ void RelaxProblem::setupGroundPlaneProblem(const MeasurementGraph &graph, std::v
 }
 
 void RelaxProblem::setupGroundMeshProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                                          std::unordered_map<size_t, CameraModel> &cam_models,
-                                          const std::unordered_set<size_t> &edges_to_optimize,
+                                          ankerl::unordered_dense::map<size_t, CameraModel> &cam_models,
+                                          const ankerl::unordered_dense::set<size_t> &edges_to_optimize,
                                           const RelaxOptionSet &options,
                                           const std::vector<surface_model> &previousSurfaces)
 {
@@ -101,8 +101,8 @@ void RelaxProblem::setupGroundMeshProblem(const MeasurementGraph &graph, std::ve
 }
 
 void RelaxProblem::setup3dPointProblem(const MeasurementGraph &graph, std::vector<opencalibration::NodePose> &nodes,
-                                       std::unordered_map<size_t, opencalibration::CameraModel> &cam_models,
-                                       const std::unordered_set<size_t> &edges_to_optimize,
+                                       ankerl::unordered_dense::map<size_t, opencalibration::CameraModel> &cam_models,
+                                       const ankerl::unordered_dense::set<size_t> &edges_to_optimize,
                                        const RelaxOptionSet &options)
 {
     initialize(nodes, cam_models);
@@ -125,7 +125,7 @@ void RelaxProblem::setup3dPointProblem(const MeasurementGraph &graph, std::vecto
     _solver_options.linear_solver_type = ceres::SPARSE_SCHUR;
 }
 
-void RelaxProblem::initialize(std::vector<NodePose> &nodes, std::unordered_map<size_t, CameraModel> &cam_models)
+void RelaxProblem::initialize(std::vector<NodePose> &nodes, ankerl::unordered_dense::map<size_t, CameraModel> &cam_models)
 {
     _nodes_to_optimize.reserve(nodes.size());
     for (NodePose &n : nodes)
@@ -140,7 +140,7 @@ void RelaxProblem::initialize(std::vector<NodePose> &nodes, std::unordered_map<s
     }
 }
 
-bool RelaxProblem::shouldAddEdgeToOptimization(const std::unordered_set<size_t> &edges_to_optimize, size_t edge_id)
+bool RelaxProblem::shouldAddEdgeToOptimization(const ankerl::unordered_dense::set<size_t> &edges_to_optimize, size_t edge_id)
 {
     // skip edges not whitelisted
     if (edges_to_optimize.find(edge_id) == edges_to_optimize.end())
@@ -211,7 +211,7 @@ OptimizationPackage::PoseOpt RelaxProblem::nodeid2poseopt(const MeasurementGraph
 }
 
 void RelaxProblem::gridFilterMatchesPerImage(const MeasurementGraph &graph,
-                                             const std::unordered_set<size_t> &edges_to_optimize,
+                                             const ankerl::unordered_dense::set<size_t> &edges_to_optimize,
                                              double grid_cell_image_fraction)
 {
     for (size_t edge_id : edges_to_optimize)
@@ -470,7 +470,7 @@ void RelaxProblem::relaxObservedModelOnly()
     std::vector<double *> params;
     _problem->GetParameterBlocks(&params);
 
-    std::unordered_map<double *, bool> params_map;
+    ankerl::unordered_dense::map<double *, bool> params_map;
 
     // back up parameters and set everything to constant
     for (double *p : params)

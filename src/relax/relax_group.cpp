@@ -8,8 +8,6 @@
 
 #include <spdlog/spdlog.h>
 
-#include <unordered_set>
-
 namespace opencalibration
 {
 
@@ -42,7 +40,7 @@ void RelaxGroup::init(const MeasurementGraph &graph, const std::vector<size_t> &
     for (size_t i = 0; i < graph_connection_depth; i++)
     {
         // remove already added node ids from nodes to still connect
-        std::unordered_set<size_t> newly_connected;
+        ankerl::unordered_dense::set<size_t> newly_connected;
         for (size_t id : _directly_connected)
         {
             if (_nodes_to_optimize.find(id) == _nodes_to_optimize.end())
@@ -82,7 +80,7 @@ void RelaxGroup::build_optimization_edges(const MeasurementGraph &graph,
 
     const auto *node = graph.getNode(node_id);
     auto knn = imageGPSLocations.searchKnn({node->payload.position.x(), node->payload.position.y()}, 10);
-    std::unordered_set<size_t> ideally_connected_nodes(knn.size());
+    ankerl::unordered_dense::set<size_t> ideally_connected_nodes(knn.size());
     for (const auto &edge : knn)
     {
         ideally_connected_nodes.insert(edge.payload);

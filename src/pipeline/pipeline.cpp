@@ -449,7 +449,7 @@ Pipeline::Transition Pipeline::color_balance()
         USM_DECISION_TABLE(Transition::NEXT, USM_MAKE_DECISION(!_generate_geotiff, Transition::NEXT));
     }
 
-    std::unordered_map<size_t, orthomosaic::CameraPosition> camera_positions;
+    ankerl::unordered_dense::map<size_t, orthomosaic::CameraPosition> camera_positions;
     for (const auto &corr : _correspondences)
     {
         for (size_t cam_id : {corr.camera_id_a, corr.camera_id_b})

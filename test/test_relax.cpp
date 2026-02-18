@@ -21,7 +21,7 @@ struct relax_group : public ::testing::Test
     size_t id[3];
     MeasurementGraph graph;
     std::vector<NodePose> np;
-    std::unordered_map<size_t, CameraModel> cam_models;
+    ankerl::unordered_dense::map<size_t, CameraModel> cam_models;
     std::shared_ptr<CameraModel> model;
     Eigen::Quaterniond ground_ori[3];
     Eigen::Vector3d ground_pos[3];
@@ -300,7 +300,7 @@ TEST_F(relax_group, no_images)
     // GIVEN: a graph, with no images
     MeasurementGraph graph;
     std::vector<NodePose> np;
-    std::unordered_map<size_t, CameraModel> cam_models;
+    ankerl::unordered_dense::map<size_t, CameraModel> cam_models;
 
     // WHEN: we relax the relative orientations
     relax(graph, np, cam_models, {}, {Option::ORIENTATION}, {});
@@ -313,7 +313,7 @@ TEST_F(relax_group, prior_1_image)
     // GIVEN: a graph, with 1 image tilted 45 degrees from downward
     MeasurementGraph graph;
     std::vector<NodePose> np;
-    std::unordered_map<size_t, CameraModel> cam_models;
+    ankerl::unordered_dense::map<size_t, CameraModel> cam_models;
 
     Eigen::Quaterniond ori(Eigen::AngleAxisd(M_PI_4, Eigen::Vector3d::UnitX()));
     Eigen::Vector3d pos(9, 9, 9);
@@ -338,7 +338,7 @@ TEST_F(relax_group, prior_2_images)
     // GIVEN: a graph, with 2 images with relative orientation as identity
     MeasurementGraph graph;
     std::vector<NodePose> np;
-    std::unordered_map<size_t, CameraModel> cam_models;
+    ankerl::unordered_dense::map<size_t, CameraModel> cam_models;
 
     // NB! relative translation of the two images is on the X axis, so the rotation around the X axis is unconstrained
     // Only put disturbances on the Y axis!
@@ -386,7 +386,7 @@ TEST_F(relax_group, relative_orientation_3_images)
     add_ori_noise({-1, 1, 1});
 
     // WHEN: we relax them with relative orientation
-    std::unordered_set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
+    ankerl::unordered_dense::set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
     relax(graph, np, cam_models, edges, {Option::ORIENTATION}, {});
 
     // THEN: it should put them back into the original orientation
@@ -403,7 +403,7 @@ TEST_F(relax_group, measurement_3_images_points)
     add_ori_noise({-0.05, 0.05, 0.05});
 
     // WHEN: we relax them with relative orientation
-    std::unordered_set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
+    ankerl::unordered_dense::set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
     relax(graph, np, cam_models, edges, {Option::ORIENTATION, Option::POINTS_3D}, {});
 
     // THEN: it should put them back into the original orientation
@@ -421,7 +421,7 @@ TEST_F(relax_group, measurement_3_images_plane)
     add_ori_noise({-0.1, 0.1, 0.1});
 
     // WHEN: we relax them with relative orientation
-    std::unordered_set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
+    ankerl::unordered_dense::set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
     relax(graph, np, cam_models, edges, {Option::ORIENTATION, Option::GROUND_PLANE}, {});
     // and again to re-init the inliers
     relax(graph, np, cam_models, edges, {Option::ORIENTATION, Option::GROUND_PLANE}, {});
@@ -445,7 +445,7 @@ TEST_F(relax_group, measurement_3_images_mesh_radial)
     // WHEN: we relax them with relative orientation
     const RelaxOptionSet options({Option::ORIENTATION, Option::LENS_DISTORTIONS_RADIAL,
                                   Option::LENS_DISTORTIONS_RADIAL_BROWN246_PARAMETERIZATION, Option::GROUND_MESH});
-    std::unordered_set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
+    ankerl::unordered_dense::set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
 
     for (int i = 0; i < 10; i++)
         // a few times...
@@ -493,7 +493,7 @@ TEST_F(relax_group, measurement_3_images_points_internals_point_triangulation_ex
     add_ori_noise_graph({-0.1, 0.1, 0.1});
 
     // WHEN: we set up the problem
-    std::unordered_set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
+    ankerl::unordered_dense::set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
     TestRelaxProblem rp;
     rp.setup3dPointProblem(graph, np, cam_models, edges, {Option::ORIENTATION, Option::POINTS_3D});
 
@@ -532,7 +532,7 @@ TEST_F(relax_group, measurement_3_images_points_internals_point_triangulation_no
     add_ori_noise({-0.05, 0.05, 0.05});
 
     // WHEN: we set up the problem and
-    std::unordered_set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
+    ankerl::unordered_dense::set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
     TestRelaxProblem rp;
     rp.setup3dPointProblem(graph, np, cam_models, edges, {Option::ORIENTATION, Option::POINTS_3D});
 
@@ -577,7 +577,7 @@ TEST_F(relax_group, measurement_3_images_points_internals_point_triangulation_no
     add_ori_noise({-0.05, 0.05, 0.05});
 
     // WHEN: we set up the problem and
-    std::unordered_set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
+    ankerl::unordered_dense::set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
     TestRelaxProblem rp;
     // WHEN: we solve the problem
     rp.solve();
@@ -620,7 +620,7 @@ TEST_F(relax_group, measurement_3_images_points_internals_point_triangulation_no
     add_ori_noise({-0.05, 0.05, 0.05});
 
     // WHEN: we set up the problem and
-    std::unordered_set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
+    ankerl::unordered_dense::set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
     TestRelaxProblem rp;
     rp.setup3dPointProblem(graph, np, cam_models, edges,
                            {Option::ORIENTATION, Option::POINTS_3D, Option::FOCAL_LENGTH, Option::PRINCIPAL_POINT});
@@ -653,7 +653,7 @@ TEST_F(relax_group, measurement_3_images_points_internals_point_triangulation_ac
     add_ori_noise({-0.05, 0.05, 0.05});
 
     // WHEN: we set up the problem and
-    std::unordered_set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
+    ankerl::unordered_dense::set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
     TestRelaxProblem rp;
     rp.setup3dPointProblem(graph, np, cam_models, edges, {Option::ORIENTATION, Option::POINTS_3D});
 

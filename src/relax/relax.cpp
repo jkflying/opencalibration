@@ -15,7 +15,7 @@ struct Backend
 {
     using run_f = std::function<surface_model(
         const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-        std::unordered_map<size_t, CameraModel> &cam_models, const std::unordered_set<size_t> &edges_to_optimize,
+        ankerl::unordered_dense::map<size_t, CameraModel> &cam_models, const ankerl::unordered_dense::set<size_t> &edges_to_optimize,
         const RelaxOptionSet &options, const std::vector<surface_model> &previousSurfaces)>;
     Backend(const RelaxOptionSet &caps, run_f &&func) : capabilities(caps), runner(func)
     {
@@ -28,8 +28,8 @@ std::vector<Backend> getBackends()
 {
     std::vector<Backend> backends;
     auto points_solver = [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                            std::unordered_map<size_t, CameraModel> &cam_models,
-                            const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options,
+                            ankerl::unordered_dense::map<size_t, CameraModel> &cam_models,
+                            const ankerl::unordered_dense::set<size_t> &edges_to_optimize, const RelaxOptionSet &options,
                             const std::vector<surface_model> &) -> surface_model {
         PerformanceMeasure p("Relax runner 3d points");
         RelaxProblem rp;
@@ -41,8 +41,8 @@ std::vector<Backend> getBackends()
     };
 
     auto mesh_solver = [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                          std::unordered_map<size_t, CameraModel> &cam_models,
-                          const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options,
+                          ankerl::unordered_dense::map<size_t, CameraModel> &cam_models,
+                          const ankerl::unordered_dense::set<size_t> &edges_to_optimize, const RelaxOptionSet &options,
                           const std::vector<surface_model> &previousSurfaces) -> surface_model {
         PerformanceMeasure p("Relax runner ground mesh");
         RelaxProblem rp;
@@ -54,8 +54,8 @@ std::vector<Backend> getBackends()
     };
 
     auto ground_plane_solver = [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                                  std::unordered_map<size_t, CameraModel> &cam_models,
-                                  const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options,
+                                  ankerl::unordered_dense::map<size_t, CameraModel> &cam_models,
+                                  const ankerl::unordered_dense::set<size_t> &edges_to_optimize, const RelaxOptionSet &options,
                                   const std::vector<surface_model> &) -> surface_model {
         PerformanceMeasure p("Relax runner ground plane");
 
@@ -99,8 +99,8 @@ std::vector<Backend> getBackends()
     };
 
     auto relative_orientation_solver = [](const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                                          std::unordered_map<size_t, CameraModel> &cam_models,
-                                          const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &,
+                                          ankerl::unordered_dense::map<size_t, CameraModel> &cam_models,
+                                          const ankerl::unordered_dense::set<size_t> &edges_to_optimize, const RelaxOptionSet &,
                                           const std::vector<surface_model> &) -> surface_model {
         // doesn't use the camera model at all, just decomposed relative orientations
         (void)cam_models;
@@ -158,8 +158,8 @@ namespace opencalibration
 {
 
 surface_model relax(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                    std::unordered_map<size_t, CameraModel> &cam_models,
-                    const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options,
+                    ankerl::unordered_dense::map<size_t, CameraModel> &cam_models,
+                    const ankerl::unordered_dense::set<size_t> &edges_to_optimize, const RelaxOptionSet &options,
                     const std::vector<surface_model> &previousSurfaces)
 {
 

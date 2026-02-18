@@ -17,8 +17,7 @@
 #include <ceres/solver.h>
 #include <spdlog/spdlog.h>
 
-#include <unordered_map>
-#include <unordered_set>
+#include <ankerl/unordered_dense.h>
 
 namespace opencalibration
 {
@@ -42,20 +41,20 @@ class RelaxProblem
   public:
     RelaxProblem();
     void setupDecompositionProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                                   const std::unordered_set<size_t> &edges_to_optimize);
+                                   const ankerl::unordered_dense::set<size_t> &edges_to_optimize);
 
     void setupGroundPlaneProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                                 std::unordered_map<size_t, CameraModel> &cam_models,
-                                 const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options);
+                                 ankerl::unordered_dense::map<size_t, CameraModel> &cam_models,
+                                 const ankerl::unordered_dense::set<size_t> &edges_to_optimize, const RelaxOptionSet &options);
 
     void setupGroundMeshProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                                std::unordered_map<size_t, CameraModel> &cam_models,
-                                const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options,
+                                ankerl::unordered_dense::map<size_t, CameraModel> &cam_models,
+                                const ankerl::unordered_dense::set<size_t> &edges_to_optimize, const RelaxOptionSet &options,
                                 const std::vector<surface_model> &previousSurfaces);
 
     void setup3dPointProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                             std::unordered_map<size_t, CameraModel> &cam_models,
-                             const std::unordered_set<size_t> &edges_to_optimize, const RelaxOptionSet &options);
+                             ankerl::unordered_dense::map<size_t, CameraModel> &cam_models,
+                             const ankerl::unordered_dense::set<size_t> &edges_to_optimize, const RelaxOptionSet &options);
 
     void relaxObservedModelOnly(); // only 3d points and ground plane
     void solve();
@@ -63,15 +62,15 @@ class RelaxProblem
     surface_model getSurfaceModel();
 
   protected:
-    void initialize(std::vector<NodePose> &nodes, std::unordered_map<size_t, CameraModel> &cam_models);
-    bool shouldAddEdgeToOptimization(const std::unordered_set<size_t> &edges_to_optimize, size_t edge_id);
+    void initialize(std::vector<NodePose> &nodes, ankerl::unordered_dense::map<size_t, CameraModel> &cam_models);
+    bool shouldAddEdgeToOptimization(const ankerl::unordered_dense::set<size_t> &edges_to_optimize, size_t edge_id);
 
     OptimizationPackage::PoseOpt nodeid2poseopt(const MeasurementGraph &graph, size_t node_id,
                                                 bool load_cam_model = true);
 
     void addRelationCost(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge);
 
-    void gridFilterMatchesPerImage(const MeasurementGraph &graph, const std::unordered_set<size_t> &edges_to_optimize,
+    void gridFilterMatchesPerImage(const MeasurementGraph &graph, const ankerl::unordered_dense::set<size_t> &edges_to_optimize,
                                    double grid_cell_image_fraction);
 
     void addPointMeasurementsCost(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge,
@@ -101,15 +100,15 @@ class RelaxProblem
 
     std::unique_ptr<ceres::Problem> _problem;
 
-    std::unordered_map<size_t, std::unordered_map<size_t, GridFilter<const feature_match_denormalized *>>> _grid_filter;
+    ankerl::unordered_dense::map<size_t, ankerl::unordered_dense::map<size_t, GridFilter<const feature_match_denormalized *>>> _grid_filter;
 
     ceres::Solver::Summary _summary;
     ceres::Solver _solver;
 
-    std::unordered_map<size_t, NodePose *> _nodes_to_optimize;
-    std::unordered_map<size_t, CameraModel *> _cam_models_to_optimize;
-    std::unordered_map<size_t, InverseDifferentiableCameraModel<double>> _inverse_cam_model_to_optimize;
-    std::unordered_set<size_t> _edges_used;
+    ankerl::unordered_dense::map<size_t, NodePose *> _nodes_to_optimize;
+    ankerl::unordered_dense::map<size_t, CameraModel *> _cam_models_to_optimize;
+    ankerl::unordered_dense::map<size_t, InverseDifferentiableCameraModel<double>> _inverse_cam_model_to_optimize;
+    ankerl::unordered_dense::set<size_t> _edges_used;
 
     // Radial distortion monotonicity tracking
     struct MonotonicityInfo
@@ -117,11 +116,11 @@ class RelaxProblem
         size_t observation_count = 0;
         double r_max = 0;
     };
-    std::unordered_map<double *, MonotonicityInfo> _radial_monotonicity_info;
+    ankerl::unordered_dense::map<double *, MonotonicityInfo> _radial_monotonicity_info;
 
     // Surface models
     using track_vec = std::vector<FeatureTrack, Eigen::aligned_allocator<FeatureTrack>>;
-    std::unordered_map<size_t, track_vec> _edge_tracks;
+    ankerl::unordered_dense::map<size_t, track_vec> _edge_tracks;
     MeshGraph _mesh;
     std::vector<double> _mesh_initial_z;
 };

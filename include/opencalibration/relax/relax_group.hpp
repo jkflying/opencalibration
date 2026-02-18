@@ -6,7 +6,7 @@
 #include <opencalibration/types/relax_options.hpp>
 #include <opencalibration/types/surface_model.hpp>
 
-#include <unordered_set>
+#include <ankerl/unordered_dense.h>
 
 namespace opencalibration
 {
@@ -25,11 +25,11 @@ class RelaxGroup
   private:
     bool _incremental_relax;
     std::vector<NodePose> _local_poses;
-    std::unordered_map<size_t, CameraModel> _camera_models;
+    ankerl::unordered_dense::map<size_t, CameraModel> _camera_models;
 
-    std::unordered_set<size_t> _edges_to_optimize;
-    std::unordered_set<size_t> _nodes_to_optimize;
-    std::unordered_set<size_t> _directly_connected;
+    ankerl::unordered_dense::set<size_t> _edges_to_optimize;
+    ankerl::unordered_dense::set<size_t> _nodes_to_optimize;
+    ankerl::unordered_dense::set<size_t> _directly_connected;
 
     void build_optimization_edges(const MeasurementGraph &graph, const jk::tree::KDTree<size_t, 2> &imageGPSLocations,
                                   size_t node_id);
