@@ -401,20 +401,20 @@ TEST(spectral, edges_spectralize)
 
 TEST(spectral, disconnected_subgraph_spectralize)
 {
-    // GIVEN: two disconnected chains of nodes with no edges between them
+    // GIVEN: two disconnected cliques with no edges between them.
     opencalibration::SpectralClustering<int, 2> spectral(2);
 
-    for (int i = 0; i < 10; i++)
+    for (int i = 0; i < 8; i++)
     {
         spectral.add({(double)i, 0.0}, i);
-        if (i > 0)
-            spectral.addLink(i - 1, i, 1.0);
+        for (int j = 0; j < i; j++)
+            spectral.addLink(j, i, 1.0);
     }
-    for (int i = 10; i < 20; i++)
+    for (int i = 8; i < 16; i++)
     {
-        spectral.add({(double)(i - 10), 10.0}, i);
-        if (i > 10)
-            spectral.addLink(i - 1, i, 1.0);
+        spectral.add({(double)(i - 8), 10.0}, i);
+        for (int j = 8; j < i; j++)
+            spectral.addLink(j, i, 1.0);
     }
 
     // WHEN: we spectralize and iterate
@@ -428,17 +428,17 @@ TEST(spectral, disconnected_subgraph_spectralize)
     // THEN: each cluster contains nodes from only one component
     const auto &clusters = spectral.getClusters();
     ASSERT_EQ(clusters.size(), 2u);
-    EXPECT_EQ(clusters[0].points.size(), 10u);
-    EXPECT_EQ(clusters[1].points.size(), 10u);
+    EXPECT_EQ(clusters[0].points.size(), 8u);
+    EXPECT_EQ(clusters[1].points.size(), 8u);
 
     for (const auto &cluster : clusters)
     {
         bool all_a = true, all_b = true;
         for (const auto &point : cluster.points)
         {
-            if (point.second >= 10)
+            if (point.second >= 8)
                 all_a = false;
-            if (point.second < 10)
+            if (point.second < 8)
                 all_b = false;
         }
         EXPECT_TRUE(all_a || all_b) << "cluster contains nodes from both components";
