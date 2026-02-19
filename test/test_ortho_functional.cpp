@@ -195,10 +195,10 @@ struct ortho : public ::testing::Test
         ground_pos[2] = Eigen::Vector3d(11, 11, 9);
 
         model = std::make_shared<CameraModel>();
-        model->focal_length_pixels = 600;
-        model->principle_point << 400, 300;
-        model->pixels_cols = 800;
-        model->pixels_rows = 600;
+        model->focal_length_pixels = 100;
+        model->principle_point << 50, 50;
+        model->pixels_cols = 100;
+        model->pixels_rows = 100;
         model->projection_type = opencalibration::ProjectionType::PLANAR;
         model->id = 42;
 
@@ -283,7 +283,7 @@ TEST_F(ortho, geotiff_creation)
     for (int i = 0; i < 3; i++)
     {
         std::string path = TEST_DATA_OUTPUT_DIR "test_geotiff_image_" + std::to_string(i) + ".png";
-        cv::Mat img(600, 800, CV_8UC3, cv::Scalar(i * 80, i * 80, i * 80));
+        cv::Mat img(100, 100, CV_8UC3, cv::Scalar(i * 80, i * 80, i * 80));
         cv::imwrite(path, img);
         temp_image_paths.push_back(path);
 
@@ -361,7 +361,7 @@ TEST_F(ortho, geotiff_small_tile_size)
     for (int i = 0; i < 3; i++)
     {
         std::string path = TEST_DATA_OUTPUT_DIR "test_geotiff_small_" + std::to_string(i) + ".png";
-        cv::Mat img(600, 800, CV_8UC3, cv::Scalar(255 - i * 80, 100, i * 80));
+        cv::Mat img(100, 100, CV_8UC3, cv::Scalar(255 - i * 80, 100, i * 80));
         cv::imwrite(path, img);
         temp_image_paths.push_back(path);
         graph.getNode(id[i])->payload.path = path;
@@ -409,7 +409,7 @@ TEST_F(ortho, geotiff_respects_max_megapixel_limit)
     for (int i = 0; i < 3; i++)
     {
         std::string path = TEST_DATA_OUTPUT_DIR "test_geotiff_capped_" + std::to_string(i) + ".png";
-        cv::Mat img(600, 800, CV_8UC3, cv::Scalar(60 + i * 60, 120, 180));
+        cv::Mat img(100, 100, CV_8UC3, cv::Scalar(60 + i * 60, 120, 180));
         cv::imwrite(path, img);
         graph.getNode(id[i])->payload.path = path;
     }
@@ -462,7 +462,7 @@ TEST_F(ortho, pixel_values_with_known_colors)
     for (int i = 0; i < 3; i++)
     {
         std::string path = TEST_DATA_OUTPUT_DIR "test_color_image_" + std::to_string(i) + ".png";
-        cv::Mat img(600, 800, CV_8UC3, colors[i]);
+        cv::Mat img(100, 100, CV_8UC3, colors[i]);
         cv::imwrite(path, img);
         temp_image_paths.push_back(path);
         graph.getNode(id[i])->payload.path = path;
@@ -589,7 +589,7 @@ TEST_F(ortho, single_image_coverage)
     for (int i = 0; i < 3; i++)
     {
         std::string path = TEST_DATA_OUTPUT_DIR "test_single_coverage_" + std::to_string(i) + ".png";
-        cv::Mat img(600, 800, CV_8UC3, colors[i]);
+        cv::Mat img(100, 100, CV_8UC3, colors[i]);
         cv::imwrite(path, img);
         temp_image_paths.push_back(path);
         graph.getNode(id[i])->payload.path = path;

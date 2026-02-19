@@ -78,7 +78,7 @@ TEST(pipeline, generates_geotiff_when_requested)
     // GIVEN: a pipeline with geotiff filename
     Pipeline p(2);
     std::string output_path = TEST_DATA_OUTPUT_DIR "test_pipeline_ortho.tif";
-    constexpr double max_output_megapixels = 4.0;
+    constexpr double max_output_megapixels = 0.1;
     p.set_geotiff_filename(output_path);
     p.set_orthomosaic_max_megapixels(max_output_megapixels);
 

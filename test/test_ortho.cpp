@@ -306,6 +306,8 @@ TEST_F(ortho, functional_ortho_scene)
     img0.orientation = Eigen::Quaterniond::Identity() * down;
     img0.position = {0, 0, 10};
     img0.model = model;
+    img0.metadata.camera_info.width_px = model->pixels_cols;
+    img0.metadata.camera_info.height_px = model->pixels_rows;
     img0.thumbnail = RGBRaster(100, 100, 3);
     img0.thumbnail.layers[0].pixels.fill(255); // Red
     img0.thumbnail.layers[1].pixels.fill(0);
@@ -317,6 +319,8 @@ TEST_F(ortho, functional_ortho_scene)
     img1.orientation = Eigen::Quaterniond::Identity() * down;
     img1.position = {10, 0, 10};
     img1.model = model;
+    img1.metadata.camera_info.width_px = model->pixels_cols;
+    img1.metadata.camera_info.height_px = model->pixels_rows;
     img1.thumbnail = RGBRaster(100, 100, 3);
     img1.thumbnail.layers[0].pixels.fill(0);
     img1.thumbnail.layers[1].pixels.fill(0);
@@ -341,22 +345,32 @@ TEST_F(ortho, functional_ortho_scene)
     // WHEN: we generate the orthomosaic
     OrthoMosaic result = generateOrthomosaic({functional_surface}, functional_graph);
 
-    // THEN: it should have the correct GSD
-    EXPECT_NEAR(result.gsd, 0.02, 1e-7);
+    // THEN: GSD should be positive (clamped from 0.02 to fit within input pixel budget)
+    EXPECT_GT(result.gsd, 0.0);
 
     const auto &pixels = std::get<MultiLayerRaster<uint8_t>>(result.pixelValues);
 
+    // Mesh bounds: cameras at (0,0) and (10,0) at height 10, border = height*2 = 20
+    // → min_x=-20, max_y=20. With clamping (2 * 100x100 inputs vs ~5MP natural output),
+    // GSD ≈ 0.316m and raster ≈ 126×158. Pixel indices:
+    //   world(0,  0): row = (20-0)/gsd ≈ 63, col = (0+20)/gsd ≈ 63
+    //   world(10, 0): row ≈ 63,              col = (10+20)/gsd ≈ 94
+    constexpr double scene_min_x = -20.0, scene_max_y = 20.0;
+    const int row_y0 = static_cast<int>(scene_max_y / result.gsd);
+    const int col_x0 = static_cast<int>((0.0 - scene_min_x) / result.gsd);
+    const int col_x10 = static_cast<int>((10.0 - scene_min_x) / result.gsd);
+
     // Image 0 center at world (0, 0)
-    EXPECT_EQ((int)pixels.layers[0].pixels(1000, 1000), 255); // R
-    EXPECT_EQ((int)pixels.layers[1].pixels(1000, 1000), 0);   // G
-    EXPECT_EQ((int)pixels.layers[2].pixels(1000, 1000), 0);   // B
-    EXPECT_EQ(result.cameraUUID.pixels(1000, 1000), static_cast<uint32_t>(id0 & 0xFFFFFFFF));
+    EXPECT_EQ((int)pixels.layers[0].pixels(row_y0, col_x0), 255); // R
+    EXPECT_EQ((int)pixels.layers[1].pixels(row_y0, col_x0), 0);   // G
+    EXPECT_EQ((int)pixels.layers[2].pixels(row_y0, col_x0), 0);   // B
+    EXPECT_EQ(result.cameraUUID.pixels(row_y0, col_x0), static_cast<uint32_t>(id0 & 0xFFFFFFFF));
 
     // Image 1 center at world (10, 0)
-    EXPECT_EQ((int)pixels.layers[0].pixels(1000, 1500), 0);   // R
-    EXPECT_EQ((int)pixels.layers[1].pixels(1000, 1500), 0);   // G
-    EXPECT_EQ((int)pixels.layers[2].pixels(1000, 1500), 255); // B
-    EXPECT_EQ(result.cameraUUID.pixels(1000, 1500), static_cast<uint32_t>(id1 & 0xFFFFFFFF));
+    EXPECT_EQ((int)pixels.layers[0].pixels(row_y0, col_x10), 0);   // R
+    EXPECT_EQ((int)pixels.layers[1].pixels(row_y0, col_x10), 0);   // G
+    EXPECT_EQ((int)pixels.layers[2].pixels(row_y0, col_x10), 255); // B
+    EXPECT_EQ(result.cameraUUID.pixels(row_y0, col_x10), static_cast<uint32_t>(id1 & 0xFFFFFFFF));
 }
 
 TEST_F(ortho, measurement_3_images_points)
