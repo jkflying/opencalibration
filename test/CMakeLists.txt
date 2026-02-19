@@ -51,6 +51,8 @@ target_link_libraries(unit_tests PUBLIC gtest pthread oc_geo_coord
                                                       oc_relax
                                                       oc_surface)
 
+set_target_properties(functional_tests unit_tests PROPERTIES CXX_CLANG_TIDY "")
+
 add_custom_target(test
                   USES_TERMINAL
                   COMMAND ${CMAKE_BINARY_DIR}/test/unit_tests
