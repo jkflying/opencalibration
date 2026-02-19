@@ -29,8 +29,7 @@ void calculateFundamentalMatrix(const Eigen::Matrix<double, D, 9> &A, Eigen::Mat
 namespace opencalibration
 {
 
-fundamental_matrix_model::fundamental_matrix_model()
-    : fundamental_matrix(Eigen::Matrix3d::Constant(NAN))
+fundamental_matrix_model::fundamental_matrix_model() : fundamental_matrix(Eigen::Matrix3d::Constant(NAN))
 {
 }
 

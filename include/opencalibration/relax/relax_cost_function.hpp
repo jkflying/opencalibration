@@ -204,8 +204,7 @@ struct MultiDecomposedRotationCost
         for (const auto &d : decompose)
         {
             VectorRT res;
-            if (d(rotation1, rotation2, res.data()) && res.allFinite() &&
-                res.squaredNorm() < lowest_res_norm)
+            if (d(rotation1, rotation2, res.data()) && res.allFinite() && res.squaredNorm() < lowest_res_norm)
             {
                 lowest_res_norm = res.squaredNorm();
                 lowest_res = res;
