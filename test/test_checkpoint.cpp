@@ -123,17 +123,14 @@ TEST_F(CheckpointTest, load_nonexistent)
 
 TEST_F(CheckpointTest, fromString_toString_roundtrip)
 {
-    std::vector<PipelineState> states = {PipelineState::INITIAL_PROCESSING,     PipelineState::INITIAL_GLOBAL_RELAX,
-                                         PipelineState::CAMERA_PARAMETER_RELAX, PipelineState::FINAL_GLOBAL_RELAX,
-                                         PipelineState::GENERATE_THUMBNAIL,     PipelineState::GENERATE_LAYERS,
-                                         PipelineState::COLOR_BALANCE,          PipelineState::BLEND_LAYERS,
-                                         PipelineState::COMPLETE};
+    std::vector<PipelineState> states = {
+        PipelineState::INITIAL_PROCESSING, PipelineState::INITIAL_GLOBAL_RELAX, PipelineState::CAMERA_PARAMETER_RELAX,
+        PipelineState::FINAL_GLOBAL_RELAX, PipelineState::GENERATE_THUMBNAIL,   PipelineState::GENERATE_LAYERS,
+        PipelineState::COLOR_BALANCE,      PipelineState::BLEND_LAYERS,         PipelineState::COMPLETE};
 
-    std::vector<std::string> state_strings = {"INITIAL_PROCESSING",     "INITIAL_GLOBAL_RELAX",
-                                              "CAMERA_PARAMETER_RELAX", "FINAL_GLOBAL_RELAX",
-                                              "GENERATE_THUMBNAIL",     "GENERATE_LAYERS",
-                                              "COLOR_BALANCE",          "BLEND_LAYERS",
-                                              "COMPLETE"};
+    std::vector<std::string> state_strings = {"INITIAL_PROCESSING", "INITIAL_GLOBAL_RELAX", "CAMERA_PARAMETER_RELAX",
+                                              "FINAL_GLOBAL_RELAX", "GENERATE_THUMBNAIL",   "GENERATE_LAYERS",
+                                              "COLOR_BALANCE",      "BLEND_LAYERS",         "COMPLETE"};
 
     for (size_t i = 0; i < states.size(); i++)
     {

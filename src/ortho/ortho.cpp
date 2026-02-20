@@ -913,9 +913,9 @@ void writeDSMTile(GDALDatasetH dataset, int tile_x, int tile_y, int tile_size, i
     int tile_height = std::min(tile_size, output_height - y_offset);
 
     GDALRasterBandWrapper band_wrapper(GDALGetRasterBand(dataset, 1));
-    CPLErr err = band_wrapper.RasterIO(GF_Write, x_offset, y_offset, tile_width, tile_height,
-                                       const_cast<float *>(tile_buffer.data()), tile_width, tile_height, GDT_Float32,
-                                       0, 0);
+    CPLErr err =
+        band_wrapper.RasterIO(GF_Write, x_offset, y_offset, tile_width, tile_height,
+                              const_cast<float *>(tile_buffer.data()), tile_width, tile_height, GDT_Float32, 0, 0);
 
     if (err != CE_None)
     {
@@ -1258,7 +1258,7 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
                         const ankerl::unordered_dense::map<size_t, Eigen::Matrix3d> &inv_rotation_cache,
                         FullResolutionImageCache &image_cache, int num_layers, LayeredTileBuffer &tile_out,
                         std::vector<ColorCorrespondence> &correspondences_out, int correspondence_subsample,
-                        std::mutex &correspondences_mutex)
+                        int correspondence_kernel_radius, std::mutex &correspondences_mutex)
 {
     int x_offset = tile_x * tile_size;
     int y_offset = tile_y * tile_size;
@@ -1339,8 +1339,8 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
                         continue;
 
                     cv::Vec3b color_bgr;
-                    if (!sampler.sampleWithJacobian(full_image, sample_point, *payload.model,
-                                                    payload.position, inv_rotation, gsd, pixel, color_bgr))
+                    if (!sampler.sampleWithJacobian(full_image, sample_point, *payload.model, payload.position,
+                                                    inv_rotation, gsd, pixel, color_bgr))
                         continue;
 
                     auto &sample = tile_out.at(layer_idx, local_row, local_col);
@@ -1408,20 +1408,45 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
                                 const auto &sa = tile_out.at(a, local_row, local_col);
                                 const auto &sb = tile_out.at(b, local_row, local_col);
 
-                                cv::Mat bgr_a(1, 1, CV_8UC3), bgr_b(1, 1, CV_8UC3);
-                                bgr_a.at<cv::Vec3b>(0, 0) = sa.color_bgr;
-                                bgr_b.at<cv::Vec3b>(0, 0) = sb.color_bgr;
-                                cv::Mat bgr_a_f, bgr_b_f, lab_a, lab_b;
-                                bgr_a.convertTo(bgr_a_f, CV_32FC3, 1.0 / 255.0);
-                                bgr_b.convertTo(bgr_b_f, CV_32FC3, 1.0 / 255.0);
-                                cv::cvtColor(bgr_a_f, lab_a, cv::COLOR_BGR2Lab);
-                                cv::cvtColor(bgr_b_f, lab_b, cv::COLOR_BGR2Lab);
+                                cv::Vec3f sum_lab_a(0, 0, 0), sum_lab_b(0, 0, 0);
+                                int count = 0;
+                                for (int dr = -correspondence_kernel_radius; dr <= correspondence_kernel_radius; dr++)
+                                {
+                                    for (int dc = -correspondence_kernel_radius; dc <= correspondence_kernel_radius;
+                                         dc++)
+                                    {
+                                        int kr = local_row + dr;
+                                        int kc = local_col + dc;
+                                        if (kr < 0 || kr >= tile_height || kc < 0 || kc >= tile_width)
+                                            continue;
+                                        const auto &ka = tile_out.at(a, kr, kc);
+                                        const auto &kb = tile_out.at(b, kr, kc);
+                                        if (!ka.valid || !kb.valid || ka.camera_id != sa.camera_id ||
+                                            kb.camera_id != sb.camera_id)
+                                            continue;
+
+                                        cv::Mat bgr_a(1, 1, CV_8UC3), bgr_b(1, 1, CV_8UC3);
+                                        bgr_a.at<cv::Vec3b>(0, 0) = ka.color_bgr;
+                                        bgr_b.at<cv::Vec3b>(0, 0) = kb.color_bgr;
+                                        cv::Mat bgr_a_f, bgr_b_f, lab_a, lab_b;
+                                        bgr_a.convertTo(bgr_a_f, CV_32FC3, 1.0 / 255.0);
+                                        bgr_b.convertTo(bgr_b_f, CV_32FC3, 1.0 / 255.0);
+                                        cv::cvtColor(bgr_a_f, lab_a, cv::COLOR_BGR2Lab);
+                                        cv::cvtColor(bgr_b_f, lab_b, cv::COLOR_BGR2Lab);
+                                        sum_lab_a += lab_a.at<cv::Vec3f>(0, 0);
+                                        sum_lab_b += lab_b.at<cv::Vec3f>(0, 0);
+                                        count++;
+                                    }
+                                }
+                                if (count == 0)
+                                    continue;
+
+                                cv::Vec3f avg_lab_a = sum_lab_a / static_cast<float>(count);
+                                cv::Vec3f avg_lab_b = sum_lab_b / static_cast<float>(count);
 
                                 ColorCorrespondence corr;
-                                auto la = lab_a.at<cv::Vec3f>(0, 0);
-                                auto lb = lab_b.at<cv::Vec3f>(0, 0);
-                                corr.lab_a = {la[0], la[1], la[2]};
-                                corr.lab_b = {lb[0], lb[1], lb[2]};
+                                corr.lab_a = {avg_lab_a[0], avg_lab_a[1], avg_lab_a[2]};
+                                corr.lab_b = {avg_lab_b[0], avg_lab_b[1], avg_lab_b[2]};
                                 corr.camera_id_a = sa.camera_id;
                                 corr.camera_id_b = sb.camera_id;
                                 corr.model_id_a = sa.model_id;
@@ -1493,8 +1518,7 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
                                                        wkt, config.num_layers * 2, GDT_UInt32);
 
     // Create DSM GeoTIFF alongside layers
-    GDALDatasetPtr dsm_ds =
-        createDSMGeoTIFF(dsm_output_path, width, height, bounds.min_x, bounds.max_y, gsd, wkt);
+    GDALDatasetPtr dsm_ds = createDSMGeoTIFF(dsm_output_path, width, height, bounds.min_x, bounds.max_y, gsd, wkt);
 
     ankerl::unordered_dense::map<size_t, Eigen::Matrix3d> inv_rotation_cache;
     for (size_t node_id : context.involved_nodes)
@@ -1549,19 +1573,20 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
             const auto next_tx = next_tile.first;
             const auto next_ty = next_tile.second;
             prefetch_future = std::async(std::launch::async, [&, next_tx, next_ty] {
-                auto cams = findTileCameras(next_tx, next_ty, tile_size, bounds, gsd, width, height,
-                                            context.imageGPSLocations);
+                auto cams =
+                    findTileCameras(next_tx, next_ty, tile_size, bounds, gsd, width, height, context.imageGPSLocations);
                 prefetchImages(cams, graph, image_cache);
             });
         }
 
-        std::vector<float> dsm_tile = computeDSMTile(tile_x, tile_y, tile_size, bounds, gsd, width, height, surfaces,
-                                                      context.mean_camera_z);
+        std::vector<float> dsm_tile =
+            computeDSMTile(tile_x, tile_y, tile_size, bounds, gsd, width, height, surfaces, context.mean_camera_z);
 
         LayeredTileBuffer tile_buf;
         processLayeredTile(tile_x, tile_y, tile_size, bounds, gsd, width, height, dsm_tile, graph,
                            context.imageGPSLocations, inv_rotation_cache, image_cache, config.num_layers, tile_buf,
-                           all_correspondences, config.correspondence_subsample, correspondences_mutex);
+                           all_correspondences, config.correspondence_subsample, config.correspondence_kernel_radius,
+                           correspondences_mutex);
 
         if (write_future.valid())
             write_future.wait();
@@ -1570,11 +1595,10 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
         int y_off = tile_y * tile_size;
         auto tile_buf_ptr = std::make_shared<LayeredTileBuffer>(std::move(tile_buf));
         auto dsm_tile_ptr = std::make_shared<std::vector<float>>(std::move(dsm_tile));
-        write_future =
-            std::async(std::launch::async, [&, tile_buf_ptr, dsm_tile_ptr, x_off, y_off, tile_x, tile_y] {
-                writeLayeredTileToGeoTIFF(layers_ds.get(), cameras_ds.get(), *tile_buf_ptr, x_off, y_off);
-                writeDSMTile(dsm_ds.get(), tile_x, tile_y, tile_size, width, height, *dsm_tile_ptr);
-            });
+        write_future = std::async(std::launch::async, [&, tile_buf_ptr, dsm_tile_ptr, x_off, y_off, tile_x, tile_y] {
+            writeLayeredTileToGeoTIFF(layers_ds.get(), cameras_ds.get(), *tile_buf_ptr, x_off, y_off);
+            writeDSMTile(dsm_ds.get(), tile_x, tile_y, tile_size, width, height, *dsm_tile_ptr);
+        });
 
         completed_tiles++;
         auto now = std::chrono::steady_clock::now();

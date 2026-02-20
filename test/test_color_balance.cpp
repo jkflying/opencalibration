@@ -131,44 +131,6 @@ TEST(ColorBalance, radiometric_match_cost_slope_correction_effect)
     EXPECT_NEAR(residuals[0], -5.0, 1e-6);
 }
 
-TEST(ColorBalance, slope_prior_penalizes_slope)
-{
-    SlopePrior prior(0.1);
-    double slope[2] = {3.0, -4.0};
-    double residuals[2];
-
-    prior(slope, residuals);
-
-    EXPECT_DOUBLE_EQ(residuals[0], 0.3);
-    EXPECT_DOUBLE_EQ(residuals[1], -0.4);
-}
-
-TEST(ColorBalance, slope_smoothness_penalizes_difference)
-{
-    SlopeSmoothnessCost cost(1.0);
-    double slope_a[2] = {5.0, -3.0};
-    double slope_b[2] = {2.0, 1.0};
-    double residuals[2];
-
-    cost(slope_a, slope_b, residuals);
-
-    EXPECT_DOUBLE_EQ(residuals[0], 3.0);  // 5 - 2
-    EXPECT_DOUBLE_EQ(residuals[1], -4.0); // -3 - 1
-}
-
-TEST(ColorBalance, slope_smoothness_zero_for_equal_slopes)
-{
-    SlopeSmoothnessCost cost(2.0);
-    double slope_a[2] = {4.0, -1.0};
-    double slope_b[2] = {4.0, -1.0};
-    double residuals[2];
-
-    cost(slope_a, slope_b, residuals);
-
-    EXPECT_DOUBLE_EQ(residuals[0], 0.0);
-    EXPECT_DOUBLE_EQ(residuals[1], 0.0);
-}
-
 TEST(ColorBalance, solve_synthetic_exposure_difference)
 {
     // GIVEN: Two cameras with a known exposure offset

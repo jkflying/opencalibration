@@ -85,7 +85,6 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
         {
             _k_groups->iterate();
         }
-
     }
     else
     {

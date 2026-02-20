@@ -100,7 +100,8 @@ struct OrthoMosaicConfig
     int num_layers = 2;
     int tile_size = 1024;
     int pyramid_levels = 4;
-    int correspondence_subsample = 10;
+    int correspondence_kernel_radius = 2; // average NxN kernel (N = 2*radius+1) around each sample point
+    int correspondence_subsample = 10 * (2 * correspondence_kernel_radius + 1); // one sample per kernel area
     int blend_transition_radius = 64;
     double max_output_megapixels = 0.0; // 0 = unlimited
 };
