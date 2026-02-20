@@ -412,7 +412,7 @@ TEST(refine_mesh, original_mesh_no_crossing_edges)
 
 // Functional tests that output PLY files for visual inspection
 
-TEST(refine_mesh, DISABLED_output_original_mesh_ply)
+TEST(refine_mesh, output_original_mesh_ply)
 {
     MeshGraph g;
     point_cloud p{Eigen::Vector3d(0, 0, 10), Eigen::Vector3d(5, 5, 10)};
@@ -426,7 +426,7 @@ TEST(refine_mesh, DISABLED_output_original_mesh_ply)
               << " triangles" << std::endl;
 }
 
-TEST(refine_mesh, DISABLED_output_single_refine_ply)
+TEST(refine_mesh, output_single_refine_ply)
 {
     MeshGraph g;
     point_cloud p{Eigen::Vector3d(0, 0, 10), Eigen::Vector3d(5, 5, 10)};
@@ -443,7 +443,7 @@ TEST(refine_mesh, DISABLED_output_single_refine_ply)
               << countTriangles(g) << " triangles" << std::endl;
 }
 
-TEST(refine_mesh, DISABLED_output_multi_level_refine_ply)
+TEST(refine_mesh, output_multi_level_refine_ply)
 {
     MeshGraph g;
     point_cloud p{Eigen::Vector3d(0, 0, 10), Eigen::Vector3d(5, 5, 10)};
@@ -460,7 +460,7 @@ TEST(refine_mesh, DISABLED_output_multi_level_refine_ply)
               << countTriangles(g) << " triangles" << std::endl;
 }
 
-TEST(refine_mesh, DISABLED_output_regional_refine_ply)
+TEST(refine_mesh, output_regional_refine_ply)
 {
     MeshGraph g;
     point_cloud p{Eigen::Vector3d(0, 0, 10), Eigen::Vector3d(8, 8, 10)};
@@ -485,7 +485,7 @@ TEST(refine_mesh, DISABLED_output_regional_refine_ply)
               << countTriangles(g) << " triangles" << std::endl;
 }
 
-TEST(refine_mesh, DISABLED_output_corner_refine_ply)
+TEST(refine_mesh, output_corner_refine_ply)
 {
     MeshGraph g;
     point_cloud p{Eigen::Vector3d(0, 0, 10), Eigen::Vector3d(6, 6, 10)};
@@ -502,7 +502,7 @@ TEST(refine_mesh, DISABLED_output_corner_refine_ply)
               << countTriangles(g) << " triangles" << std::endl;
 }
 
-TEST(refine_mesh, DISABLED_output_multiple_points_refine_ply)
+TEST(refine_mesh, output_multiple_points_refine_ply)
 {
     MeshGraph g;
     point_cloud p{Eigen::Vector3d(0, 0, 10), Eigen::Vector3d(10, 10, 10)};
@@ -521,7 +521,7 @@ TEST(refine_mesh, DISABLED_output_multiple_points_refine_ply)
               << countTriangles(g) << " triangles" << std::endl;
 }
 
-TEST(refine_mesh, DISABLED_output_edge_refine_ply)
+TEST(refine_mesh, output_edge_refine_ply)
 {
     MeshGraph g;
     point_cloud p{Eigen::Vector3d(0, 0, 10), Eigen::Vector3d(8, 8, 10)};
