@@ -52,7 +52,7 @@ struct OrthoMosaic
     GenericRaster pixelValues;
     RasterLayer<float> dsm;
     RasterLayer<uint8_t> overlap;
-    RasterLayer<uint32_t> cameraUUID;
+    RasterLayer<int32_t> cameraUUID;
     double gsd;
 };
 

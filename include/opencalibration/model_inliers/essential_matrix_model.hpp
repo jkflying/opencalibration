@@ -28,7 +28,7 @@ struct essential_matrix_model
     bool decompose(const std::vector<correspondence> &corrs, const std::vector<bool> &inliers,
                    std::array<decomposed_pose, 4> &poses);
 
-    double inlier_threshold;
+    double inlier_threshold{0.001};
     Eigen::Matrix3d essential_matrix;
 };
 

@@ -1563,7 +1563,8 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
 
     for (size_t i = 0; i < tile_order.size(); i++)
     {
-        const auto &[tile_x, tile_y] = tile_order[i];
+        const auto tile_x = tile_order[i].first;
+        const auto tile_y = tile_order[i].second;
 
         if (i + 1 < tile_order.size())
         {
@@ -2078,9 +2079,9 @@ void generateTexturedOBJ(const std::vector<surface_model> &surfaces, const std::
 
     size_t global_vertex_offset = 0;
 
-    for (size_t si = 0; si < surfaces.size(); si++)
+    for (const auto &surface : surfaces)
     {
-        const auto &mesh = surfaces[si].mesh;
+        const auto &mesh = surface.mesh;
         if (mesh.size_edges() == 0)
             continue;
 
@@ -2123,7 +2124,7 @@ void generateTexturedOBJ(const std::vector<surface_model> &surfaces, const std::
             size_t operator()(const std::array<size_t, 3> &arr) const
             {
                 size_t result = arr.size();
-                for (auto &i : arr)
+                for (const auto &i : arr)
                 {
                     result ^= i + 0x9e3779b9 + (result << 6) + (result >> 2);
                 }
@@ -2131,7 +2132,7 @@ void generateTexturedOBJ(const std::vector<surface_model> &surfaces, const std::
             }
         };
 
-        std::unordered_set<std::array<size_t, 3>, ArrayHash> faces;
+        ankerl::unordered_dense::set<std::array<size_t, 3>, ArrayHash> faces;
         std::vector<size_t> sorted_edges;
         sorted_edges.reserve(mesh.size_edges());
         std::transform(mesh.cedgebegin(), mesh.cedgeend(), std::back_inserter(sorted_edges),

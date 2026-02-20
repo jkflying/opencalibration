@@ -188,8 +188,13 @@ int main(int argc, char *argv[])
 
         if (!resume_from.empty())
         {
-            PipelineState target_state = *Pipeline::fromString(resume_from);
-            if (!p.resumeFromState(target_state))
+            auto target_state_opt = Pipeline::fromString(resume_from);
+            if (!target_state_opt)
+            {
+                spdlog::error("Unknown state: {}", resume_from);
+                return -1;
+            }
+            if (!p.resumeFromState(*target_state_opt))
             {
                 spdlog::error("Failed to resume from state {}", resume_from);
                 return -1;

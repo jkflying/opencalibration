@@ -31,11 +31,6 @@ template <> int rasterTypeToCvType<int32_t>()
     return CV_32S;
 }
 
-template <> int rasterTypeToCvType<uint32_t>()
-{
-    return CV_32S;
-}
-
 template <> int rasterTypeToCvType<float>()
 {
     return CV_32F;
@@ -180,7 +175,7 @@ GenericRaster cvToRaster(const cv::Mat &mat)
     case CV_16S:
         return ::cvToRaster<int16_t>(mat);
     case CV_32S:
-        return ::cvToRaster<uint32_t>(mat);
+        return ::cvToRaster<int32_t>(mat);
     case CV_32F:
         return ::cvToRaster<float>(mat);
     case CV_64F:

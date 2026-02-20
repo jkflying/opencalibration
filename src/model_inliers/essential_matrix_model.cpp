@@ -33,8 +33,7 @@ template <int D> void calculateEssentialMatrix(const Eigen::Matrix<double, D, 9>
 namespace opencalibration
 {
 
-essential_matrix_model::essential_matrix_model()
-    : inlier_threshold(0.001), essential_matrix(Eigen::Matrix3d::Constant(NAN))
+essential_matrix_model::essential_matrix_model() : essential_matrix(Eigen::Matrix3d::Constant(NAN))
 {
 }
 

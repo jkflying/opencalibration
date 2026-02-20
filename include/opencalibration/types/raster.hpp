@@ -120,9 +120,7 @@ template <typename pv1, typename pv2> bool operator==(const MultiLayerRaster<pv1
 
 using RGBRaster = MultiLayerRaster<uint8_t>;
 using GenericRaster = std::variant<MultiLayerRaster<uint8_t>, MultiLayerRaster<int8_t>, MultiLayerRaster<int16_t>,
-                                   MultiLayerRaster<uint16_t>, MultiLayerRaster<uint32_t>, MultiLayerRaster<int32_t>,
-                                   MultiLayerRaster<float>>;
-using GenericLayer =
-    std::variant<RasterLayer<uint8_t>, RasterLayer<int8_t>, RasterLayer<uint16_t>, RasterLayer<int16_t>,
-                 RasterLayer<uint32_t>, RasterLayer<int32_t>, RasterLayer<float>>;
+                                   MultiLayerRaster<uint16_t>, MultiLayerRaster<int32_t>, MultiLayerRaster<float>>;
+using GenericLayer = std::variant<RasterLayer<uint8_t>, RasterLayer<int8_t>, RasterLayer<uint16_t>,
+                                  RasterLayer<int16_t>, RasterLayer<int32_t>, RasterLayer<float>>;
 } // namespace opencalibration

@@ -3,7 +3,7 @@
 
 int main(int argc, char **argv)
 {
-    spdlog::set_level(spdlog::level::info);
+    spdlog::set_level(spdlog::level::warn);
     spdlog::info("Running gtests");
     testing::InitGoogleTest(&argc, argv);
 
