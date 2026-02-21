@@ -82,10 +82,10 @@ if(OPENCALIBRATION_CLANG_TIDY)
                     OUTPUT_VARIABLE CLANG_RESOURCE_DIR
                     OUTPUT_STRIP_TRAILING_WHITESPACE
                     RESULT_VARIABLE CLANG_RESOURCE_RESULT)
-    find_program(CLANG_TIDY_CACHE_EXE clang-tidy-cache
+    find_program(CLANG_TIDY_CACHE_EXE cltcache
         HINTS "${CMAKE_SOURCE_DIR}/external/venv/bin")
     if(CLANG_TIDY_CACHE_EXE)
-        message(STATUS "clang-tidy-cache: ${CLANG_TIDY_CACHE_EXE}")
+        message(STATUS "cltcache: ${CLANG_TIDY_CACHE_EXE}")
         set(CLANG_TIDY_LAUNCHER "${CLANG_TIDY_CACHE_EXE}")
     else()
         set(CLANG_TIDY_LAUNCHER "")

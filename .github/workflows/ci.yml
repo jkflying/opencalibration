@@ -9,20 +9,18 @@ on:
 jobs:
   build:
     runs-on: ubuntu-24.04
-    env:
-      CTCACHE_DIR: ~/.cache/ctcache
     steps:
     - uses: actions/checkout@v2
       with:
         submodules: true
     - name: ccache
       uses: hendrikmuhs/ccache-action@v1.2
-    - name: ctcache
+    - name: cltcache
       uses: actions/cache@v4
       with:
-        path: ~/.cache/ctcache
-        key: ctcache-${{ runner.os }}-${{ hashFiles('.clang-tidy') }}
-        restore-keys: ctcache-${{ runner.os }}-
+        path: ~/.cltcache
+        key: cltcache-${{ runner.os }}-${{ hashFiles('.clang-tidy') }}
+        restore-keys: cltcache-${{ runner.os }}-
     - name: build and test
       run: tools/ci_local.sh
     - uses: codecov/codecov-action@v5

@@ -6,7 +6,7 @@ sudo apt-get install -y cmake ccache ninja-build libeigen3-dev libgdal-dev libce
 
 rm -rf external/venv/
 python3 -m venv external/venv
-external/venv/bin/pip install fastcov ctcache
+external/venv/bin/pip install fastcov cltcache
 
 rm -rf external/install/
 
