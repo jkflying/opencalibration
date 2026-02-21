@@ -75,12 +75,12 @@ if ("${CMAKE_BUILD_TYPE}" STREQUAL "Coverage")
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         USES_TERMINAL
         COMMAND ${CMAKE_SOURCE_DIR}/external/venv/bin/fastcov -i `realpath ${CMAKE_SOURCE_DIR}`  -e external/ -l -o clean_coverage.info
-        COMMAND lcov --summary clean_coverage.info --ignore-errors mismatch
+        COMMAND lcov --summary clean_coverage.info --ignore-errors mismatch,inconsistent
         DEPENDS test)
 
     add_custom_target(test_coverage_html
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         USES_TERMINAL
-        COMMAND genhtml clean_coverage.info --output-directory coverage_html --branch-coverage --ignore-errors mismatch
+        COMMAND genhtml clean_coverage.info --output-directory coverage_html --branch-coverage --ignore-errors mismatch,inconsistent
         DEPENDS test_coverage)
 endif()

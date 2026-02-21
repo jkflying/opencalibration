@@ -53,7 +53,7 @@ if(MSVC)
     set (CMAKE_CXX_FLAGS " /W4 /WX")
 else()
     set (CMAKE_CXX_FLAGS " -Wall -Wextra -pedantic -Werror -fno-omit-frame-pointer")
-    set(CMAKE_CXX_FLAGS_COVERAGE "--coverage -fprofile-arcs -ftest-coverage -O2 -g -fno-default-inline -fno-inline -fno-inline-small-functions -fno-elide-constructors -fprofile-abs-path -fprofile-update=atomic"
+    set(CMAKE_CXX_FLAGS_COVERAGE "--coverage -fprofile-arcs -ftest-coverage -Og -g -fprofile-abs-path -fprofile-update=atomic"
                     CACHE STRING "Flags used by the C++ compiler during coverage builds" FORCE)
     set(CMAKE_EXE_LINKER_FLAGS_COVERAGE "--coverage -ftest-coverage -lgcov"
                         CACHE STRING "Flags used for linking binaries during coverage builds" FORCE)
