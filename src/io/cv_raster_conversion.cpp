@@ -39,7 +39,7 @@ template <> int rasterTypeToCvType<float>()
 template <typename T> cv::Mat rasterToCvImpl(const RasterLayer<T> &layer)
 {
     const int cvType = CV_MAKETYPE(rasterTypeToCvType<T>(), 1);
-    cv::Size dims(layer.pixels.rows(), layer.pixels.cols());
+    cv::Size dims(layer.pixels.cols(), layer.pixels.rows());
     cv::Mat result(dims, cvType);
     for (Eigen::Index row = 0; row < layer.pixels.rows(); row++)
     {

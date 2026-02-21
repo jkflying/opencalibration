@@ -21,6 +21,8 @@ TEST(pipeline, processes_4_images)
 
     // GIVEN: a pipeline and paths
     Pipeline p(2);
+    p.set_skip_initial_global_relax(true);
+    p.set_skip_camera_param_relax(true);
     std::string path1 = TEST_DATA_DIR "P2530253.JPG";
     std::string path2 = TEST_DATA_DIR "P2540254.JPG";
     std::string path3 = TEST_DATA_DIR "P2550255.JPG";
@@ -42,6 +44,8 @@ TEST(pipeline, generates_thumbnails_when_requested)
 {
     // GIVEN: a pipeline with custom thumbnail filenames
     Pipeline p(2);
+    p.set_skip_initial_global_relax(true);
+    p.set_skip_camera_param_relax(true);
     p.set_thumbnail_filenames("test_thumb.tiff", "test_source.png", "");
 
     std::string path1 = TEST_DATA_DIR "P2530253.JPG";
@@ -77,6 +81,8 @@ TEST(pipeline, generates_geotiff_when_requested)
 {
     // GIVEN: a pipeline with geotiff filename
     Pipeline p(2);
+    p.set_skip_initial_global_relax(true);
+    p.set_skip_camera_param_relax(true);
     std::string output_path = TEST_DATA_OUTPUT_DIR "test_pipeline_ortho.tif";
     constexpr double max_output_megapixels = 0.1;
     p.set_geotiff_filename(output_path);

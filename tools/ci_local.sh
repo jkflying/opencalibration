@@ -7,6 +7,10 @@ cd "$REPO_ROOT"
 group()    { echo "::group::$1"; date; }
 endgroup() { echo "::endgroup::"; }
 
+group "Install dependencies"
+tools/install_dependencies.sh
+endgroup
+
 group "Validate state machine"
 python3 external/usm/generate_flow_diagram.py -v src/pipeline/pipeline.cpp src/pipeline/pipeline.cpp.dot
 endgroup

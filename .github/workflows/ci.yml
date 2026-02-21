@@ -13,11 +13,8 @@ jobs:
     - uses: actions/checkout@v2
       with:
         submodules: true
-    - run: sudo apt-get update
     - name: ccache
       uses: hendrikmuhs/ccache-action@v1.2
-    - name: install dependencies
-      run: tools/install_dependencies.sh
     - name: build and test
       run: tools/ci_local.sh
     - uses: codecov/codecov-action@v5
