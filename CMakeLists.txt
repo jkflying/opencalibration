@@ -82,13 +82,22 @@ if(OPENCALIBRATION_CLANG_TIDY)
                     OUTPUT_VARIABLE CLANG_RESOURCE_DIR
                     OUTPUT_STRIP_TRAILING_WHITESPACE
                     RESULT_VARIABLE CLANG_RESOURCE_RESULT)
+    find_program(CLANG_TIDY_CACHE_EXE clang-tidy-cache
+        HINTS "${CMAKE_SOURCE_DIR}/external/venv/bin")
+    if(CLANG_TIDY_CACHE_EXE)
+        message(STATUS "clang-tidy-cache: ${CLANG_TIDY_CACHE_EXE}")
+        set(CLANG_TIDY_LAUNCHER "${CLANG_TIDY_CACHE_EXE}")
+    else()
+        set(CLANG_TIDY_LAUNCHER "")
+    endif()
+
     if(CLANG_RESOURCE_RESULT EQUAL 0)
         message(STATUS "clang resource dir: ${CLANG_RESOURCE_DIR}")
-        set(CMAKE_CXX_CLANG_TIDY "${CLANG_TIDY_EXE}"
+        set(CMAKE_CXX_CLANG_TIDY ${CLANG_TIDY_LAUNCHER} "${CLANG_TIDY_EXE}"
             "--extra-arg=-isystem${CLANG_RESOURCE_DIR}/include")
     else()
         message(WARNING "Could not determine clang resource dir; falling back to -U_OPENMP")
-        set(CMAKE_CXX_CLANG_TIDY "${CLANG_TIDY_EXE}" "--extra-arg=-U_OPENMP")
+        set(CMAKE_CXX_CLANG_TIDY ${CLANG_TIDY_LAUNCHER} "${CLANG_TIDY_EXE}" "--extra-arg=-U_OPENMP")
     endif()
 endif()
 
