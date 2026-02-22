@@ -193,7 +193,8 @@ ankerl::unordered_dense::map<TriangleId, TrianglePointStats, TriangleIdHash> cou
  * @return Number of triangles created
  */
 size_t refineByPointDensity(MeshGraph &mesh, const std::vector<point_cloud> &points, size_t maxPointsPerTriangle = 20,
-                            double minDistanceVariance = 0.0, int maxIterations = 20);
+                            double minDistanceVariance = 0.0, int maxIterations = 20,
+                            double minTriangleSizeMeters = 0.0);
 
 /**
  * @brief Merge multiple surface models with the same mesh structure

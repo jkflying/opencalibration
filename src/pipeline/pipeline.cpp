@@ -318,6 +318,7 @@ Pipeline::Transition Pipeline::mesh_refinement()
 
     double meanCameraZ = 0;
     double meanArcPerPixel = 0;
+    double meanImageSize = 0;
     size_t camCount = 0;
     for (auto it = _graph.cnodebegin(); it != _graph.cnodeend(); ++it)
     {
@@ -326,19 +327,26 @@ Pipeline::Transition Pipeline::mesh_refinement()
             continue;
         meanCameraZ += payload.position.z();
         meanArcPerPixel += 1.0 / payload.model->focal_length_pixels;
+        meanImageSize += static_cast<double>(std::max(payload.model->pixels_cols, payload.model->pixels_rows));
         camCount++;
     }
 
     double gsd = 0.01;
+    double reducedGsd = 0.0;
     if (camCount > 0)
     {
         meanCameraZ /= camCount;
         meanArcPerPixel /= camCount;
+        meanImageSize /= camCount;
         gsd = std::max(0.001, std::abs(meanCameraZ - meanSurfaceZ) * meanArcPerPixel);
+        const double groundMeshGridFraction = 0.1; // must match setupGroundMeshProblem grid resolution
+        reducedGsd = std::sqrt(static_cast<double>(maxPointsPerTriangle) / 8.0) *
+                     groundMeshGridFraction * meanImageSize * gsd;
     }
     const double minDistanceStddev = varianceGsdMultiplier * gsd;
     const double minDistanceVariance = minDistanceStddev * minDistanceStddev;
-    spdlog::info("Mesh refinement: estimated GSD {:.4f}m, variance threshold {:.6f}", gsd, minDistanceVariance);
+    spdlog::info("Mesh refinement: estimated GSD {:.4f}m, variance threshold {:.6f}, min triangle size {:.4f}m",
+                 gsd, minDistanceVariance, reducedGsd);
 
     size_t trianglesAboveThreshold = 0;
     size_t maxPoints = 0;
@@ -376,7 +384,8 @@ Pipeline::Transition Pipeline::mesh_refinement()
         if (surface.mesh.size_nodes() == 0)
             continue;
         size_t created =
-            refineByPointDensity(surface.mesh, surface.cloud, maxPointsPerTriangle, minDistanceVariance, 1);
+            refineByPointDensity(surface.mesh, surface.cloud, maxPointsPerTriangle, minDistanceVariance, 1,
+                                 reducedGsd);
         totalRefined += created;
     }
 

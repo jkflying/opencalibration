@@ -790,7 +790,7 @@ ankerl::unordered_dense::map<TriangleId, TrianglePointStats, TriangleIdHash> cou
 }
 
 size_t refineByPointDensity(MeshGraph &mesh, const std::vector<point_cloud> &points, size_t maxPointsPerTriangle,
-                            double minDistanceVariance, int maxIterations)
+                            double minDistanceVariance, int maxIterations, double minTriangleSizeMeters)
 {
     size_t totalCreated = 0;
 
@@ -799,10 +799,34 @@ size_t refineByPointDensity(MeshGraph &mesh, const std::vector<point_cloud> &poi
         auto stats = countPointsPerTriangle(mesh, points);
 
         std::vector<TriangleId> toRefine;
+        size_t skippedSmall = 0;
         for (const auto &[tri, s] : stats)
         {
             if (s.count > maxPointsPerTriangle && s.distanceVariance > minDistanceVariance)
             {
+                if (minTriangleSizeMeters > 0.0)
+                {
+                    auto verts = getTriangleVertices(mesh, tri);
+                    const auto *n0 = mesh.getNode(verts[0]);
+                    const auto *n1 = mesh.getNode(verts[1]);
+                    const auto *n2 = mesh.getNode(verts[2]);
+                    if (n0 && n1 && n2)
+                    {
+                        Eigen::Vector2d p0 = n0->payload.location.head<2>();
+                        Eigen::Vector2d p1 = n1->payload.location.head<2>();
+                        Eigen::Vector2d p2 = n2->payload.location.head<2>();
+                        double maxEdge =
+                            std::max({(p0 - p1).norm(), (p1 - p2).norm(), (p2 - p0).norm()});
+                        if (maxEdge < minTriangleSizeMeters)
+                        {
+                            skippedSmall++;
+                            spdlog::debug("refineByPointDensity: skipping triangle at min size "
+                                          "(edge={}, side={}), {:.4f}m < {:.4f}m limit",
+                                          tri.edgeId, tri.side, maxEdge, minTriangleSizeMeters);
+                            continue;
+                        }
+                    }
+                }
                 toRefine.push_back(tri);
                 spdlog::debug("refineByPointDensity: triangle (edge={}, side={}) has {} points, variance {}",
                               tri.edgeId, tri.side, s.count, s.distanceVariance);
@@ -811,8 +835,9 @@ size_t refineByPointDensity(MeshGraph &mesh, const std::vector<point_cloud> &poi
 
         if (toRefine.empty())
         {
-            spdlog::info("refineByPointDensity: converged after {} iterations, {} triangles created", iter,
-                         totalCreated);
+            spdlog::info("refineByPointDensity: converged after {} iterations, {} triangles created, "
+                         "{} at minimum size limit",
+                         iter, totalCreated, skippedSmall);
             break;
         }
 
