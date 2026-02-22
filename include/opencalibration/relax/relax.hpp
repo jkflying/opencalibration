@@ -12,6 +12,6 @@ namespace opencalibration
 surface_model relax(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                     ankerl::unordered_dense::map<size_t, CameraModel> &cam_models,
                     const ankerl::unordered_dense::set<size_t> &edges_to_optimize, const RelaxOptionSet &options,
-                    const std::vector<surface_model> &previousSurfaces);
+                    const std::vector<surface_model> &previousSurfaces, double ground_mesh_grid_fraction = 0.1);
 
 } // namespace opencalibration

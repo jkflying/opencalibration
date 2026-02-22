@@ -51,7 +51,8 @@ class RelaxProblem
     void setupGroundMeshProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                                 ankerl::unordered_dense::map<size_t, CameraModel> &cam_models,
                                 const ankerl::unordered_dense::set<size_t> &edges_to_optimize,
-                                const RelaxOptionSet &options, const std::vector<surface_model> &previousSurfaces);
+                                const RelaxOptionSet &options, const std::vector<surface_model> &previousSurfaces,
+                                double grid_fraction = 0.1);
 
     void setup3dPointProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                              ankerl::unordered_dense::map<size_t, CameraModel> &cam_models,

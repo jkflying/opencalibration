@@ -272,10 +272,13 @@ Pipeline::Transition Pipeline::mesh_refinement()
     const size_t maxPointsPerTriangle = 20;
     const double varianceGsdMultiplier = 2.0;
     const int maxIterations = 20;
+    const double baseGridFraction = 0.1;
 
     RelaxOptionSet options = {Option::ORIENTATION, Option::GROUND_MESH};
     if (stateRunCount() == 0)
     {
+        _mesh_refinement_grid_level = 0;
+        _mesh_refinement_level_triangles = 0;
         // Build a single global minimal mesh covering all cameras upfront,
         // so that parallel clusters all share the same mesh structure
         point_cloud cameraLocations;
@@ -291,7 +294,9 @@ Pipeline::Transition Pipeline::mesh_refinement()
         _relax_stage->setSurfaceModels(_surfaces);
     }
 
-    _relax_stage->init(_graph, {}, _imageGPSLocations, true, false, options);
+    const double gridFraction = baseGridFraction / std::pow(2.0, _mesh_refinement_grid_level);
+
+    _relax_stage->init(_graph, {}, _imageGPSLocations, true, false, options, gridFraction);
     fvec relax_funcs = _relax_stage->get_runners(_graph);
     run_parallel(relax_funcs, _parallelism);
     _next_relaxed_ids = _relax_stage->finalize(_graph);
@@ -339,14 +344,12 @@ Pipeline::Transition Pipeline::mesh_refinement()
         meanArcPerPixel /= camCount;
         meanImageSize /= camCount;
         gsd = std::max(0.001, std::abs(meanCameraZ - meanSurfaceZ) * meanArcPerPixel);
-        const double groundMeshGridFraction = 0.1; // must match setupGroundMeshProblem grid resolution
-        reducedGsd = std::sqrt(static_cast<double>(maxPointsPerTriangle) / 8.0) *
-                     groundMeshGridFraction * meanImageSize * gsd;
+        reducedGsd = std::sqrt(static_cast<double>(maxPointsPerTriangle) / 8.0) * gridFraction * meanImageSize * gsd;
     }
     const double minDistanceStddev = varianceGsdMultiplier * gsd;
     const double minDistanceVariance = minDistanceStddev * minDistanceStddev;
-    spdlog::info("Mesh refinement: estimated GSD {:.4f}m, variance threshold {:.6f}, min triangle size {:.4f}m",
-                 gsd, minDistanceVariance, reducedGsd);
+    spdlog::info("Mesh refinement level {}: GSD {:.4f}m, grid fraction {:.4f}, min triangle {:.4f}m",
+                 _mesh_refinement_grid_level, gsd, gridFraction, reducedGsd);
 
     size_t trianglesAboveThreshold = 0;
     size_t maxPoints = 0;
@@ -366,39 +369,48 @@ Pipeline::Transition Pipeline::mesh_refinement()
     spdlog::info("Mesh refinement iteration {}: max {} points/triangle, {} triangles above threshold", stateRunCount(),
                  maxPoints, trianglesAboveThreshold);
 
-    if (trianglesAboveThreshold == 0)
+    bool levelConverged = (trianglesAboveThreshold == 0);
+
+    if (!levelConverged && stateRunCount() >= (uint64_t)(maxIterations - 1))
     {
-        spdlog::info("Mesh refinement converged: all triangles have <= {} points", maxPointsPerTriangle);
+        spdlog::warn("Mesh refinement reached max iterations ({}), advancing grid level", maxIterations);
+        levelConverged = true;
+    }
+
+    if (!levelConverged)
+    {
+        size_t totalRefined = 0;
+        for (auto &surface : _surfaces)
+        {
+            if (surface.mesh.size_nodes() == 0)
+                continue;
+            totalRefined += refineByPointDensity(surface.mesh, surface.cloud, maxPointsPerTriangle,
+                                                 minDistanceVariance, 1, reducedGsd);
+        }
+
+        if (totalRefined == 0)
+            levelConverged = true;
+        else
+        {
+            _mesh_refinement_level_triangles += totalRefined;
+            spdlog::info("Mesh refinement: created {} triangles", totalRefined);
+            _relax_stage->setSurfaceModels(_surfaces);
+            USM_DECISION_TABLE(Transition::REPEAT, );
+        }
+    }
+
+    if (_mesh_refinement_level_triangles == 0)
+    {
+        spdlog::info("Mesh refinement complete: grid level {} (fraction {:.4f}) produced no new triangles",
+                     _mesh_refinement_grid_level, gridFraction);
         USM_DECISION_TABLE(Transition::NEXT, );
     }
 
-    if (stateRunCount() >= (uint64_t)(maxIterations - 1))
-    {
-        spdlog::info("Mesh refinement reached max iterations ({})", maxIterations);
-        USM_DECISION_TABLE(Transition::NEXT, );
-    }
-
-    size_t totalRefined = 0;
-    for (auto &surface : _surfaces)
-    {
-        if (surface.mesh.size_nodes() == 0)
-            continue;
-        size_t created =
-            refineByPointDensity(surface.mesh, surface.cloud, maxPointsPerTriangle, minDistanceVariance, 1,
-                                 reducedGsd);
-        totalRefined += created;
-    }
-
-    if (totalRefined == 0)
-    {
-        spdlog::info("Mesh refinement: no triangles created, stopping");
-        USM_DECISION_TABLE(Transition::NEXT, );
-    }
-
-    spdlog::info("Mesh refinement: refined {} triangles", totalRefined);
-
+    _mesh_refinement_grid_level++;
+    _mesh_refinement_level_triangles = 0;
+    spdlog::info("Mesh refinement advancing to grid level {} (fraction {:.4f})",
+                 _mesh_refinement_grid_level, baseGridFraction / std::pow(2.0, _mesh_refinement_grid_level));
     _relax_stage->setSurfaceModels(_surfaces);
-
     USM_DECISION_TABLE(Transition::REPEAT, );
 }
 

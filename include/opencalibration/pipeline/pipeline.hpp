@@ -188,6 +188,9 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
     std::string _textured_mesh_filename = "";
     double _orthomosaic_max_megapixels = 0.0;
 
+    int _mesh_refinement_grid_level = 0;
+    size_t _mesh_refinement_level_triangles = 0;
+
     // Stage skip flags
     bool _skip_mesh_refinement = false;
     bool _skip_initial_global_relax = false;

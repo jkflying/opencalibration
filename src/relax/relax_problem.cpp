@@ -80,12 +80,12 @@ void RelaxProblem::setupGroundMeshProblem(const MeasurementGraph &graph, std::ve
                                           ankerl::unordered_dense::map<size_t, CameraModel> &cam_models,
                                           const ankerl::unordered_dense::set<size_t> &edges_to_optimize,
                                           const RelaxOptionSet &options,
-                                          const std::vector<surface_model> &previousSurfaces)
+                                          const std::vector<surface_model> &previousSurfaces, double grid_fraction)
 {
     initialize(nodes, cam_models);
     initializeGroundMesh(previousSurfaces, options.get(Option::MINIMAL_MESH));
     _loss.Reset(new ceres::HuberLoss(1 * M_PI / 180), ceres::TAKE_OWNERSHIP);
-    gridFilterMatchesPerImage(graph, edges_to_optimize, 0.1);
+    gridFilterMatchesPerImage(graph, edges_to_optimize, grid_fraction);
 
     for (size_t edge_id : edges_to_optimize)
     {

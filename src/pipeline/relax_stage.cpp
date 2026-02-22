@@ -27,7 +27,7 @@ RelaxStage::~RelaxStage()
 
 void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &node_ids,
                       const jk::tree::KDTree<size_t, 2> &imageGPSLocations, bool relax_all, bool disable_parallelism,
-                      const RelaxOptionSet &options)
+                      const RelaxOptionSet &options, double ground_mesh_grid_fraction)
 {
     PerformanceMeasure p("Relax init");
     spdlog::info("Initializing relax with options: {}", toString(options));
@@ -106,7 +106,8 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
             group_ids.push_back(p.second);
         }
         _groups.emplace_back();
-        _groups.back().init(graph, group_ids, imageGPSLocations, graph_connection_depth, options);
+        _groups.back().init(graph, group_ids, imageGPSLocations, graph_connection_depth, options,
+                            ground_mesh_grid_fraction);
     }
 }
 

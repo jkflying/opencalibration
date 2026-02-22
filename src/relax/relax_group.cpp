@@ -13,7 +13,7 @@ namespace opencalibration
 
 void RelaxGroup::init(const MeasurementGraph &graph, const std::vector<size_t> &node_ids,
                       const jk::tree::KDTree<size_t, 2> &imageGPSLocations, size_t graph_connection_depth,
-                      const RelaxOptionSet &relax_options)
+                      const RelaxOptionSet &relax_options, double ground_mesh_grid_fraction)
 {
     _directly_connected.clear();
     _edges_to_optimize.clear();
@@ -21,6 +21,7 @@ void RelaxGroup::init(const MeasurementGraph &graph, const std::vector<size_t> &
     _local_poses.clear();
 
     _relax_options = relax_options;
+    _ground_mesh_grid_fraction = ground_mesh_grid_fraction;
     _local_poses.reserve(node_ids.size());
 
     _nodes_to_optimize.insert(node_ids.begin(), node_ids.end());
@@ -113,7 +114,8 @@ void RelaxGroup::build_optimization_edges(const MeasurementGraph &graph,
 surface_model opencalibration::RelaxGroup::run(const MeasurementGraph &graph,
                                                const std::vector<surface_model> &previousSurfaces)
 {
-    return relax(graph, _local_poses, _camera_models, _edges_to_optimize, _relax_options, previousSurfaces);
+    return relax(graph, _local_poses, _camera_models, _edges_to_optimize, _relax_options, previousSurfaces,
+                 _ground_mesh_grid_fraction);
 }
 
 std::vector<size_t> RelaxGroup::finalize(MeasurementGraph &graph)
