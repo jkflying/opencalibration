@@ -27,10 +27,10 @@ RelaxStage::~RelaxStage()
 
 void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &node_ids,
                       const jk::tree::KDTree<size_t, 2> &imageGPSLocations, bool relax_all, bool disable_parallelism,
-                      const RelaxOptionSet &options, double ground_mesh_grid_fraction)
+                      const RelaxConfig &config)
 {
     PerformanceMeasure p("Relax init");
-    spdlog::info("Initializing relax with options: {}", toString(options));
+    spdlog::info("Initializing relax with options: {}", toString(config.options));
     _groups.clear();
 
     std::vector<size_t> actual_node_ids = node_ids;
@@ -45,8 +45,9 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
         }
     }
 
-    const bool global_params = options.hasAny({Option::FOCAL_LENGTH, Option::PRINCIPAL_POINT,
-                                               Option::LENS_DISTORTIONS_RADIAL, Option::LENS_DISTORTIONS_TANGENTIAL});
+    const bool global_params =
+        config.options.hasAny({Option::FOCAL_LENGTH, Option::PRINCIPAL_POINT, Option::LENS_DISTORTIONS_RADIAL,
+                               Option::LENS_DISTORTIONS_TANGENTIAL});
 
     const int optimal_cluster_size = global_params ? 150 : 50;
 
@@ -106,8 +107,7 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
             group_ids.push_back(p.second);
         }
         _groups.emplace_back();
-        _groups.back().init(graph, group_ids, imageGPSLocations, graph_connection_depth, options,
-                            ground_mesh_grid_fraction);
+        _groups.back().init(graph, group_ids, imageGPSLocations, graph_connection_depth, config);
     }
 }
 

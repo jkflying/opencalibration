@@ -136,4 +136,18 @@ inline std::string toString(RelaxOptionSet set)
     return oss.str();
 }
 
+struct RelaxConfig
+{
+    RelaxOptionSet options;
+    double ground_mesh_grid_fraction = 0.1;
+
+    RelaxConfig() = default;
+    RelaxConfig(std::initializer_list<Option> list) : options(list)
+    {
+    }
+    RelaxConfig(const RelaxOptionSet &opts) : options(opts) // NOLINT(google-explicit-constructor)
+    {
+    }
+};
+
 } // namespace opencalibration

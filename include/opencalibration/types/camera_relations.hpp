@@ -21,7 +21,7 @@ struct camera_relations
         HOMOGRAPHY,
         FUNDAMENTAL_MATRIX,
         UNKNOWN
-    } relationType = RelationType::HOMOGRAPHY;
+    } relationType = RelationType::UNKNOWN;
 
     std::array<decomposed_pose, 4> relative_poses;
 

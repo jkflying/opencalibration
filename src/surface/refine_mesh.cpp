@@ -815,8 +815,7 @@ size_t refineByPointDensity(MeshGraph &mesh, const std::vector<point_cloud> &poi
                         Eigen::Vector2d p0 = n0->payload.location.head<2>();
                         Eigen::Vector2d p1 = n1->payload.location.head<2>();
                         Eigen::Vector2d p2 = n2->payload.location.head<2>();
-                        double maxEdge =
-                            std::max({(p0 - p1).norm(), (p1 - p2).norm(), (p2 - p0).norm()});
+                        double maxEdge = std::max({(p0 - p1).norm(), (p1 - p2).norm(), (p2 - p0).norm()});
                         if (maxEdge < minTriangleSizeMeters)
                         {
                             skippedSmall++;

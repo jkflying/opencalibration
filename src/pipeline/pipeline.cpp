@@ -274,7 +274,6 @@ Pipeline::Transition Pipeline::mesh_refinement()
     const int maxIterations = 20;
     const double baseGridFraction = 0.1;
 
-    RelaxOptionSet options = {Option::ORIENTATION, Option::GROUND_MESH};
     if (stateRunCount() == 0)
     {
         _mesh_refinement_grid_level = 0;
@@ -296,7 +295,9 @@ Pipeline::Transition Pipeline::mesh_refinement()
 
     const double gridFraction = baseGridFraction / std::pow(2.0, _mesh_refinement_grid_level);
 
-    _relax_stage->init(_graph, {}, _imageGPSLocations, true, false, options, gridFraction);
+    RelaxConfig config{{Option::ORIENTATION, Option::GROUND_MESH}};
+    config.ground_mesh_grid_fraction = gridFraction;
+    _relax_stage->init(_graph, {}, _imageGPSLocations, true, false, config);
     fvec relax_funcs = _relax_stage->get_runners(_graph);
     run_parallel(relax_funcs, _parallelism);
     _next_relaxed_ids = _relax_stage->finalize(_graph);
@@ -384,8 +385,8 @@ Pipeline::Transition Pipeline::mesh_refinement()
         {
             if (surface.mesh.size_nodes() == 0)
                 continue;
-            totalRefined += refineByPointDensity(surface.mesh, surface.cloud, maxPointsPerTriangle,
-                                                 minDistanceVariance, 1, reducedGsd);
+            totalRefined += refineByPointDensity(surface.mesh, surface.cloud, maxPointsPerTriangle, minDistanceVariance,
+                                                 1, reducedGsd);
         }
 
         if (totalRefined == 0)
@@ -408,8 +409,8 @@ Pipeline::Transition Pipeline::mesh_refinement()
 
     _mesh_refinement_grid_level++;
     _mesh_refinement_level_triangles = 0;
-    spdlog::info("Mesh refinement advancing to grid level {} (fraction {:.4f})",
-                 _mesh_refinement_grid_level, baseGridFraction / std::pow(2.0, _mesh_refinement_grid_level));
+    spdlog::info("Mesh refinement advancing to grid level {} (fraction {:.4f})", _mesh_refinement_grid_level,
+                 baseGridFraction / std::pow(2.0, _mesh_refinement_grid_level));
     _relax_stage->setSurfaceModels(_surfaces);
     USM_DECISION_TABLE(Transition::REPEAT, );
 }

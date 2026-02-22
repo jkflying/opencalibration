@@ -256,13 +256,18 @@ void RelaxProblem::gridFilterMatchesPerImage(const MeasurementGraph &graph,
             const double intersection_score = intersection.second < 0 ? 0. : 1. / (1. + intersection.second);
             const double cos_angle = source_ray.dir.dot(dest_ray.dir);
             const double angle_score = 1.0 - cos_angle * cos_angle;
-            const double descriptor_score = 1.0 - pkg.relations->matches[inlier.match_index].distance;
+            const double descriptor_score = inlier.match_index < pkg.relations->matches.size()
+                                                ? 1.0 - pkg.relations->matches[inlier.match_index].distance
+                                                : 1.0;
             const Eigen::Vector2d src_n =
                 (inlier.pixel_1 - source_model.principle_point) / source_model.focal_length_pixels;
             const Eigen::Vector2d dst_n =
                 (inlier.pixel_2 - dest_model.principle_point) / dest_model.focal_length_pixels;
-            const Eigen::Vector3d dst_pred = pkg.relations->ransac_relation * src_n.homogeneous();
-            const double ransac_score = 1.0 / (1.0 + (dst_n - dst_pred.hnormalized()).norm());
+            const double ransac_score =
+                pkg.relations->relationType == camera_relations::RelationType::HOMOGRAPHY
+                    ? 1.0 /
+                          (1.0 + (dst_n - (pkg.relations->ransac_relation * src_n.homogeneous()).hnormalized()).norm())
+                    : 1.0;
 
             scored_indices.emplace_back(intersection_score * angle_score * descriptor_score * ransac_score, idx);
         }
