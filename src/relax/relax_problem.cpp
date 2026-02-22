@@ -243,16 +243,38 @@ void RelaxProblem::gridFilterMatchesPerImage(const MeasurementGraph &graph,
         source_filter.setResolution(grid_cell_image_fraction);
         dest_filter.setResolution(grid_cell_image_fraction);
 
-        for (const auto &inlier : edge.payload.inlier_matches)
+        std::vector<std::pair<double, size_t>> scored_indices;
+        scored_indices.reserve(edge.payload.inlier_matches.size());
+
+        for (size_t idx = 0; idx < edge.payload.inlier_matches.size(); idx++)
         {
-            // make 3D intersection, add it to `points`
+            const auto &inlier = edge.payload.inlier_matches[idx];
             ray_d source_ray = {source_rot * image_to_3d(inlier.pixel_1, source_model), *pkg.source.loc_ptr};
             ray_d dest_ray = {dest_rot * image_to_3d(inlier.pixel_2, dest_model), *pkg.dest.loc_ptr};
-            auto intersection = rayIntersection(source_ray, dest_ray);
+            const auto intersection = rayIntersection(source_ray, dest_ray);
 
-            const double score = intersection.second < 0 ? 0. : 1. / (1. + intersection.second);
+            const double intersection_score = intersection.second < 0 ? 0. : 1. / (1. + intersection.second);
+            const double cos_angle = source_ray.dir.dot(dest_ray.dir);
+            const double angle_score = 1.0 - cos_angle * cos_angle;
+            const double descriptor_score = 1.0 - pkg.relations->matches[inlier.match_index].distance;
+            const Eigen::Vector2d src_n =
+                (inlier.pixel_1 - source_model.principle_point) / source_model.focal_length_pixels;
+            const Eigen::Vector2d dst_n =
+                (inlier.pixel_2 - dest_model.principle_point) / dest_model.focal_length_pixels;
+            const Eigen::Vector3d dst_pred = pkg.relations->ransac_relation * src_n.homogeneous();
+            const double ransac_score = 1.0 / (1.0 + (dst_n - dst_pred.hnormalized()).norm());
+
+            scored_indices.emplace_back(intersection_score * angle_score * descriptor_score * ransac_score, idx);
+        }
+
+        std::sort(scored_indices.begin(), scored_indices.end(),
+                  [](const auto &a, const auto &b) { return a.first > b.first; });
+
+        for (const auto &[score, idx] : scored_indices)
+        {
             if (score > 0)
             {
+                const auto &inlier = edge.payload.inlier_matches[idx];
                 source_filter.addMeasurement(inlier.pixel_1.x() / source_model.pixels_cols,
                                              inlier.pixel_1.y() / source_model.pixels_rows, score, &inlier);
                 dest_filter.addMeasurement(inlier.pixel_2.x() / dest_model.pixels_cols,
