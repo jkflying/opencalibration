@@ -2,6 +2,7 @@
 
 #include <opencalibration/geo_coord/geo_coord.hpp>
 #include <opencalibration/ortho/color_balance.hpp>
+#include <opencalibration/pipeline/progress.hpp>
 #include <opencalibration/types/measurement_graph.hpp>
 #include <opencalibration/types/pipeline_state.hpp>
 #include <opencalibration/types/surface_model.hpp>
@@ -14,6 +15,8 @@
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -41,6 +44,11 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
         size_t images_loaded, queue_size_remaining;
         PipelineState state;
         uint64_t state_iteration;
+        std::string activity;
+        float global_fraction = 0.f;
+        float local_fraction = 0.f;
+        bool surfaces_updated = false;
+        std::optional<TileUpdate> tile_update;
     };
     using StepCompletionCallback = std::function<void(const StepCompletionInfo &)>;
 
@@ -154,6 +162,9 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
     PipelineTransition color_balance();
     PipelineTransition blend_layers();
     PipelineTransition complete();
+
+    void _emit_progress(std::string activity, float local_fraction, bool surfaces_updated = false,
+                        std::optional<TileUpdate> tile_update = std::nullopt);
 
     void rebuildGPSLocationsTree();
 

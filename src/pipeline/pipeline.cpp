@@ -28,6 +28,10 @@ using fvec = std::vector<std::function<void()>>;
 namespace
 {
 
+constexpr int MESH_REFINEMENT_MAX_ITERATIONS = 20;
+constexpr int RELAX_MAX_ITERATIONS = 5;       // initial global relax, camera parameter relax
+constexpr int FINAL_RELAX_MAX_ITERATIONS = 3; // final global relax
+
 void run_parallel(fvec &funcs, int parallelism)
 {
 #pragma omp parallel for schedule(dynamic, 1) num_threads(parallelism)
@@ -110,11 +114,86 @@ Pipeline::Transition Pipeline::runCurrentState(PipelineState currentState)
     );
     // clang-format on
 
-    StepCompletionInfo info{_next_loaded_ids,    _next_linked_ids,  _next_relaxed_ids, _surfaces,
-                            _graph.size_nodes(), _add_queue.size(), currentState,      stateRunCount()};
-    _step_callback(info);
+    float local = 1.0f;
+    switch (currentState)
+    {
+    case State::INITIAL_PROCESSING: {
+        size_t total = _graph.size_nodes() + _add_queue.size();
+        local = total > 0 ? float(_graph.size_nodes()) / float(total) : 1.f;
+        break;
+    }
+    case State::MESH_REFINEMENT:
+        local = std::min(1.f, float(stateRunCount()) / float(MESH_REFINEMENT_MAX_ITERATIONS));
+        _emit_progress(toString(currentState), local, true);
+        return t;
+    case State::INITIAL_GLOBAL_RELAX:
+        local = std::min(1.f, float(stateRunCount() + 1) / float(RELAX_MAX_ITERATIONS));
+        _emit_progress("Optimizing camera poses (iter " + std::to_string(stateRunCount() + 1) + "/" +
+                           std::to_string(RELAX_MAX_ITERATIONS + 1) + ")",
+                       local, true);
+        return t;
+    case State::CAMERA_PARAMETER_RELAX:
+        local = std::min(1.f, float(stateRunCount() + 1) / float(RELAX_MAX_ITERATIONS));
+        _emit_progress("Optimizing camera parameters (iter " + std::to_string(stateRunCount() + 1) + "/" +
+                           std::to_string(RELAX_MAX_ITERATIONS + 1) + ")",
+                       local, true);
+        return t;
+    case State::FINAL_GLOBAL_RELAX:
+        local = std::min(1.f, float(stateRunCount() + 1) / float(FINAL_RELAX_MAX_ITERATIONS));
+        _emit_progress("Final global relaxation (iter " + std::to_string(stateRunCount() + 1) + "/" +
+                           std::to_string(FINAL_RELAX_MAX_ITERATIONS + 1) + ")",
+                       local, true);
+        return t;
+    default:
+        break;
+    }
+    _emit_progress(toString(currentState), local);
 
     return t;
+}
+
+void Pipeline::_emit_progress(std::string activity, float local_fraction, bool surfaces_updated,
+                              std::optional<TileUpdate> tile_update)
+{
+    static const std::array<std::pair<PipelineState, float>, 9> stage_order = {{
+        {State::INITIAL_PROCESSING, 0.20f},
+        {State::MESH_REFINEMENT, 0.15f},
+        {State::INITIAL_GLOBAL_RELAX, 0.12f},
+        {State::CAMERA_PARAMETER_RELAX, 0.12f},
+        {State::FINAL_GLOBAL_RELAX, 0.05f},
+        {State::GENERATE_THUMBNAIL, 0.03f},
+        {State::GENERATE_LAYERS, 0.18f},
+        {State::COLOR_BALANCE, 0.02f},
+        {State::BLEND_LAYERS, 0.13f},
+    }};
+
+    PipelineState current = getState();
+    float completed_weight = 0.f;
+    float current_weight = 0.f;
+    for (const auto &[state, weight] : stage_order)
+    {
+        if (state == current)
+        {
+            current_weight = weight;
+            break;
+        }
+        completed_weight += weight;
+    }
+
+    StepCompletionInfo info{_next_loaded_ids,
+                            _next_linked_ids,
+                            _next_relaxed_ids,
+                            _surfaces,
+                            _graph.size_nodes(),
+                            _add_queue.size(),
+                            current,
+                            stateRunCount(),
+                            std::move(activity),
+                            completed_weight + current_weight * local_fraction,
+                            local_fraction,
+                            surfaces_updated,
+                            std::move(tile_update)};
+    _step_callback(info);
 }
 
 Pipeline::Transition Pipeline::initial_processing()
@@ -184,7 +263,8 @@ Pipeline::Transition Pipeline::initial_global_relax()
     _next_relaxed_ids = _relax_stage->finalize(_graph);
     _surfaces = _relax_stage->getSurfaceModels();
 
-    USM_DECISION_TABLE(Transition::REPEAT, USM_MAKE_DECISION(stateRunCount() >= 5, Transition::NEXT));
+    USM_DECISION_TABLE(Transition::REPEAT,
+                       USM_MAKE_DECISION(stateRunCount() >= RELAX_MAX_ITERATIONS, Transition::NEXT));
 }
 
 Pipeline::Transition Pipeline::camera_parameter_relax()
@@ -236,7 +316,8 @@ Pipeline::Transition Pipeline::camera_parameter_relax()
     _next_relaxed_ids = _relax_stage->finalize(_graph);
     _surfaces = _relax_stage->getSurfaceModels();
 
-    USM_DECISION_TABLE(Transition::REPEAT, USM_MAKE_DECISION(stateRunCount() >= 5, Transition::NEXT));
+    USM_DECISION_TABLE(Transition::REPEAT,
+                       USM_MAKE_DECISION(stateRunCount() >= RELAX_MAX_ITERATIONS, Transition::NEXT));
 }
 
 Pipeline::Transition Pipeline::final_global_relax()
@@ -247,7 +328,7 @@ Pipeline::Transition Pipeline::final_global_relax()
         USM_DECISION_TABLE(Transition::NEXT, USM_MAKE_DECISION(_skip_final_global_relax, Transition::NEXT));
     }
 
-    const bool lastIteration = stateRunCount() >= 3;
+    const bool lastIteration = stateRunCount() >= FINAL_RELAX_MAX_ITERATIONS;
 
     _relax_stage->init(_graph, {}, _imageGPSLocations, true, lastIteration, {Option::ORIENTATION, Option::GROUND_MESH});
 
@@ -256,7 +337,8 @@ Pipeline::Transition Pipeline::final_global_relax()
     _next_relaxed_ids = _relax_stage->finalize(_graph);
     _surfaces = _relax_stage->getSurfaceModels();
 
-    USM_DECISION_TABLE(Transition::REPEAT, USM_MAKE_DECISION(stateRunCount() >= 3, Transition::NEXT));
+    USM_DECISION_TABLE(Transition::REPEAT,
+                       USM_MAKE_DECISION(stateRunCount() >= FINAL_RELAX_MAX_ITERATIONS, Transition::NEXT));
 }
 
 Pipeline::Transition Pipeline::mesh_refinement()
@@ -271,7 +353,7 @@ Pipeline::Transition Pipeline::mesh_refinement()
 
     const size_t maxPointsPerTriangle = 20;
     const double varianceGsdMultiplier = 2.0;
-    const int maxIterations = 20;
+    const int maxIterations = MESH_REFINEMENT_MAX_ITERATIONS;
     const double baseGridFraction = 0.1;
 
     if (stateRunCount() == 0)
@@ -298,6 +380,7 @@ Pipeline::Transition Pipeline::mesh_refinement()
     RelaxConfig config{{Option::ORIENTATION, Option::GROUND_MESH}};
     config.ground_mesh_grid_fraction = gridFraction;
     _relax_stage->init(_graph, {}, _imageGPSLocations, true, false, config);
+
     fvec relax_funcs = _relax_stage->get_runners(_graph);
     run_parallel(relax_funcs, _parallelism);
     _next_relaxed_ids = _relax_stage->finalize(_graph);
@@ -428,6 +511,8 @@ Pipeline::Transition Pipeline::generate_thumbnail()
         USM_DECISION_TABLE(Transition::NEXT, USM_MAKE_DECISION(_surfaces.empty(), Transition::NEXT));
     }
 
+    _emit_progress("Generating preview thumbnail", 0.f);
+
     auto thumbnail = orthomosaic::generateOrthomosaic(_surfaces, _graph);
 
     if (!_thumbnail_filename.empty())
@@ -436,6 +521,8 @@ Pipeline::Transition Pipeline::generate_thumbnail()
         cv::imwrite(_source_filename, rasterToCv(thumbnail.cameraUUID));
     if (!_overlap_filename.empty())
         cv::imwrite(_overlap_filename, rasterToCv(thumbnail.overlap));
+
+    _emit_progress("Generating preview thumbnail", 1.f, true);
 
     USM_DECISION_TABLE(Transition::NEXT, );
 }
@@ -460,9 +547,14 @@ Pipeline::Transition Pipeline::generate_layers()
     orthomosaic::OrthoMosaicConfig config;
     config.max_output_megapixels = _orthomosaic_max_megapixels;
 
+    TileProgressCallback tile_cb = [this](const TileUpdate &tu) {
+        float local = float(tu.tile_index) / float(tu.total_tiles);
+        _emit_progress("Generating layers", local, false, tu);
+    };
+
     _correspondences =
         orthomosaic::generateLayeredGeoTIFF(_surfaces, _graph, _coordinate_system, _intermediate_layers_path,
-                                            _intermediate_cameras_path, _intermediate_dsm_path, config);
+                                            _intermediate_cameras_path, _intermediate_dsm_path, config, tile_cb);
 
     USM_DECISION_TABLE(Transition::NEXT, );
 }
@@ -473,6 +565,8 @@ Pipeline::Transition Pipeline::color_balance()
     {
         USM_DECISION_TABLE(Transition::NEXT, USM_MAKE_DECISION(!_generate_geotiff, Transition::NEXT));
     }
+
+    _emit_progress("Solving color balance", 0.f);
 
     ankerl::unordered_dense::map<size_t, orthomosaic::CameraPosition> camera_positions;
     for (const auto &corr : _correspondences)
@@ -493,6 +587,8 @@ Pipeline::Transition Pipeline::color_balance()
     _color_balance_result = orthomosaic::solveColorBalance(_correspondences, camera_positions);
     _correspondences.clear();
 
+    _emit_progress("Solving color balance", 1.f);
+
     USM_DECISION_TABLE(Transition::NEXT, );
 }
 
@@ -506,8 +602,14 @@ Pipeline::Transition Pipeline::blend_layers()
     orthomosaic::OrthoMosaicConfig config;
     config.max_output_megapixels = _orthomosaic_max_megapixels;
 
+    TileProgressCallback tile_cb = [this](const TileUpdate &tu) {
+        float local = float(tu.tile_index) / float(tu.total_tiles);
+        _emit_progress("Blending layers", local, false, tu);
+    };
+
     orthomosaic::blendLayeredGeoTIFF(_intermediate_layers_path, _intermediate_cameras_path, _intermediate_dsm_path,
-                                     _geotiff_filename, _color_balance_result, _graph, _coordinate_system, config);
+                                     _geotiff_filename, _color_balance_result, _graph, _coordinate_system, config,
+                                     tile_cb);
 
     _color_balance_result = {};
 

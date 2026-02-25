@@ -1481,7 +1481,8 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
                                                         const MeasurementGraph &graph, const GeoCoord &coord_system,
                                                         const std::string &layers_path, const std::string &cameras_path,
                                                         const std::string &dsm_output_path,
-                                                        const OrthoMosaicConfig &config)
+                                                        const OrthoMosaicConfig &config,
+                                                        TileProgressCallback tile_progress)
 {
     spdlog::info("Pass 1: Generating layered GeoTIFF: {}", layers_path);
     PerformanceMeasure p("Ortho stage 1 - setup");
@@ -1589,11 +1590,67 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
                            all_correspondences, config.correspondence_subsample, config.correspondence_kernel_radius,
                            correspondences_mutex);
 
+        int x_off = tile_x * tile_size;
+        int y_off = tile_y * tile_size;
+
+        if (tile_progress)
+        {
+            int tw = tile_buf.width;
+            int th = tile_buf.height;
+            int scale = std::max(1, (std::max(tw, th) + 127) / 128);
+            int thumb_w = (tw + scale - 1) / scale;
+            int thumb_h = (th + scale - 1) / scale;
+
+            RGBRaster thumbnail(thumb_h, thumb_w, 3);
+            thumbnail.layers[0].band = Band::BLUE;
+            thumbnail.layers[1].band = Band::GREEN;
+            thumbnail.layers[2].band = Band::RED;
+            thumbnail.layers[0].pixels.setZero();
+            thumbnail.layers[1].pixels.setZero();
+            thumbnail.layers[2].pixels.setZero();
+
+            for (int ty = 0; ty < thumb_h; ty++)
+            {
+                for (int tx = 0; tx < thumb_w; tx++)
+                {
+                    int src_row = std::min(ty * scale, th - 1);
+                    int src_col = std::min(tx * scale, tw - 1);
+                    float best_weight = -1.f;
+                    cv::Vec3b best_color(0, 0, 0);
+                    for (int layer = 0; layer < tile_buf.num_layers; layer++)
+                    {
+                        const auto &sample = tile_buf.at(layer, src_row, src_col);
+                        if (sample.valid && sample.weight > best_weight)
+                        {
+                            best_weight = sample.weight;
+                            best_color = sample.color_bgr;
+                        }
+                    }
+                    if (best_weight >= 0.f)
+                    {
+                        thumbnail.layers[0].pixels(ty, tx) = best_color[0];
+                        thumbnail.layers[1].pixels(ty, tx) = best_color[1];
+                        thumbnail.layers[2].pixels(ty, tx) = best_color[2];
+                    }
+                }
+            }
+
+            TileUpdate tu;
+            tu.pixel_x = x_off;
+            tu.pixel_y = y_off;
+            tu.pixel_w = tw;
+            tu.pixel_h = th;
+            tu.total_output_width = width;
+            tu.total_output_height = height;
+            tu.tile_index = completed_tiles + 1;
+            tu.total_tiles = total_tiles;
+            tu.thumbnail = std::move(thumbnail);
+            tile_progress(tu);
+        }
+
         if (write_future.valid())
             write_future.wait();
 
-        int x_off = tile_x * tile_size;
-        int y_off = tile_y * tile_size;
         auto tile_buf_ptr = std::make_shared<LayeredTileBuffer>(std::move(tile_buf));
         auto dsm_tile_ptr = std::make_shared<std::vector<float>>(std::move(dsm_tile));
         write_future = std::async(std::launch::async, [&, tile_buf_ptr, dsm_tile_ptr, x_off, y_off, tile_x, tile_y] {
@@ -1642,7 +1699,8 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
 
 void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &cameras_path, const std::string &dsm_path,
                          const std::string &output_path, const ColorBalanceResult &color_balance,
-                         const MeasurementGraph &graph, const GeoCoord &coord_system, const OrthoMosaicConfig &config)
+                         const MeasurementGraph &graph, const GeoCoord &coord_system, const OrthoMosaicConfig &config,
+                         TileProgressCallback tile_progress)
 {
     spdlog::info("Pass 2: Blending layered GeoTIFF to: {}", output_path);
 
@@ -1901,6 +1959,8 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
 
             cv::Mat blended = laplacianBlend(lab_layers, weight_maps, config.pyramid_levels);
 
+            int done = ++completed_tiles;
+
             if (!blended.empty())
             {
                 // Convert BGRA to RGBA for the output GeoTIFF
@@ -1933,10 +1993,53 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
                 {
                     std::lock_guard<std::mutex> lock(gdal_write_mutex);
                     writeTileToGeoTIFF(output_ds.get(), x_offset, y_offset, tw, th, rgba_buffer);
+
+                    if (tile_progress)
+                    {
+                        int scale = std::max(1, (std::max(tw, th) + 127) / 128);
+                        int thumb_w = (tw + scale - 1) / scale;
+                        int thumb_h = (th + scale - 1) / scale;
+
+                        RGBRaster thumbnail(thumb_h, thumb_w, 3);
+                        thumbnail.layers[0].band = Band::BLUE;
+                        thumbnail.layers[1].band = Band::GREEN;
+                        thumbnail.layers[2].band = Band::RED;
+                        thumbnail.layers[0].pixels.setZero();
+                        thumbnail.layers[1].pixels.setZero();
+                        thumbnail.layers[2].pixels.setZero();
+
+                        for (int ty = 0; ty < thumb_h; ty++)
+                        {
+                            for (int tx = 0; tx < thumb_w; tx++)
+                            {
+                                int src = std::min(ty * scale, th - 1) * tw + std::min(tx * scale, tw - 1);
+                                if (rgba_buffer[static_cast<size_t>(src) * 4 + 3] > 0)
+                                {
+                                    thumbnail.layers[0].pixels(ty, tx) =
+                                        rgba_buffer[static_cast<size_t>(src) * 4 + 2]; // B from RGBA
+                                    thumbnail.layers[1].pixels(ty, tx) =
+                                        rgba_buffer[static_cast<size_t>(src) * 4 + 1]; // G
+                                    thumbnail.layers[2].pixels(ty, tx) =
+                                        rgba_buffer[static_cast<size_t>(src) * 4 + 0]; // R
+                                }
+                            }
+                        }
+
+                        TileUpdate tu;
+                        tu.pixel_x = x_offset;
+                        tu.pixel_y = y_offset;
+                        tu.pixel_w = tw;
+                        tu.pixel_h = th;
+                        tu.total_output_width = width;
+                        tu.total_output_height = height;
+                        tu.tile_index = done;
+                        tu.total_tiles = total_tiles;
+                        tu.thumbnail = std::move(thumbnail);
+                        tile_progress(tu);
+                    }
                 }
             }
 
-            int done = ++completed_tiles;
             auto now = std::chrono::steady_clock::now();
             auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - start_time).count();
             long long prev_log = last_log_seconds.load(std::memory_order_relaxed);

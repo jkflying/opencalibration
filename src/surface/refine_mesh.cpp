@@ -12,7 +12,6 @@ namespace opencalibration
 namespace
 {
 
-// Helper to get edge length squared
 double edgeLengthSquared(const MeshGraph &mesh, size_t edgeId)
 {
     const auto *edge = mesh.getEdge(edgeId);
@@ -27,10 +26,8 @@ double edgeLengthSquared(const MeshGraph &mesh, size_t edgeId)
     return (srcNode->payload.location - dstNode->payload.location).squaredNorm();
 }
 
-// Helper to find edge ID between two nodes (checking both directions)
 size_t findEdgeBetween(const MeshGraph &mesh, size_t node1, size_t node2)
 {
-    // Check both directions since edges are directed
     const auto *node = mesh.getNode(node1);
     if (node)
     {
@@ -47,7 +44,6 @@ size_t findEdgeBetween(const MeshGraph &mesh, size_t node1, size_t node2)
     return 0;
 }
 
-// Helper to check if a point is inside a triangle (2D, ignoring Z)
 bool pointInTriangle2D(double px, double py, const Eigen::Vector3d &v0, const Eigen::Vector3d &v1,
                        const Eigen::Vector3d &v2)
 {
@@ -65,7 +61,6 @@ bool pointInTriangle2D(double px, double py, const Eigen::Vector3d &v0, const Ei
     return !(hasNeg && hasPos);
 }
 
-// Find which side of an edge a triangle is on, given one of its vertices (the opposite corner)
 int findTriangleSide(const MeshGraph &mesh, size_t edgeId, size_t oppositeVertex)
 {
     const auto *edge = mesh.getEdge(edgeId);
@@ -77,6 +72,37 @@ int findTriangleSide(const MeshGraph &mesh, size_t edgeId, size_t oppositeVertex
     if (edge->payload.triangleOppositeNodes[1] == oppositeVertex)
         return 1;
     return -1;
+}
+
+// Search for a triangle containing (x,y) among triangles adjacent to any of the given vertices.
+// O(degree) instead of O(E) — original vertices survive bisection so the centroid of a split
+// triangle always lands in a sub-triangle incident to one of the original vertices.
+TriangleId findTriangleNearVertices(const MeshGraph &mesh, const std::array<size_t, 3> &vertices, double x, double y)
+{
+    for (size_t vtxId : vertices)
+    {
+        const auto *vtxNode = mesh.getNode(vtxId);
+        if (!vtxNode)
+            continue;
+        for (size_t eid : vtxNode->getEdges())
+        {
+            for (int side = 0; side < 2; side++)
+            {
+                TriangleId candidate{eid, side};
+                auto cverts = getTriangleVertices(mesh, candidate);
+                if (cverts[0] == 0 && cverts[1] == 0 && cverts[2] == 0)
+                    continue;
+                const auto *cn0 = mesh.getNode(cverts[0]);
+                const auto *cn1 = mesh.getNode(cverts[1]);
+                const auto *cn2 = mesh.getNode(cverts[2]);
+                if (!cn0 || !cn1 || !cn2)
+                    continue;
+                if (pointInTriangle2D(x, y, cn0->payload.location, cn1->payload.location, cn2->payload.location))
+                    return candidate;
+            }
+        }
+    }
+    return {0, 0};
 }
 
 } // anonymous namespace
@@ -100,21 +126,15 @@ size_t findLongestEdge(const MeshGraph &mesh, const TriangleId &tri)
     if (vertices[0] == 0 && vertices[1] == 0 && vertices[2] == 0)
         return 0;
 
-    // Find edges between all pairs of vertices
     std::array<std::pair<size_t, double>, 3> edges;
-
-    // Edge 0: vertices[0] - vertices[1] (the edge that defines the triangle)
     edges[0] = {tri.edgeId, edgeLengthSquared(mesh, tri.edgeId)};
 
-    // Edge 1: vertices[1] - vertices[2]
     size_t e1 = findEdgeBetween(mesh, vertices[1], vertices[2]);
     edges[1] = {e1, e1 ? edgeLengthSquared(mesh, e1) : 0};
 
-    // Edge 2: vertices[2] - vertices[0]
     size_t e2 = findEdgeBetween(mesh, vertices[2], vertices[0]);
     edges[2] = {e2, e2 ? edgeLengthSquared(mesh, e2) : 0};
 
-    // Find the longest
     size_t longestIdx = 0;
     for (size_t i = 1; i < 3; i++)
     {
@@ -129,13 +149,11 @@ size_t findLongestEdge(const MeshGraph &mesh, const TriangleId &tri)
 
 TriangleId findTriangleContainingPoint(const MeshGraph &mesh, double x, double y)
 {
-    // Iterate through all edges and check their triangles
     for (auto it = mesh.cedgebegin(); it != mesh.cedgeend(); ++it)
     {
         const auto &edge = it->second;
         size_t edgeId = it->first;
 
-        // Check side 0
         auto verts = getTriangleVertices(mesh, {edgeId, 0});
         if (verts[0] != 0 || verts[1] != 0 || verts[2] != 0)
         {
@@ -151,7 +169,6 @@ TriangleId findTriangleContainingPoint(const MeshGraph &mesh, double x, double y
             }
         }
 
-        // Check side 1 if not a border edge
         if (!edge.payload.border)
         {
             verts = getTriangleVertices(mesh, {edgeId, 1});
@@ -190,22 +207,18 @@ BisectionResult bisectEdge(MeshGraph &mesh, size_t edgeId)
     if (!srcNode || !dstNode)
         return result;
 
-    // Create midpoint vertex
     Eigen::Vector3d midpoint = (srcNode->payload.location + dstNode->payload.location) / 2.0;
     size_t midId = mesh.addNode(MeshNode{midpoint});
     result.newVertexId = midId;
 
-    // Get the opposite corners for both triangles
     size_t opp0 = edge->payload.triangleOppositeNodes[0];
     size_t opp1 = edge->payload.triangleOppositeNodes[1];
     bool isBorder = edge->payload.border;
 
-    // Find the other edges of the triangles before we modify anything
-    // For triangle 0 (src, dst, opp0): edges are src-opp0 and dst-opp0
+    // Capture adjacent edges before removing the bisected edge
     size_t edgeSrcOpp0 = findEdgeBetween(mesh, srcId, opp0);
     size_t edgeDstOpp0 = findEdgeBetween(mesh, dstId, opp0);
 
-    // For triangle 1 (src, dst, opp1): edges are src-opp1 and dst-opp1
     size_t edgeSrcOpp1 = 0, edgeDstOpp1 = 0;
     if (!isBorder && opp1 != 0)
     {
@@ -213,29 +226,22 @@ BisectionResult bisectEdge(MeshGraph &mesh, size_t edgeId)
         edgeDstOpp1 = findEdgeBetween(mesh, dstId, opp1);
     }
 
-    // Remove the original edge
     mesh.removeEdge(edgeId);
 
-    // Create two new edges to replace the bisected edge
-    // src -> mid
     MeshEdge srcMidEdge;
     srcMidEdge.border = isBorder;
     size_t srcMidId = mesh.addEdge(srcMidEdge, srcId, midId);
     result.splitEdgeIds.push_back(srcMidId);
 
-    // mid -> dst
     MeshEdge midDstEdge;
     midDstEdge.border = isBorder;
     size_t midDstId = mesh.addEdge(midDstEdge, midId, dstId);
     result.splitEdgeIds.push_back(midDstId);
 
-    // Create edges from midpoint to opposite corners
-    // mid -> opp0
     MeshEdge midOpp0Edge;
     midOpp0Edge.border = false;
     size_t midOpp0Id = mesh.addEdge(midOpp0Edge, midId, opp0);
 
-    // mid -> opp1 (if not border)
     size_t midOpp1Id = 0;
     if (!isBorder && opp1 != 0)
     {
@@ -244,14 +250,11 @@ BisectionResult bisectEdge(MeshGraph &mesh, size_t edgeId)
         midOpp1Id = mesh.addEdge(midOpp1Edge, midId, opp1);
     }
 
-    // Now update all the triangle connectivity
-    // We now have 4 triangles (or 2 if border):
+    // 4 triangles after bisection (2 if border):
     // Triangle A: src, mid, opp0
     // Triangle B: mid, dst, opp0
     // Triangle C: src, mid, opp1 (if not border)
     // Triangle D: mid, dst, opp1 (if not border)
-
-    // Update srcMid edge: triangles A (opp0 side) and C (opp1 side)
     auto *srcMidEdgePtr = mesh.getEdge(srcMidId);
     srcMidEdgePtr->payload.triangleOppositeNodes[0] = opp0;
     if (!isBorder && opp1 != 0)
@@ -259,7 +262,6 @@ BisectionResult bisectEdge(MeshGraph &mesh, size_t edgeId)
         srcMidEdgePtr->payload.triangleOppositeNodes[1] = opp1;
     }
 
-    // Update midDst edge: triangles B (opp0 side) and D (opp1 side)
     auto *midDstEdgePtr = mesh.getEdge(midDstId);
     midDstEdgePtr->payload.triangleOppositeNodes[0] = opp0;
     if (!isBorder && opp1 != 0)
@@ -267,12 +269,10 @@ BisectionResult bisectEdge(MeshGraph &mesh, size_t edgeId)
         midDstEdgePtr->payload.triangleOppositeNodes[1] = opp1;
     }
 
-    // Update midOpp0 edge: triangles A (src side) and B (dst side)
     auto *midOpp0EdgePtr = mesh.getEdge(midOpp0Id);
     midOpp0EdgePtr->payload.triangleOppositeNodes[0] = srcId;
     midOpp0EdgePtr->payload.triangleOppositeNodes[1] = dstId;
 
-    // Update midOpp1 edge: triangles C (src side) and D (dst side)
     if (!isBorder && opp1 != 0 && midOpp1Id != 0)
     {
         auto *midOpp1EdgePtr = mesh.getEdge(midOpp1Id);
@@ -280,9 +280,6 @@ BisectionResult bisectEdge(MeshGraph &mesh, size_t edgeId)
         midOpp1EdgePtr->payload.triangleOppositeNodes[1] = dstId;
     }
 
-    // Update existing edges that need their opposite corners updated
-    // edgeSrcOpp0: was part of (src, dst, opp0), now part of (src, mid, opp0)
-    // Its opposite corner that was dst is now mid
     if (edgeSrcOpp0)
     {
         auto *e = mesh.getEdge(edgeSrcOpp0);
@@ -299,8 +296,6 @@ BisectionResult bisectEdge(MeshGraph &mesh, size_t edgeId)
         }
     }
 
-    // edgeDstOpp0: was part of (src, dst, opp0), now part of (mid, dst, opp0)
-    // Its opposite corner that was src is now mid
     if (edgeDstOpp0)
     {
         auto *e = mesh.getEdge(edgeDstOpp0);
@@ -319,7 +314,6 @@ BisectionResult bisectEdge(MeshGraph &mesh, size_t edgeId)
 
     if (!isBorder && opp1 != 0)
     {
-        // edgeSrcOpp1: was part of (src, dst, opp1), now part of (src, mid, opp1)
         if (edgeSrcOpp1)
         {
             auto *e = mesh.getEdge(edgeSrcOpp1);
@@ -336,7 +330,6 @@ BisectionResult bisectEdge(MeshGraph &mesh, size_t edgeId)
             }
         }
 
-        // edgeDstOpp1: was part of (src, dst, opp1), now part of (mid, dst, opp1)
         if (edgeDstOpp1)
         {
             auto *e = mesh.getEdge(edgeDstOpp1);
@@ -366,7 +359,6 @@ size_t refineTriangle(MeshGraph &mesh, const TriangleId &tri, int maxDepth)
         return 0;
     }
 
-    // Verify triangle exists
     auto vertices = getTriangleVertices(mesh, tri);
     if (vertices[0] == 0 && vertices[1] == 0 && vertices[2] == 0)
     {
@@ -374,7 +366,6 @@ size_t refineTriangle(MeshGraph &mesh, const TriangleId &tri, int maxDepth)
         return 0;
     }
 
-    // Find the longest edge (hypotenuse)
     size_t longestEdgeId = findLongestEdge(mesh, tri);
     if (longestEdgeId == 0)
     {
@@ -387,13 +378,11 @@ size_t refineTriangle(MeshGraph &mesh, const TriangleId &tri, int maxDepth)
     if (!longestEdge)
         return 0;
 
-    // Check if we need to refine the neighbor first
-    // This ensures conforming refinement
+    // conforming refinement: bisect at the longest edge, refining the neighbor first if needed
     size_t trianglesCreated = 0;
 
     if (!longestEdge->payload.border)
     {
-        // Find which side of the longest edge our triangle is on
         int ourSide = -1;
         for (int v = 0; v < 3; v++)
         {
@@ -407,20 +396,15 @@ size_t refineTriangle(MeshGraph &mesh, const TriangleId &tri, int maxDepth)
 
         if (ourSide >= 0)
         {
-            // Get the neighbor triangle
             TriangleId neighbor = {longestEdgeId, 1 - ourSide};
 
-            // Check if neighbor's longest edge is the same as ours
             size_t neighborLongest = findLongestEdge(mesh, neighbor);
             if (neighborLongest != 0 && neighborLongest != longestEdgeId)
             {
-                // Neighbor needs to be refined first
                 trianglesCreated += refineTriangle(mesh, neighbor, maxDepth - 1);
 
-                // After refining neighbor, our triangle may have changed
-                // We need to re-find ourselves and continue
-                // The edge we wanted to bisect may no longer exist
-                // Try to find a triangle at our center point
+                // The recursive refinement may have bisected our longest edge,
+                // invalidating this triangle — re-locate via original vertices
                 Eigen::Vector3d center = Eigen::Vector3d::Zero();
                 for (int i = 0; i < 3; i++)
                 {
@@ -430,7 +414,7 @@ size_t refineTriangle(MeshGraph &mesh, const TriangleId &tri, int maxDepth)
                 }
                 center /= 3.0;
 
-                TriangleId newTri = findTriangleContainingPoint(mesh, center.x(), center.y());
+                TriangleId newTri = findTriangleNearVertices(mesh, vertices, center.x(), center.y());
                 if (newTri.edgeId != 0)
                 {
                     return trianglesCreated + refineTriangle(mesh, newTri, maxDepth - 1);
@@ -440,7 +424,6 @@ size_t refineTriangle(MeshGraph &mesh, const TriangleId &tri, int maxDepth)
         }
     }
 
-    // Now bisect the longest edge
     bool wasBorder = longestEdge->payload.border;
     auto result = bisectEdge(mesh, longestEdgeId);
     if (result.newVertexId != 0)
@@ -481,7 +464,6 @@ size_t refineWhere(MeshGraph &mesh, std::function<bool(double x, double y, doubl
 
     for (int iter = 0; iter < maxIterations; iter++)
     {
-        // Collect triangles to refine (using a set to avoid duplicates)
         ankerl::unordered_dense::set<size_t> visitedEdges;
         std::vector<TriangleId> toRefine;
 
@@ -494,7 +476,6 @@ size_t refineWhere(MeshGraph &mesh, std::function<bool(double x, double y, doubl
 
             const auto &edge = it->second;
 
-            // Check side 0
             {
                 TriangleId tri{edgeId, 0};
                 auto verts = getTriangleVertices(mesh, tri);
@@ -522,7 +503,6 @@ size_t refineWhere(MeshGraph &mesh, std::function<bool(double x, double y, doubl
                 }
             }
 
-            // Check side 1 if not border
             if (!edge.payload.border)
             {
                 TriangleId tri{edgeId, 1};
@@ -619,19 +599,18 @@ TriangleId TriangleLocator::find(double x, double y) const
     {
         auto verts = getTriangleVertices(_mesh, current);
         if (verts[0] == 0 && verts[1] == 0 && verts[2] == 0)
-            break;
+            return {0, 0};
 
         const auto *n0 = _mesh.getNode(verts[0]);
         const auto *n1 = _mesh.getNode(verts[1]);
         const auto *n2 = _mesh.getNode(verts[2]);
         if (!n0 || !n1 || !n2)
-            break;
+            return {0, 0};
 
         const auto &p0 = n0->payload.location;
         const auto &p1 = n1->payload.location;
         const auto &p2 = n2->payload.location;
 
-        // Half-plane sign tests
         auto sign = [](double px, double py, double ax, double ay, double bx, double by) {
             return (px - bx) * (ay - by) - (ax - bx) * (py - by);
         };
@@ -644,7 +623,7 @@ TriangleId TriangleLocator::find(double x, double y) const
         bool hasPos = (d0 > 0) || (d1 > 0) || (d2 > 0);
 
         if (!(hasNeg && hasPos))
-            return current; // Point is inside this triangle
+            return current;
 
         // Determine expected sign (majority vote) and pick the most-violated edge
         int negCount = (d0 < 0) + (d1 < 0) + (d2 < 0);
@@ -654,6 +633,12 @@ TriangleId TriangleLocator::find(double x, double y) const
         int worstEdge = -1;
 
         auto checkEdge = [&](int edgeIdx, double d) {
+            if (d == 0)
+            {
+                worstVal = 0.000001;
+                worstEdge = edgeIdx;
+                return;
+            }
             if ((d > 0) != expectPositive && std::abs(d) > worstVal)
             {
                 worstVal = std::abs(d);
@@ -665,7 +650,7 @@ TriangleId TriangleLocator::find(double x, double y) const
         checkEdge(2, d2);
 
         if (worstEdge < 0)
-            break;
+            return {0, 0};
 
         // Cross the worst edge to the neighboring triangle
         // Edge 0: verts[0]-verts[1] = the defining edge of current TriangleId
@@ -675,7 +660,6 @@ TriangleId TriangleLocator::find(double x, double y) const
 
         if (worstEdge == 0)
         {
-            // Cross the defining edge to the other side
             const auto *edge = _mesh.getEdge(current.edgeId);
             if (edge && !edge->payload.border)
             {
@@ -703,7 +687,7 @@ TriangleId TriangleLocator::find(double x, double y) const
         }
 
         if (neighbor.edgeId == 0)
-            break; // Hit border or invalid edge
+            return {0, 0}; // Hit border or invalid edge
 
         current = neighbor;
     }
@@ -890,15 +874,11 @@ surface_model mergeSurfaceModels(const std::vector<surface_model> &surfaces)
         return surfaces[0];
     }
 
-    // Use the first surface's mesh as the base structure
     surface_model result;
     result.mesh = surfaces[0].mesh;
 
-    // For each surface, count points per vertex (sum of points in adjacent triangles)
-    // vertex_id -> (weighted_position_sum, total_weight)
     ankerl::unordered_dense::map<size_t, std::pair<Eigen::Vector3d, double>> vertexWeights;
 
-    // Initialize with zero weights
     for (auto it = result.mesh.cnodebegin(); it != result.mesh.cnodeend(); ++it)
     {
         vertexWeights[it->first] = {Eigen::Vector3d::Zero(), 0.0};
@@ -917,10 +897,8 @@ surface_model mergeSurfaceModels(const std::vector<surface_model> &surfaces)
             continue;
         }
 
-        // Count points per triangle for this surface
         auto triangleCounts = countPointsPerTriangle(surf.mesh, surf.cloud);
 
-        // For each vertex, accumulate weights from adjacent triangles
         ankerl::unordered_dense::map<size_t, size_t> vertexPointCounts;
 
         for (const auto &[tri, triStats] : triangleCounts)
@@ -931,7 +909,6 @@ surface_model mergeSurfaceModels(const std::vector<surface_model> &surfaces)
                 continue;
             }
 
-            // Add this triangle's point count to each of its vertices
             for (int i = 0; i < 3; i++)
             {
                 vertexPointCounts[verts[i]] += triStats.count;
@@ -969,7 +946,6 @@ surface_model mergeSurfaceModels(const std::vector<surface_model> &surfaces)
         }
     }
 
-    // Apply weighted average positions to result mesh
     for (auto nodeIt = result.mesh.nodebegin(); nodeIt != result.mesh.nodeend(); ++nodeIt)
     {
         size_t nodeId = nodeIt->first;

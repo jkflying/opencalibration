@@ -12,9 +12,12 @@
 
 #include <omp.h>
 
+#include <iomanip>
+
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <string>
 #include <thread>
 
 using namespace opencalibration;
@@ -203,37 +206,26 @@ int main(int argc, char *argv[])
     }
 
     p.set_callback([](const Pipeline::StepCompletionInfo &info) {
-        std::cout << Pipeline::toString(info.state);
-        size_t total_relaxed = 0;
-        for (const auto &ids_group : info.relaxed_ids.get())
-            total_relaxed += ids_group.size();
+        static std::optional<PipelineState> previous_state;
 
-        switch (info.state)
+        if (!info.activity.empty())
         {
-        case PipelineState::INITIAL_PROCESSING: {
-            std::cout << ": " << info.images_loaded << " / " << (info.images_loaded + info.queue_size_remaining) << " "
-                      << " loaded: " << info.loaded_ids.get().size() << " linked: " << info.linked_ids.get().size()
-                      << " relaxed: " << total_relaxed << std::endl;
-            break;
+            if (previous_state && *previous_state != info.state)
+                std::cout << "\n";
+            previous_state = info.state;
+
+            std::string local_str = std::to_string(static_cast<int>(info.local_fraction * 100.f)) + "%";
+            std::string total_str = "total " + std::to_string(static_cast<int>(info.global_fraction * 100.f)) + "%";
+            std::cout << "\r" << std::left << std::setw(42) << info.activity << std::right << std::setw(4) << local_str
+                      << "      " << total_str << std::flush;
         }
-        case PipelineState::INITIAL_GLOBAL_RELAX:
-        case PipelineState::CAMERA_PARAMETER_RELAX:
-        case PipelineState::FINAL_GLOBAL_RELAX: {
-            std::cout << ": iteration: " << info.state_iteration << " relaxed: " << total_relaxed << std::endl;
-            break;
-        }
-        case PipelineState::MESH_REFINEMENT: {
-            std::cout << ": refining mesh based on point density" << std::endl;
-            break;
-        }
-        case PipelineState::GENERATE_THUMBNAIL:
-        case PipelineState::GENERATE_LAYERS:
-        case PipelineState::COLOR_BALANCE:
-        case PipelineState::BLEND_LAYERS:
-        case PipelineState::COMPLETE: {
-            std::cout << std::endl;
-            break;
-        }
+        else
+        {
+            if (previous_state)
+                std::cout << "\n";
+            previous_state = std::nullopt;
+
+            std::cout << Pipeline::toString(info.state) << std::endl;
         }
     });
 
