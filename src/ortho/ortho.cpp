@@ -1951,7 +1951,7 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
                     for (int local_col = 0; local_col < tw; local_col++)
                     {
                         float d = boundary_dist.at<float>(local_row, local_col);
-                        float falloff = 1.0f / (1.0f + std::exp(steepness * d));
+                        float falloff = 2.0f / (1.0f + std::exp(steepness * d));
                         weight_maps[layer].at<float>(local_row, local_col) *= falloff;
                     }
                 }
