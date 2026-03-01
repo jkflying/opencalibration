@@ -44,9 +44,16 @@ std::optional<image> extract_image(const std::string &path)
             return std::nullopt;
         }
 
+
+        cv::Mat lab;
+        cv::cvtColor(image, lab, cv::COLOR_BGR2Lab);
+
         const double scale = 50 / std::sqrt(image.size().area());
+        cv::Mat thumbnail_lab;
+        cv::resize(lab, thumbnail_lab, cv::Size(0, 0), scale, scale, cv::INTER_AREA);
+
         cv::Mat thumbnail;
-        cv::resize(image, thumbnail, cv::Size(0, 0), scale, scale, cv::INTER_AREA);
+        cv::cvtColor(thumbnail_lab, thumbnail, cv::COLOR_Lab2BGR);
 
         img.thumbnail = RasterToRGB(cvToRaster(thumbnail));
 
