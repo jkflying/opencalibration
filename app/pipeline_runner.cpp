@@ -205,19 +205,53 @@ int main(int argc, char *argv[])
         }
     }
 
-    p.set_callback([](const Pipeline::StepCompletionInfo &info) {
+    auto format_time = [](std::chrono::steady_clock::duration d) {
+        auto total_seconds = std::chrono::duration_cast<std::chrono::seconds>(d).count();
+        if (total_seconds < 60)
+        {
+            return std::to_string(total_seconds) + "s";
+        }
+        else
+        {
+            auto mins = total_seconds / 60;
+            auto secs = total_seconds % 60;
+            std::stringstream ss;
+            ss << mins << "m" << std::setfill('0') << std::setw(2) << secs << "s";
+            return ss.str();
+        }
+    };
+
+    auto total_start_time = std::chrono::steady_clock::now();
+
+    p.set_callback([total_start_time, format_time](const Pipeline::StepCompletionInfo &info) {
         static std::optional<PipelineState> previous_state;
+        static auto state_start_time = std::chrono::steady_clock::now();
 
         if (!info.activity.empty())
         {
+            auto now = std::chrono::steady_clock::now();
             if (previous_state && *previous_state != info.state)
+            {
                 std::cout << "\n";
+                state_start_time = now;
+            }
+            else if (!previous_state)
+            {
+                state_start_time = now;
+            }
             previous_state = info.state;
 
             std::string local_str = std::to_string(static_cast<int>(info.local_fraction * 100.f)) + "%";
             std::string total_str = "total " + std::to_string(static_cast<int>(info.global_fraction * 100.f)) + "%";
-            std::cout << "\r" << std::left << std::setw(42) << info.activity << std::right << std::setw(4) << local_str
-                      << "      " << total_str << std::flush;
+            
+            std::string state_time_str = format_time(now - state_start_time);
+            std::string total_time_str = format_time(now - total_start_time);
+
+            std::cout << "\r" << std::left << std::setw(42) << info.activity 
+                      << std::right << std::setw(4) << local_str 
+                      << " " << std::right << std::setw(6) << state_time_str
+                      << "      " << std::left << std::setw(10) << total_str 
+                      << " " << std::right << std::setw(6) << total_time_str << std::flush;
         }
         else
         {

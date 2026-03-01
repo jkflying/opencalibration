@@ -371,7 +371,8 @@ TEST(Blending, boundary_only_secondary_blending)
         for (int c = 0; c < sz; c++)
         {
             float d = boundary_dist.at<float>(r, c);
-            float falloff = 1.0f / (1.0f + std::exp(steepness * d));
+            float falloff = 2.0f / (1.0f + std::exp(steepness * d));
+            weight_0.at<float>(r, c) *= falloff;
             weight_1.at<float>(r, c) *= falloff;
         }
     }
@@ -416,4 +417,82 @@ TEST(Blending, boundary_only_secondary_blending)
         // So pixel brightness should decrease or stay the same going left to right
         EXPECT_GE(curr[0], next[0] - 1) << "Non-monotonic transition at col=" << c;
     }
+}
+
+TEST(Blending, layer_0_feathering_eliminates_seam_leakage)
+{
+    // GIVEN: Same scenario, checking that high-frequency seam is eliminated.
+    int sz = 128;
+    int boundary_col = sz / 2;
+    int transition_radius = 16;
+
+    cv::Vec3f color_a(60.0f, 10.0f, 5.0f);
+    cv::Vec3f color_b(40.0f, -10.0f, -5.0f);
+
+    cv::Mat lab_0(sz, sz, CV_32FC3, cv::Scalar(0, 0, 0));
+    cv::Mat weight_0 = cv::Mat::zeros(sz, sz, CV_32FC1);
+    cv::Mat lab_1(sz, sz, CV_32FC3, cv::Scalar(0, 0, 0));
+    cv::Mat weight_1 = cv::Mat::zeros(sz, sz, CV_32FC1);
+
+    for (int r = 0; r < sz; r++)
+    {
+        for (int c = 0; c < sz; c++)
+        {
+            lab_0.at<cv::Vec3f>(r, c) = (c < boundary_col) ? color_a : color_b;
+            lab_1.at<cv::Vec3f>(r, c) = (c < boundary_col) ? color_b : color_a;
+            weight_0.at<float>(r, c) = 1.0f;
+            weight_1.at<float>(r, c) = 1.0f;
+        }
+    }
+
+    cv::Mat boundary_mask(sz, sz, CV_8UC1, cv::Scalar(0));
+    for (int r = 0; r < sz; r++)
+    {
+        for (int c = 0; c < sz; c++)
+        {
+            int my_cam = (c < boundary_col) ? 0 : 1;
+            const int dx[] = {-1, 1, 0, 0};
+            const int dy[] = {0, 0, -1, 1};
+            for (int d = 0; d < 4; d++)
+            {
+                int nr = r + dy[d], nc = c + dx[d];
+                if (nr >= 0 && nr < sz && nc >= 0 && nc < sz)
+                {
+                    int neighbor_cam = (nc < boundary_col) ? 0 : 1;
+                    if (neighbor_cam != my_cam)
+                    {
+                        boundary_mask.at<uint8_t>(r, c) = 255;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    cv::Mat inv_boundary;
+    cv::bitwise_not(boundary_mask, inv_boundary);
+    cv::Mat boundary_dist;
+    cv::distanceTransform(inv_boundary, boundary_dist, cv::DIST_L2, 3);
+
+    float steepness = std::log(99.0f) / static_cast<float>(transition_radius);
+    for (int r = 0; r < sz; r++)
+    {
+        for (int c = 0; c < sz; c++)
+        {
+            float d = boundary_dist.at<float>(r, c);
+            float falloff = 2.0f / (1.0f + std::exp(steepness * d));
+            weight_0.at<float>(r, c) *= falloff;
+            weight_1.at<float>(r, c) *= falloff;
+        }
+    }
+
+    cv::Mat result = laplacianBlend({lab_0, lab_1}, {weight_0, weight_1}, 4);
+
+    // Verify the high frequency step across the exact boundary is small.
+    // Without feathering layer 0, the step at boundary_col vs boundary_col-1 is large.
+    cv::Vec4b left_pixel = result.at<cv::Vec4b>(sz / 2, boundary_col - 1);
+    cv::Vec4b right_pixel = result.at<cv::Vec4b>(sz / 2, boundary_col);
+
+    int diff_L = std::abs(static_cast<int>(left_pixel[0]) - static_cast<int>(right_pixel[0]));
+    EXPECT_LT(diff_L, 5);
 }
