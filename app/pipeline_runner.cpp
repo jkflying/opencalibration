@@ -243,15 +243,13 @@ int main(int argc, char *argv[])
 
             std::string local_str = std::to_string(static_cast<int>(info.local_fraction * 100.f)) + "%";
             std::string total_str = "total " + std::to_string(static_cast<int>(info.global_fraction * 100.f)) + "%";
-            
+
             std::string state_time_str = format_time(now - state_start_time);
             std::string total_time_str = format_time(now - total_start_time);
 
-            std::cout << "\r" << std::left << std::setw(42) << info.activity 
-                      << std::right << std::setw(4) << local_str 
-                      << " " << std::right << std::setw(6) << state_time_str
-                      << "      " << std::left << std::setw(10) << total_str 
-                      << " " << std::right << std::setw(6) << total_time_str << std::flush;
+            std::cout << "\r" << std::left << std::setw(42) << info.activity << std::right << std::setw(4) << local_str
+                      << " " << std::right << std::setw(6) << state_time_str << "      " << std::left << std::setw(10)
+                      << total_str << " " << std::right << std::setw(6) << total_time_str << std::flush;
         }
         else
         {

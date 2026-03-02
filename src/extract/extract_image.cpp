@@ -44,7 +44,6 @@ std::optional<image> extract_image(const std::string &path)
             return std::nullopt;
         }
 
-
         cv::Mat lab;
         cv::cvtColor(image, lab, cv::COLOR_BGR2Lab);
 
