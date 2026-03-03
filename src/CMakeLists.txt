@@ -1,3 +1,4 @@
+add_subdirectory(dense)
 add_subdirectory(distort)
 add_subdirectory(extract)
 add_subdirectory(geo_coord)

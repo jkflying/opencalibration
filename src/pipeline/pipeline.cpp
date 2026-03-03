@@ -5,6 +5,9 @@
 #include <opencalibration/pipeline/load_stage.hpp>
 #include <opencalibration/pipeline/relax_stage.hpp>
 
+#include <opencalibration/dense/dense_stereo.hpp>
+
+
 #include <opencalibration/combinatorics/interleave.hpp>
 #include <opencalibration/distort/distort_keypoints.hpp>
 #include <opencalibration/io/checkpoint.hpp>
@@ -81,6 +84,8 @@ PipelineState Pipeline::chooseNextState(PipelineState currentState, Transition t
         USM_STATE(transition, State::FINAL_GLOBAL_RELAX,
                   USM_MAP(Transition::NEXT, State::GENERATE_THUMBNAIL, s));
         USM_STATE(transition, State::GENERATE_THUMBNAIL,
+                  USM_MAP(Transition::NEXT, State::DENSIFY_MESH, s));
+        USM_STATE(transition, State::DENSIFY_MESH,
                   USM_MAP(Transition::NEXT, State::GENERATE_LAYERS, s));
         USM_STATE(transition, State::GENERATE_LAYERS,
                   USM_MAP(Transition::NEXT, State::COLOR_BALANCE, s));
@@ -108,6 +113,7 @@ Pipeline::Transition Pipeline::runCurrentState(PipelineState currentState)
               USM_MAP(State::MESH_REFINEMENT, mesh_refinement(), t);
               USM_MAP(State::COMPLETE, complete(), t);
               USM_MAP(State::GENERATE_THUMBNAIL, generate_thumbnail(), t);
+              USM_MAP(State::DENSIFY_MESH, densify_mesh(), t);
               USM_MAP(State::GENERATE_LAYERS, generate_layers(), t);
               USM_MAP(State::COLOR_BALANCE, color_balance(), t);
               USM_MAP(State::BLEND_LAYERS, blend_layers(), t)
@@ -155,14 +161,15 @@ Pipeline::Transition Pipeline::runCurrentState(PipelineState currentState)
 void Pipeline::_emit_progress(std::string activity, float local_fraction, bool surfaces_updated,
                               std::optional<TileUpdate> tile_update)
 {
-    static const std::array<std::pair<PipelineState, float>, 9> stage_order = {{
+    static const std::array<std::pair<PipelineState, float>, 10> stage_order = {{
         {State::INITIAL_PROCESSING, 0.20f},
         {State::MESH_REFINEMENT, 0.15f},
         {State::INITIAL_GLOBAL_RELAX, 0.12f},
         {State::CAMERA_PARAMETER_RELAX, 0.12f},
         {State::FINAL_GLOBAL_RELAX, 0.05f},
         {State::GENERATE_THUMBNAIL, 0.03f},
-        {State::GENERATE_LAYERS, 0.18f},
+        {State::DENSIFY_MESH, 0.05f},
+        {State::GENERATE_LAYERS, 0.13f},
         {State::COLOR_BALANCE, 0.02f},
         {State::BLEND_LAYERS, 0.13f},
     }};
@@ -498,6 +505,30 @@ Pipeline::Transition Pipeline::mesh_refinement()
     USM_DECISION_TABLE(Transition::REPEAT, );
 }
 
+Pipeline::Transition Pipeline::densify_mesh()
+{
+    if (!_generate_dense_mesh)
+    {
+        spdlog::info("Skipping dense mesh stage");
+        USM_DECISION_TABLE(Transition::NEXT, USM_MAKE_DECISION(!_generate_dense_mesh, Transition::NEXT));
+    }
+
+    if (_surfaces.empty())
+    {
+        spdlog::warn("No surfaces available for dense mesh");
+        USM_DECISION_TABLE(Transition::NEXT, USM_MAKE_DECISION(_surfaces.empty(), Transition::NEXT));
+    }
+
+    _emit_progress("Densifying mesh", 0.f);
+
+    densifyMesh(_graph, _surfaces,
+                [this](float progress) { _emit_progress("Densifying mesh", progress); });
+
+    _emit_progress("Densifying mesh", 1.f);
+
+    USM_DECISION_TABLE(Transition::NEXT, );
+}
+
 Pipeline::Transition Pipeline::generate_thumbnail()
 {
     if (!_generate_thumbnails || (_thumbnail_filename.empty() && _source_filename.empty() && _overlap_filename.empty()))
@@ -648,6 +679,8 @@ std::string Pipeline::toString(PipelineState state)
         return "Mesh Refinement";
     case State::GENERATE_THUMBNAIL:
         return "Generate Thumbnail";
+    case State::DENSIFY_MESH:
+        return "Densify Mesh";
     case State::GENERATE_LAYERS:
         return "Generate Layers";
     case State::COLOR_BALANCE:
@@ -675,6 +708,8 @@ std::optional<PipelineState> Pipeline::fromString(const std::string &str)
         return State::MESH_REFINEMENT;
     if (str == "GENERATE_THUMBNAIL" || str == "Generate Thumbnail")
         return State::GENERATE_THUMBNAIL;
+    if (str == "DENSIFY_MESH" || str == "Densify Mesh")
+        return State::DENSIFY_MESH;
     if (str == "GENERATE_LAYERS" || str == "Generate Layers" || str == "GENERATE_DSM" || str == "Generate DSM")
         return State::GENERATE_LAYERS;
     if (str == "COLOR_BALANCE" || str == "Color Balance")

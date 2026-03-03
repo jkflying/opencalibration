@@ -139,6 +139,10 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
     {
         _skip_final_global_relax = skip;
     }
+    void set_generate_dense_mesh(bool generate)
+    {
+        _generate_dense_mesh = generate;
+    }
 
     bool saveCheckpoint(const std::string &checkpoint_dir);
     bool loadCheckpoint(const std::string &checkpoint_dir);
@@ -158,6 +162,7 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
     PipelineTransition final_global_relax();
     PipelineTransition mesh_refinement();
     PipelineTransition generate_thumbnail();
+    PipelineTransition densify_mesh();
     PipelineTransition generate_layers();
     PipelineTransition color_balance();
     PipelineTransition blend_layers();
@@ -207,6 +212,7 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
     bool _skip_initial_global_relax = false;
     bool _skip_camera_param_relax = false;
     bool _skip_final_global_relax = true;
+    bool _generate_dense_mesh = false;
 
     std::vector<orthomosaic::ColorCorrespondence> _correspondences;
     orthomosaic::ColorBalanceResult _color_balance_result;

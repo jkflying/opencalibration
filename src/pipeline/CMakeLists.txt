@@ -2,7 +2,8 @@ add_library(oc_pipeline pipeline.cpp
                         load_stage.cpp
                         link_stage.cpp
                         relax_stage.cpp)
-target_link_libraries(oc_pipeline PUBLIC oc_extract
+target_link_libraries(oc_pipeline PUBLIC oc_dense
+                                          oc_extract
                                           oc_match
                                           oc_distort
                                           oc_model_inliers

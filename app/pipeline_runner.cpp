@@ -51,6 +51,7 @@ int main(int argc, char *argv[])
     bool skip_initial_global_relax = false;
     bool skip_camera_intrinsics = false;
     bool skip_final_global_relax = false;
+    bool dense_mesh = false;
     bool printHelp = false;
 
     CommandLine args("Run the opencalibration pipeline from the command line");
@@ -85,6 +86,7 @@ int main(int argc, char *argv[])
     args.addArgument({"--skip-camera-intrinsics"}, &skip_camera_intrinsics,
                      "Skip camera intrinsics optimization (focal length, distortion, principal point)");
     args.addArgument({"--skip-final-global-relax"}, &skip_final_global_relax, "Skip the final global relaxation stage");
+    args.addArgument({"--dense-mesh"}, &dense_mesh, "Enable dense mesh via SGM stereo (slow but more accurate edges)");
     args.addArgument({"-h", "--help"}, &printHelp, "You must specify at least an input file");
 
     try
@@ -178,6 +180,7 @@ int main(int argc, char *argv[])
     p.set_skip_initial_global_relax(skip_initial_global_relax);
     p.set_skip_camera_param_relax(skip_camera_intrinsics);
     p.set_skip_final_global_relax(skip_final_global_relax);
+    p.set_generate_dense_mesh(dense_mesh);
 
     if (!checkpoint_load.empty())
     {
