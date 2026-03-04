@@ -9,5 +9,11 @@
 namespace opencalibration
 {
 
-std::vector<feature_2d> extract_features(const cv::Mat &image);
+struct extracted_features
+{
+    std::vector<feature_2d> features;
+    std::vector<feature_2d> dense_features;
+};
+
+extracted_features extract_features(const cv::Mat &image);
 }

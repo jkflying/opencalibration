@@ -57,7 +57,9 @@ std::optional<image> extract_image(const std::string &path)
         img.thumbnail = RasterToRGB(cvToRaster(thumbnail));
 
         p.reset("Load features");
-        img.features = extract_features(image);
+        auto extracted = extract_features(image);
+        img.features = std::move(extracted.features);
+        img.dense_features = std::move(extracted.dense_features);
     }
 
     p.reset("Load metadata");

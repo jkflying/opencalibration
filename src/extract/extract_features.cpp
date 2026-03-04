@@ -8,16 +8,17 @@
 namespace opencalibration
 {
 
-std::vector<feature_2d> extract_features(const cv::Mat &image)
+extracted_features extract_features(const cv::Mat &image)
 {
 
     int max_length_pixels = 1600;
     double nms_pixel_radius = 8;
     std::vector<feature_2d> results;
+    std::vector<feature_2d> dense;
 
     if (image.empty())
     {
-        return results;
+        return {results, dense};
     }
 
     cv::Mat image_scaled;
@@ -72,9 +73,13 @@ std::vector<feature_2d> extract_features(const cv::Mat &image)
             tree.addPoint(toArray(f.location), 0);
             results.push_back(f);
         }
+        else
+        {
+            dense.push_back(f);
+        }
     }
 
-    return results;
+    return {std::move(results), std::move(dense)};
 }
 
 } // namespace opencalibration

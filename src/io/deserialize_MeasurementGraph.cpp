@@ -177,6 +177,30 @@ template <> class Deserializer<MeasurementGraph>
                         node.payload.features.push_back(f);
                     }
 
+                    const auto &node_obj = node_member.value.GetObject();
+                    if (node_obj.HasMember("dense_features"))
+                    {
+                        const auto &dense_features = node_obj["dense_features"].GetArray();
+                        std::string dense_descriptor;
+                        for (const auto &feat : dense_features)
+                        {
+                            feature_2d f;
+                            const char *base64_descriptor = feat.GetObject()["descriptor"].GetString();
+                            dense_descriptor.resize(Base64decode_len(base64_descriptor), '\0');
+                            int actual_size =
+                                Base64decode(const_cast<char *>(dense_descriptor.c_str()), base64_descriptor);
+                            dense_descriptor.resize(actual_size);
+                            f.descriptor = bitset_from_bytes<feature_2d::DESCRIPTOR_BITS>(dense_descriptor);
+
+                            f.location.x() = feat.GetObject()["location"].GetArray()[0].GetDouble();
+                            f.location.y() = feat.GetObject()["location"].GetArray()[1].GetDouble();
+
+                            f.strength = feat.GetObject()["strength"].GetDouble();
+
+                            node.payload.dense_features.push_back(f);
+                        }
+                    }
+
                     graph._nodes.emplace(node_id, std::move(node));
                 }
                 const auto &edges = base["edges"].GetObject();

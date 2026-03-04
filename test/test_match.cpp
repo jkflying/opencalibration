@@ -14,8 +14,8 @@ TEST(match, finds_correspondences)
     std::string path1 = TEST_DATA_DIR "P2540254.JPG";
     std::string path2 = TEST_DATA_DIR "P2530253.JPG";
 
-    std::vector<feature_2d> feat1 = opencalibration::extract_features(cv::imread(path1));
-    std::vector<feature_2d> feat2 = opencalibration::extract_features(cv::imread(path2));
+    auto feat1 = opencalibration::extract_features(cv::imread(path1)).features;
+    auto feat2 = opencalibration::extract_features(cv::imread(path2)).features;
 
     // WHEN: we find the matches
     std::vector<feature_match> matches = match_features(feat1, feat2);
@@ -63,8 +63,8 @@ TEST(match, subset_matches_use_original_indices)
     std::string path1 = TEST_DATA_DIR "P2540254.JPG";
     std::string path2 = TEST_DATA_DIR "P2530253.JPG";
 
-    std::vector<feature_2d> feat1 = extract_features(cv::imread(path1));
-    std::vector<feature_2d> feat2 = extract_features(cv::imread(path2));
+    auto feat1 = extract_features(cv::imread(path1)).features;
+    auto feat2 = extract_features(cv::imread(path2)).features;
 
     std::vector<size_t> indices1 = spatially_subsample_feature_indices(feat1, 40.0);
     std::vector<size_t> indices2 = spatially_subsample_feature_indices(feat2, 40.0);
@@ -94,8 +94,8 @@ TEST(match, local_guided_respects_homography)
     std::string path1 = TEST_DATA_DIR "P2540254.JPG";
     std::string path2 = TEST_DATA_DIR "P2530253.JPG";
 
-    std::vector<feature_2d> feat1 = extract_features(cv::imread(path1));
-    std::vector<feature_2d> feat2 = extract_features(cv::imread(path2));
+    auto feat1 = extract_features(cv::imread(path1)).features;
+    auto feat2 = extract_features(cv::imread(path2)).features;
 
     std::vector<feature_match> full_matches = match_features(feat1, feat2);
     ASSERT_GT(full_matches.size(), 50);
@@ -125,8 +125,8 @@ TEST(match, local_guided_with_translation)
     std::string path1 = TEST_DATA_DIR "P2540254.JPG";
     std::string path2 = TEST_DATA_DIR "P2530253.JPG";
 
-    std::vector<feature_2d> feat1 = extract_features(cv::imread(path1));
-    std::vector<feature_2d> feat2 = extract_features(cv::imread(path2));
+    auto feat1 = extract_features(cv::imread(path1)).features;
+    auto feat2 = extract_features(cv::imread(path2)).features;
 
     Eigen::Matrix3d translation_homography = Eigen::Matrix3d::Identity();
     translation_homography(0, 2) = 100.0;
@@ -151,7 +151,7 @@ TEST(match, local_guided_with_translation)
 TEST(match, spatial_subsample_reduces_feature_count)
 {
     std::string path1 = TEST_DATA_DIR "P2540254.JPG";
-    std::vector<feature_2d> features = extract_features(cv::imread(path1));
+    auto features = extract_features(cv::imread(path1)).features;
 
     ASSERT_GT(features.size(), 100);
 
@@ -172,7 +172,7 @@ TEST(match, spatial_subsample_reduces_feature_count)
 TEST(match, spatial_subsample_maintains_spacing)
 {
     std::string path1 = TEST_DATA_DIR "P2540254.JPG";
-    std::vector<feature_2d> features = extract_features(cv::imread(path1));
+    auto features = extract_features(cv::imread(path1)).features;
 
     const double spacing = 60.0;
     std::vector<size_t> subsampled = spatially_subsample_feature_indices(features, spacing);

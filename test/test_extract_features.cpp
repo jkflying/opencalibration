@@ -11,7 +11,8 @@ TEST(extract_features, gives_points)
     std::string path = TEST_DATA_DIR "P2530253.JPG";
 
     // WHEN: we extract the features
-    std::vector<feature_2d> res = opencalibration::extract_features(cv::imread(path));
+    auto extracted = opencalibration::extract_features(cv::imread(path));
+    const auto &res = extracted.features;
 
     // THEN: there should be at least 100
     EXPECT_GT(res.size(), 100);
@@ -38,4 +39,36 @@ TEST(extract_features, gives_points)
         std::string output_path = TEST_DATA_OUTPUT_DIR "features_overlay.jpg";
         cv::imwrite(output_path, img);
     }
+}
+
+TEST(extract_features, dense_features_are_nms_rejected)
+{
+    // GIVEN: an image
+    std::string path = TEST_DATA_DIR "P2530253.JPG";
+    auto extracted = opencalibration::extract_features(cv::imread(path));
+
+    // THEN: dense features should be non-empty
+    EXPECT_GT(extracted.dense_features.size(), 0);
+
+    // AND: dense + features should account for all detected keypoints
+    EXPECT_GT(extracted.dense_features.size(), extracted.features.size());
+
+    // AND: dense features should each be within NMS radius of some kept feature
+    for (const auto &df : extracted.dense_features)
+    {
+        double min_dist = std::numeric_limits<double>::max();
+        for (const auto &f : extracted.features)
+        {
+            double dist = (df.location - f.location).norm();
+            min_dist = std::min(min_dist, dist);
+        }
+        EXPECT_LT(min_dist, 200) << "Dense feature too far from any kept feature";
+    }
+}
+
+TEST(extract_features, empty_image_returns_empty)
+{
+    auto extracted = opencalibration::extract_features(cv::Mat());
+    EXPECT_EQ(extracted.features.size(), 0);
+    EXPECT_EQ(extracted.dense_features.size(), 0);
 }

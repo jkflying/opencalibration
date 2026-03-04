@@ -22,6 +22,7 @@ struct image
     // Loaded / processed from image data
     image_metadata metadata;
     std::vector<feature_2d> features;
+    std::vector<feature_2d> dense_features;
     RGBRaster thumbnail;
 
     // Things to discover and optimize
@@ -35,13 +36,14 @@ struct image
         bool thu = thumbnail == other.thumbnail;
         bool met = metadata == other.metadata;
         bool feat = features == other.features;
+        bool dfeat = dense_features == other.dense_features;
         bool mod = (model == other.model) || (model != nullptr && other.model != nullptr && *model == *other.model);
         bool pos =
             (position.array().isNaN().all() && other.position.array().isNaN().all()) || position == other.position;
         bool ori = (orientation.coeffs().array().isNaN().all() && other.orientation.coeffs().array().isNaN().all()) ||
                    orientation.coeffs() == other.orientation.coeffs();
 
-        return pat && met && thu && feat && mod && pos && ori;
+        return pat && met && thu && feat && dfeat && mod && pos && ori;
     }
 };
 } // namespace opencalibration
