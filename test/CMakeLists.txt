@@ -7,6 +7,7 @@ endif()
 add_executable(functional_tests gtest_main.cpp
                                 test_camera_database.cpp
                                 test_checkpoint.cpp
+                                test_dense.cpp
                                 test_extract_features.cpp
                                 test_extract_metadata.cpp
                                 test_match.cpp
@@ -16,7 +17,8 @@ add_executable(functional_tests gtest_main.cpp
                                 test_refine_mesh.cpp
                                 test_serialize_deserialize.cpp)
 
-target_link_libraries(functional_tests PUBLIC gtest pthread oc_distort
+target_link_libraries(functional_tests PUBLIC gtest pthread oc_dense
+                                                            oc_distort
                                                             oc_extract
                                                             oc_io
                                                             oc_match
