@@ -1,6 +1,7 @@
 #include <opencalibration/dense/dense_stereo.hpp>
 
 #include <opencalibration/distort/distort_keypoints.hpp>
+#include <opencalibration/geometry/intersection.hpp>
 #include <opencalibration/surface/intersect.hpp>
 #include <opencalibration/types/feature_2d.hpp>
 
@@ -223,6 +224,7 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
 
                 double best_dist = std::numeric_limits<double>::infinity();
                 double second_best_dist = std::numeric_limits<double>::infinity();
+                size_t best_feat_idx = 0;
 
                 for (const auto &n : nearby)
                 {
@@ -233,6 +235,7 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
                         {
                             second_best_dist = best_dist;
                             best_dist = d;
+                            best_feat_idx = n.payload;
                         }
                         else
                         {
@@ -246,8 +249,14 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
                                      : best_dist < MAX_ABSOLUTE_DESCRIPTOR_DISTANCE;
                 if (good_match)
                 {
-                    local_points.push_back(pt3d);
-                    break; // one confirmed match is enough for this feature
+                    ray_d cand_ray = image_to_3d(cand_img.dense_features[best_feat_idx].location,
+                                                 cand_model, cand_pos, cand_ori);
+                    auto triangulated = rayIntersection(r, cand_ray);
+                    if (triangulated.first.allFinite() && triangulated.second >= 0)
+                        local_points.push_back(triangulated.first);
+                    else
+                        local_points.push_back(pt3d);
+                    break;
                 }
             }
         }
