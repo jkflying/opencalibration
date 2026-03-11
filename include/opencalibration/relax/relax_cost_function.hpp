@@ -488,9 +488,68 @@ struct PlaneIntersectionAngleCost_OrientationFocalRadial_SharedModel
     const InverseDifferentiableCameraModel<double> sharedModel;
 };
 
+template <int N> struct MultiRayPlaneIntersectionAngleCost
+{
+    static_assert(N >= 2 && N <= 5, "N must be between 2 and 5");
+    static const int NUM_RESIDUALS = N * 3;
+
+    MultiRayPlaneIntersectionAngleCost(const std::array<Eigen::Vector3d, N> &camera_locs,
+                                       const std::array<Eigen::Vector3d, N> &camera_rays,
+                                       const std::array<Eigen::Vector2d, 3> &plane_points)
+        : camera_loc(camera_locs), camera_ray(camera_rays), plane_point(plane_points)
+    {
+    }
+
+    template <typename T>
+    bool computeResiduals(const T *const *rotations, const T *z0, const T *z1, const T *z2, T *residuals) const
+    {
+        using QuaternionT = Eigen::Quaternion<T>;
+        using Vector3T = Eigen::Matrix<T, 3, 1>;
+        using QuaternionTCM = Eigen::Map<const QuaternionT>;
+        using Vector3TM = Eigen::Map<Vector3T>;
+
+        const T plane_z[3]{*z0, *z1, *z2};
+        plane_3_corners<T> plane3;
+        for (int i = 0; i < 3; i++)
+            plane3.corner[i] << T(plane_point[i].x()), T(plane_point[i].y()), plane_z[i];
+
+        plane_norm_offset<T> pno = cornerPlane2normOffsetPlane(plane3);
+
+        Vector3T intersection[N];
+        bool all_valid = true;
+        T avg_dist = T(0);
+        for (int i = 0; i < N; i++)
+        {
+            const QuaternionTCM rot(rotations[i]);
+            ray<T> r;
+            r.dir = rot * camera_ray[i].template cast<T>();
+            r.offset = camera_loc[i].template cast<T>();
+            all_valid &= rayPlaneIntersection(r, pno, intersection[i]);
+            avg_dist += (intersection[i] - camera_loc[i]).norm();
+        }
+        avg_dist /= T(N);
+
+        Vector3T centroid = Vector3T::Zero();
+        for (int i = 0; i < N; i++)
+            centroid += intersection[i];
+        centroid /= T(N);
+
+        for (int i = 0; i < N; i++)
+        {
+            Vector3TM(residuals + i * 3) = (intersection[i] - centroid) / avg_dist;
+        }
+
+        return all_valid;
+    }
+
+    const std::array<Eigen::Vector3d, N> camera_loc;
+    const std::array<Eigen::Vector3d, N> camera_ray;
+    const std::array<Eigen::Vector2d, 3> plane_point;
+};
+
 struct PlaneIntersectionAngleCost
 {
-    static const int NUM_RESIDUALS = 3;
+    static const int NUM_RESIDUALS = MultiRayPlaneIntersectionAngleCost<2>::NUM_RESIDUALS;
     static const int NUM_PARAMETERS_1 = 4;
     static const int NUM_PARAMETERS_2 = 4;
     static const int NUM_PARAMETERS_3 = 1;
@@ -501,54 +560,19 @@ struct PlaneIntersectionAngleCost
                                const Eigen::Vector3d &camera_ray1, const Eigen::Vector3d &camera_ray2,
                                const Eigen::Vector2d &plane_point1, const Eigen::Vector2d &plane_point2,
                                const Eigen::Vector2d &plane_point3)
-        : camera_loc{camera_loc1, camera_loc2}, camera_ray{camera_ray1, camera_ray2}, plane_point{plane_point1,
-                                                                                                  plane_point2,
-                                                                                                  plane_point3}
+        : _impl({camera_loc1, camera_loc2}, {camera_ray1, camera_ray2}, {{plane_point1, plane_point2, plane_point3}})
     {
     }
 
     template <typename T>
     bool operator()(const T *rotation0, const T *rotation1, const T *z0, const T *z1, const T *z2, T *residuals) const
     {
-        using QuaterionT = Eigen::Quaternion<T>;
-        using Vector3T = Eigen::Matrix<T, 3, 1>;
-        using QuaternionTCM = Eigen::Map<const QuaterionT>;
-        using Vector3TM = Eigen::Map<Vector3T>;
-
-        const QuaternionTCM rotation_em[2]{QuaternionTCM(rotation0), QuaternionTCM(rotation1)};
-        ray<T> rays[2];
-        for (int i = 0; i < 2; i++)
-        {
-            rays[i].dir = rotation_em[i] * camera_ray[i].cast<T>();
-            rays[i].offset = camera_loc[i].cast<T>();
-        }
-
-        const T plane_z[3]{*z0, *z1, *z2};
-        plane_3_corners<T> plane3;
-        for (int i = 0; i < 3; i++)
-            plane3.corner[i] << T(plane_point[i].x()), T(plane_point[i].y()), plane_z[i];
-
-        plane_norm_offset<T> pno = cornerPlane2normOffsetPlane(plane3);
-
-        Vector3T intersection[2];
-        bool intersections = true;
-        for (int i = 0; i < 2; i++)
-            intersections &= rayPlaneIntersection(rays[i], pno, intersection[i]);
-
-        Vector3T distance_error = intersection[0] - intersection[1];
-        T avg_dist = ((intersection[0] - camera_loc[0]).norm() + (intersection[1] - camera_loc[1]).norm()) * T(0.5);
-        Vector3T angle_error = distance_error / avg_dist;
-
-        Vector3TM final_error(residuals);
-        final_error = angle_error;
-
-        return intersections;
+        const T *rotations[2]{rotation0, rotation1};
+        return _impl.computeResiduals(rotations, z0, z1, z2, residuals);
     }
 
   private:
-    const std::array<Eigen::Vector3d, 2> camera_loc;
-    const std::array<Eigen::Vector3d, 2> camera_ray;
-    const std::array<Eigen::Vector2d, 3> plane_point;
+    MultiRayPlaneIntersectionAngleCost<2> _impl;
 };
 
 } // namespace opencalibration
