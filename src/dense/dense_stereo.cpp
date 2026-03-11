@@ -77,13 +77,6 @@ double descriptor_distance(const opencalibration::feature_2d &f1, const opencali
     return (f1.descriptor ^ f2.descriptor).count() * (1.0 / opencalibration::feature_2d::DESCRIPTOR_BITS);
 }
 
-struct DenseMatch
-{
-    size_t src_node, src_feat;
-    size_t dst_node, dst_feat;
-    Eigen::Vector3d mesh_point;
-};
-
 } // namespace
 
 namespace opencalibration
@@ -152,9 +145,40 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
     auto &surface = surfaces[0];
     const auto &mesh = surface.mesh;
 
+    struct Measurement
+    {
+        size_t node_id, feat_idx;
+    };
+    std::vector<Measurement> id_to_measurement;
+    ankerl::unordered_dense::map<size_t, size_t> node_id_to_offset;
+    {
+        size_t total_features = 0;
+        for (size_t nid : node_ids)
+        {
+            node_id_to_offset[nid] = total_features;
+            total_features += graph.getNode(nid)->payload.dense_features.size();
+        }
+        id_to_measurement.resize(total_features);
+        for (size_t nid : node_ids)
+        {
+            size_t offset = node_id_to_offset[nid];
+            size_t count = graph.getNode(nid)->payload.dense_features.size();
+            for (size_t i = 0; i < count; i++)
+            {
+                id_to_measurement[offset + i] = {nid, i};
+            }
+        }
+    }
+
+    auto measurementId = [&](size_t nid, size_t feat_idx) -> size_t {
+        return node_id_to_offset[nid] + feat_idx;
+    };
+
     std::atomic<size_t> images_done{0};
-    std::mutex matches_mutex;
-    std::vector<DenseMatch> all_matches;
+    std::mutex uf_mutex;
+    UnionFind uf(id_to_measurement.size());
+    std::vector<Eigen::Vector3d> mesh_fallbacks(id_to_measurement.size(),
+                                                 Eigen::Vector3d(NAN, NAN, NAN));
 
     const int num_nodes = static_cast<int>(node_ids.size());
 #pragma omp parallel for schedule(dynamic) // NOLINT(modernize-loop-convert)
@@ -177,7 +201,12 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
         auto order = hilbertFeatureOrder(src_img.dense_features, static_cast<int>(src_model.pixels_cols),
                                          static_cast<int>(src_model.pixels_rows));
 
-        std::vector<DenseMatch> local_matches;
+        struct LocalMatch
+        {
+            size_t src_id, dst_id;
+        };
+        std::vector<LocalMatch> local_matches;
+        std::vector<std::pair<size_t, Eigen::Vector3d>> local_fallbacks;
 
         auto camera_searcher = camera_tree.searcher();
 
@@ -192,6 +221,8 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
                 continue;
 
             const Eigen::Vector3d &pt3d = info.intersectionLocation;
+            size_t src_id = measurementId(src_nid, fi);
+            bool has_match = false;
 
             auto candidates =
                 camera_searcher.search({pt3d.x(), pt3d.y(), pt3d.z()},
@@ -218,7 +249,6 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
                     continue;
                 }
 
-                // Search candidate's dense features near the predicted location
                 auto ft_it = feature_trees.find(cand_nid);
                 if (ft_it == feature_trees.end())
                     continue;
@@ -258,16 +288,28 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
                                      : best_dist < MAX_ABSOLUTE_DESCRIPTOR_DISTANCE;
                 if (good_match)
                 {
-                    local_matches.push_back({src_nid, fi, cand_nid, best_feat_idx, pt3d});
+                    local_matches.push_back({src_id, measurementId(cand_nid, best_feat_idx)});
+                    has_match = true;
                 }
+            }
+
+            if (has_match)
+            {
+                local_fallbacks.push_back({src_id, pt3d});
             }
         }
 
         if (!local_matches.empty())
         {
-            std::lock_guard<std::mutex> lock(matches_mutex);
-            all_matches.insert(all_matches.end(), std::make_move_iterator(local_matches.begin()),
-                               std::make_move_iterator(local_matches.end()));
+            std::lock_guard<std::mutex> lock(uf_mutex);
+            for (const auto &lm : local_matches)
+            {
+                uf.unite(lm.src_id, lm.dst_id);
+            }
+            for (const auto &[id, pt] : local_fallbacks)
+            {
+                mesh_fallbacks[id] = pt;
+            }
         }
 
         size_t done = ++images_done;
@@ -277,66 +319,49 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
         }
     }
 
-    UnionFind uf;
-    for (const auto &m : all_matches)
+    ankerl::unordered_dense::map<size_t, std::vector<size_t>> track_ids;
+    ankerl::unordered_dense::map<size_t, Eigen::Vector3d> track_fallbacks;
+
+    for (size_t i = 0; i < id_to_measurement.size(); i++)
     {
-        uint64_t src_key = UnionFind::key(m.src_node, m.src_feat);
-        uint64_t dst_key = UnionFind::key(m.dst_node, m.dst_feat);
-        uf.unite(src_key, dst_key);
-    }
+        size_t root = uf.find(i);
+        if (root == i && !mesh_fallbacks[i].allFinite())
+            continue;
 
-    struct TrackData
-    {
-        std::vector<std::pair<size_t, size_t>> measurements; // (node_id, feat_idx)
-        Eigen::Vector3d mesh_point;
-    };
-    ankerl::unordered_dense::map<uint64_t, TrackData> tracks;
-
-    for (const auto &m : all_matches)
-    {
-        uint64_t root = uf.find(UnionFind::key(m.src_node, m.src_feat));
-
-        auto &track = tracks[root];
-        if (track.measurements.empty())
-            track.mesh_point = m.mesh_point;
-
-        track.measurements.push_back({m.src_node, m.src_feat});
-        track.measurements.push_back({m.dst_node, m.dst_feat});
-    }
-
-    for (auto &[root, track] : tracks)
-    {
-        std::sort(track.measurements.begin(), track.measurements.end());
-        track.measurements.erase(std::unique(track.measurements.begin(), track.measurements.end()),
-                                 track.measurements.end());
+        track_ids[root].push_back(i);
+        if (mesh_fallbacks[i].allFinite())
+            track_fallbacks.try_emplace(root, mesh_fallbacks[i]);
     }
 
     point_cloud merged_points;
-    merged_points.reserve(tracks.size());
+    merged_points.reserve(track_ids.size());
 
-    for (const auto &[root, track] : tracks)
+    for (const auto &[root, ids] : track_ids)
     {
         std::vector<ray_d> rays;
-        rays.reserve(track.measurements.size());
+        rays.reserve(ids.size());
 
-        for (const auto &[nid, fidx] : track.measurements)
+        for (size_t id : ids)
         {
-            const auto &img = graph.getNode(nid)->payload;
-            rays.push_back(image_to_3d(img.dense_features[fidx].location, *img.model, img.position, img.orientation));
+            const auto &m = id_to_measurement[id];
+            const auto &img = graph.getNode(m.node_id)->payload;
+            rays.push_back(image_to_3d(img.dense_features[m.feat_idx].location, *img.model, img.position,
+                                       img.orientation));
         }
 
         if (rays.size() >= 2)
         {
             auto triangulated = rayIntersection(rays);
             if (triangulated.first.allFinite() && triangulated.second >= 0)
+            {
                 merged_points.push_back(triangulated.first);
-            else
-                merged_points.push_back(track.mesh_point);
+                continue;
+            }
         }
-        else
-        {
-            merged_points.push_back(track.mesh_point);
-        }
+
+        auto fb = track_fallbacks.find(root);
+        if (fb != track_fallbacks.end())
+            merged_points.push_back(fb->second);
     }
 
     if (!merged_points.empty())
@@ -349,7 +374,7 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
     {
         total_points += cloud.size();
     }
-    spdlog::info("Dense: {} 3D points from {} tracks, {} images", total_points, tracks.size(), node_ids.size());
+    spdlog::info("Dense: {} 3D points from {} tracks, {} images", total_points, track_ids.size(), node_ids.size());
 
     if (progress_cb)
         progress_cb(1.f);

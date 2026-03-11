@@ -10,7 +10,6 @@
 
 #include <opencalibration/distort/invert_distortion.hpp>
 #include <opencalibration/types/union_find.hpp>
-#include <numeric>
 #include <thread>
 
 namespace opencalibration
@@ -965,8 +964,8 @@ surface_model RelaxProblem::getSurfaceModel()
         }
     }
 
-    ankerl::unordered_dense::map<uint64_t, size_t> measurement_to_idx;
-    UnionFind uf;
+    UnionFind uf(flat_tracks.size());
+    ankerl::unordered_dense::map<NodeIdFeatureIndex, size_t, NodeIdFeatureIndex> measurement_to_idx;
 
     for (size_t i = 0; i < flat_tracks.size(); i++)
     {
@@ -974,30 +973,24 @@ surface_model RelaxProblem::getSurfaceModel()
         if (!t.point.allFinite())
             continue;
 
-        uint64_t track_key = UnionFind::key(i, 0);
         for (const auto &m : t.measurements)
         {
-            uint64_t mkey = UnionFind::key(m.node_id, m.feature_index);
-            auto it = measurement_to_idx.find(mkey);
-            if (it != measurement_to_idx.end())
+            auto [it, inserted] = measurement_to_idx.try_emplace(m, i);
+            if (!inserted)
             {
-                uf.unite(track_key, UnionFind::key(it->second, 0));
-            }
-            else
-            {
-                measurement_to_idx[mkey] = i;
+                uf.unite(i, it->second);
             }
         }
     }
 
-    ankerl::unordered_dense::map<uint64_t, std::pair<Eigen::Vector3d, size_t>> merged;
+    ankerl::unordered_dense::map<size_t, std::pair<Eigen::Vector3d, size_t>> merged;
     for (size_t i = 0; i < flat_tracks.size(); i++)
     {
         const auto &t = *flat_tracks[i];
         if (!t.point.allFinite())
             continue;
 
-        uint64_t root = uf.find(UnionFind::key(i, 0));
+        size_t root = uf.find(i);
         auto [it, inserted] = merged.try_emplace(root, std::make_pair(Eigen::Vector3d::Zero(), size_t{0}));
         it->second.first += t.point;
         it->second.second++;

@@ -1,9 +1,8 @@
 #pragma once
 
-#include <ankerl/unordered_dense.h>
-
 #include <cstddef>
-#include <cstdint>
+#include <numeric>
+#include <vector>
 
 namespace opencalibration
 {
@@ -11,26 +10,16 @@ namespace opencalibration
 class UnionFind
 {
   public:
-    static uint64_t key(size_t a, size_t b)
+    explicit UnionFind(size_t n) : _parent(n), _rank(n, 0) { std::iota(_parent.begin(), _parent.end(), 0); }
+
+    size_t find(size_t x)
     {
-        return (static_cast<uint64_t>(a) << 32) | static_cast<uint64_t>(b);
+        if (_parent[x] != x)
+            _parent[x] = find(_parent[x]);
+        return _parent[x];
     }
 
-    uint64_t find(uint64_t x)
-    {
-        auto it = _parent.find(x);
-        if (it == _parent.end())
-        {
-            _parent[x] = x;
-            _rank[x] = 0;
-            return x;
-        }
-        if (it->second != x)
-            it->second = find(it->second);
-        return it->second;
-    }
-
-    void unite(uint64_t a, uint64_t b)
+    void unite(size_t a, size_t b)
     {
         a = find(a);
         b = find(b);
@@ -44,8 +33,8 @@ class UnionFind
     }
 
   private:
-    ankerl::unordered_dense::map<uint64_t, uint64_t> _parent;
-    ankerl::unordered_dense::map<uint64_t, uint64_t> _rank;
+    std::vector<size_t> _parent;
+    std::vector<size_t> _rank;
 };
 
 } // namespace opencalibration
