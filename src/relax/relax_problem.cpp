@@ -9,6 +9,8 @@
 #include "ceres_log_forwarding.cpp.inc"
 
 #include <opencalibration/distort/invert_distortion.hpp>
+#include <opencalibration/types/union_find.hpp>
+#include <numeric>
 #include <thread>
 
 namespace opencalibration
@@ -953,23 +955,64 @@ void RelaxProblem::solve()
 surface_model RelaxProblem::getSurfaceModel()
 {
     surface_model s;
-    s.cloud.reserve(_edge_tracks.size());
 
-    for (const auto &tv : _edge_tracks)
+    std::vector<const FeatureTrack *> flat_tracks;
+    for (const auto &[edge_id, tracks] : _edge_tracks)
     {
-        point_cloud points;
-        points.reserve(tv.second.size());
-        for (const auto &t : tv.second)
+        for (const auto &t : tracks)
         {
-            if (t.point.allFinite())
+            flat_tracks.push_back(&t);
+        }
+    }
+
+    ankerl::unordered_dense::map<uint64_t, size_t> measurement_to_idx;
+    UnionFind uf;
+
+    for (size_t i = 0; i < flat_tracks.size(); i++)
+    {
+        const auto &t = *flat_tracks[i];
+        if (!t.point.allFinite())
+            continue;
+
+        uint64_t track_key = UnionFind::key(i, 0);
+        for (const auto &m : t.measurements)
+        {
+            uint64_t mkey = UnionFind::key(m.node_id, m.feature_index);
+            auto it = measurement_to_idx.find(mkey);
+            if (it != measurement_to_idx.end())
             {
-                points.push_back(t.point);
+                uf.unite(track_key, UnionFind::key(it->second, 0));
+            }
+            else
+            {
+                measurement_to_idx[mkey] = i;
             }
         }
-        if (!points.empty())
-        {
-            s.cloud.emplace_back(std::move(points));
-        }
+    }
+
+    ankerl::unordered_dense::map<uint64_t, std::pair<Eigen::Vector3d, size_t>> merged;
+    for (size_t i = 0; i < flat_tracks.size(); i++)
+    {
+        const auto &t = *flat_tracks[i];
+        if (!t.point.allFinite())
+            continue;
+
+        uint64_t root = uf.find(UnionFind::key(i, 0));
+        auto [it, inserted] = merged.try_emplace(root, std::make_pair(Eigen::Vector3d::Zero(), size_t{0}));
+        it->second.first += t.point;
+        it->second.second++;
+    }
+
+    point_cloud points;
+    points.reserve(merged.size());
+    for (const auto &[root, acc] : merged)
+    {
+        points.push_back(acc.first / static_cast<double>(acc.second));
+    }
+
+    if (!points.empty())
+    {
+        s.cloud.emplace_back(std::move(points));
     }
 
     s.mesh = _mesh;

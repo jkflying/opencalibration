@@ -483,6 +483,11 @@ TEST_F(DenseStereoTest, points_from_multiple_cameras)
 
     EXPECT_GT(total_points, 0) << "Multiple cameras should produce matches";
 
+    // Track merging should produce at most one point per ground truth point,
+    // not one per (source image, ground truth point) pair
+    EXPECT_LE(total_points, ground_points.size())
+        << "Track merging should deduplicate points seen from multiple cameras";
+
     for (const auto &cloud : surfaces[0].cloud)
     {
         for (const auto &pt : cloud)

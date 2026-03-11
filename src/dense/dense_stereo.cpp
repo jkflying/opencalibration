@@ -4,6 +4,7 @@
 #include <opencalibration/geometry/intersection.hpp>
 #include <opencalibration/surface/intersect.hpp>
 #include <opencalibration/types/feature_2d.hpp>
+#include <opencalibration/types/union_find.hpp>
 
 #include <jk/KDTree.h>
 #include <spdlog/spdlog.h>
@@ -76,6 +77,13 @@ double descriptor_distance(const opencalibration::feature_2d &f1, const opencali
     return (f1.descriptor ^ f2.descriptor).count() * (1.0 / opencalibration::feature_2d::DESCRIPTOR_BITS);
 }
 
+struct DenseMatch
+{
+    size_t src_node, src_feat;
+    size_t dst_node, dst_feat;
+    Eigen::Vector3d mesh_point;
+};
+
 } // namespace
 
 namespace opencalibration
@@ -145,7 +153,8 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
     const auto &mesh = surface.mesh;
 
     std::atomic<size_t> images_done{0};
-    std::mutex cloud_mutex;
+    std::mutex matches_mutex;
+    std::vector<DenseMatch> all_matches;
 
     const int num_nodes = static_cast<int>(node_ids.size());
 #pragma omp parallel for schedule(dynamic) // NOLINT(modernize-loop-convert)
@@ -168,7 +177,7 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
         auto order = hilbertFeatureOrder(src_img.dense_features, static_cast<int>(src_model.pixels_cols),
                                          static_cast<int>(src_model.pixels_rows));
 
-        point_cloud local_points;
+        std::vector<DenseMatch> local_matches;
 
         auto camera_searcher = camera_tree.searcher();
 
@@ -249,22 +258,16 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
                                      : best_dist < MAX_ABSOLUTE_DESCRIPTOR_DISTANCE;
                 if (good_match)
                 {
-                    ray_d cand_ray = image_to_3d(cand_img.dense_features[best_feat_idx].location,
-                                                 cand_model, cand_pos, cand_ori);
-                    auto triangulated = rayIntersection(r, cand_ray);
-                    if (triangulated.first.allFinite() && triangulated.second >= 0)
-                        local_points.push_back(triangulated.first);
-                    else
-                        local_points.push_back(pt3d);
-                    break;
+                    local_matches.push_back({src_nid, fi, cand_nid, best_feat_idx, pt3d});
                 }
             }
         }
 
-        if (!local_points.empty())
+        if (!local_matches.empty())
         {
-            std::lock_guard<std::mutex> lock(cloud_mutex);
-            surface.cloud.push_back(std::move(local_points));
+            std::lock_guard<std::mutex> lock(matches_mutex);
+            all_matches.insert(all_matches.end(), std::make_move_iterator(local_matches.begin()),
+                               std::make_move_iterator(local_matches.end()));
         }
 
         size_t done = ++images_done;
@@ -274,12 +277,79 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
         }
     }
 
+    UnionFind uf;
+    for (const auto &m : all_matches)
+    {
+        uint64_t src_key = UnionFind::key(m.src_node, m.src_feat);
+        uint64_t dst_key = UnionFind::key(m.dst_node, m.dst_feat);
+        uf.unite(src_key, dst_key);
+    }
+
+    struct TrackData
+    {
+        std::vector<std::pair<size_t, size_t>> measurements; // (node_id, feat_idx)
+        Eigen::Vector3d mesh_point;
+    };
+    ankerl::unordered_dense::map<uint64_t, TrackData> tracks;
+
+    for (const auto &m : all_matches)
+    {
+        uint64_t root = uf.find(UnionFind::key(m.src_node, m.src_feat));
+
+        auto &track = tracks[root];
+        if (track.measurements.empty())
+            track.mesh_point = m.mesh_point;
+
+        track.measurements.push_back({m.src_node, m.src_feat});
+        track.measurements.push_back({m.dst_node, m.dst_feat});
+    }
+
+    for (auto &[root, track] : tracks)
+    {
+        std::sort(track.measurements.begin(), track.measurements.end());
+        track.measurements.erase(std::unique(track.measurements.begin(), track.measurements.end()),
+                                 track.measurements.end());
+    }
+
+    point_cloud merged_points;
+    merged_points.reserve(tracks.size());
+
+    for (const auto &[root, track] : tracks)
+    {
+        std::vector<ray_d> rays;
+        rays.reserve(track.measurements.size());
+
+        for (const auto &[nid, fidx] : track.measurements)
+        {
+            const auto &img = graph.getNode(nid)->payload;
+            rays.push_back(image_to_3d(img.dense_features[fidx].location, *img.model, img.position, img.orientation));
+        }
+
+        if (rays.size() >= 2)
+        {
+            auto triangulated = rayIntersection(rays);
+            if (triangulated.first.allFinite() && triangulated.second >= 0)
+                merged_points.push_back(triangulated.first);
+            else
+                merged_points.push_back(track.mesh_point);
+        }
+        else
+        {
+            merged_points.push_back(track.mesh_point);
+        }
+    }
+
+    if (!merged_points.empty())
+    {
+        surface.cloud.push_back(std::move(merged_points));
+    }
+
     size_t total_points = 0;
     for (const auto &cloud : surface.cloud)
     {
         total_points += cloud.size();
     }
-    spdlog::info("Dense: added {} 3D points from {} images", total_points, node_ids.size());
+    spdlog::info("Dense: {} 3D points from {} tracks, {} images", total_points, tracks.size(), node_ids.size());
 
     if (progress_cb)
         progress_cb(1.f);
