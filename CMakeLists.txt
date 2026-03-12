@@ -47,6 +47,7 @@ include_directories(SYSTEM external/unordered_dense/include)
 
 find_package(OpenMP REQUIRED)
 find_package(spdlog REQUIRED)
+find_package(mimalloc REQUIRED)
 # =======================================
 
 if(MSVC)

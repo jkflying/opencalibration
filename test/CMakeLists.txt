@@ -25,7 +25,8 @@ target_link_libraries(functional_tests PUBLIC gtest pthread oc_dense
                                                             oc_model_inliers
                                                             oc_ortho
                                                             oc_pipeline
-                                                            oc_surface)
+                                                            oc_surface
+                                                            mimalloc)
 
 target_compile_definitions(functional_tests PUBLIC TEST_DATA_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/test_data/\"
                                                    TEST_DATA_OUTPUT_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/test_output/\"
@@ -51,7 +52,8 @@ target_link_libraries(unit_tests PUBLIC gtest pthread oc_geo_coord
                                                       oc_model_inliers
                                                       oc_ortho
                                                       oc_relax
-                                                      oc_surface)
+                                                      oc_surface
+                                                      mimalloc)
 
 set_target_properties(functional_tests unit_tests PROPERTIES CXX_CLANG_TIDY "")
 
