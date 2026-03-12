@@ -80,8 +80,12 @@ class RelaxProblem
     void addPointMeasurementsCost(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge,
                                   const RelaxOptionSet &options);
 
+    void collectEdgeTracks(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge);
+
     void addRayTriangleMeasurementCost(const MeasurementGraph &graph, size_t edge_id,
                                        const MeasurementGraph::Edge &edge, const RelaxOptionSet &options);
+
+    void addMultiRayTrackCosts(const MeasurementGraph &graph, const RelaxOptionSet &options);
 
     void initializeGroundPlane();
     void initializeGroundMesh(const std::vector<surface_model> &previousSurfaces, bool useMinimalMesh = false);
@@ -127,6 +131,7 @@ class RelaxProblem
     // Surface models
     using track_vec = std::vector<FeatureTrack, Eigen::aligned_allocator<FeatureTrack>>;
     ankerl::unordered_dense::map<size_t, track_vec> _edge_tracks;
+    ankerl::unordered_dense::set<NodeIdFeatureIndex, NodeIdFeatureIndex> _multi_ray_measurements;
     MeshGraph _mesh;
     std::vector<double> _mesh_initial_z;
 };
