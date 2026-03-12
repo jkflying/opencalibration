@@ -7,7 +7,6 @@
 
 #include <opencalibration/dense/dense_stereo.hpp>
 
-
 #include <opencalibration/combinatorics/interleave.hpp>
 #include <opencalibration/distort/distort_keypoints.hpp>
 #include <opencalibration/io/checkpoint.hpp>
@@ -521,8 +520,7 @@ Pipeline::Transition Pipeline::densify_mesh()
 
     _emit_progress("Densifying mesh", 0.f);
 
-    densifyMesh(_graph, _surfaces,
-                [this](float progress) { _emit_progress("Densifying mesh", progress); });
+    densifyMesh(_graph, _surfaces, [this](float progress) { _emit_progress("Densifying mesh", progress); });
 
     _emit_progress("Densifying mesh", 1.f);
 

@@ -73,8 +73,8 @@ CameraModel makeDownwardCamera()
 }
 
 // Project a 3D world point into an image, return pixel coordinates
-Eigen::Vector2d projectPoint(const Eigen::Vector3d &world_pt, const CameraModel &model,
-                             const Eigen::Vector3d &cam_pos, const Eigen::Quaterniond &cam_ori)
+Eigen::Vector2d projectPoint(const Eigen::Vector3d &world_pt, const CameraModel &model, const Eigen::Vector3d &cam_pos,
+                             const Eigen::Quaterniond &cam_ori)
 {
     return image_from_3d(world_pt, model, cam_pos, cam_ori);
 }
@@ -114,8 +114,8 @@ struct SceneResult
 
 // Build a synthetic scene with two cameras and ground truth points, optionally with noise.
 // Returns the output points and error statistics relative to ground truth.
-SceneResult runNoisyScene(const CameraModel &cam_model, const Eigen::Quaterniond &base_ori,
-                          double pixel_noise_stddev, double orientation_noise_deg, int descriptor_bit_flips)
+SceneResult runNoisyScene(const CameraModel &cam_model, const Eigen::Quaterniond &base_ori, double pixel_noise_stddev,
+                          double orientation_noise_deg, int descriptor_bit_flips)
 {
     std::mt19937 rng(12345);
     std::normal_distribution<double> pixel_dist(0, pixel_noise_stddev);
@@ -174,10 +174,8 @@ SceneResult runNoisyScene(const CameraModel &cam_model, const Eigen::Quaterniond
         px1 += Eigen::Vector2d(pixel_dist(rng), pixel_dist(rng));
         px2 += Eigen::Vector2d(pixel_dist(rng), pixel_dist(rng));
 
-        bool in1 =
-            px1.x() >= 0 && px1.x() < cam_model.pixels_cols && px1.y() >= 0 && px1.y() < cam_model.pixels_rows;
-        bool in2 =
-            px2.x() >= 0 && px2.x() < cam_model.pixels_cols && px2.y() >= 0 && px2.y() < cam_model.pixels_rows;
+        bool in1 = px1.x() >= 0 && px1.x() < cam_model.pixels_cols && px1.y() >= 0 && px1.y() < cam_model.pixels_rows;
+        bool in2 = px2.x() >= 0 && px2.x() < cam_model.pixels_cols && px2.y() >= 0 && px2.y() < cam_model.pixels_rows;
 
         feature_2d base_feat = makeFeature(px1, seed);
 
@@ -434,8 +432,7 @@ TEST_F(DenseStereoTest, points_from_multiple_cameras)
     auto model_ptr = std::make_shared<CameraModel>(cam_model);
 
     // 4 cameras in a grid pattern at z=100
-    std::vector<Eigen::Vector3d> cam_positions = {
-        {0, 0, 100}, {10, 0, 100}, {0, 10, 100}, {10, 10, 100}};
+    std::vector<Eigen::Vector3d> cam_positions = {{0, 0, 100}, {10, 0, 100}, {0, 10, 100}, {10, 10, 100}};
 
     // Ground truth points in the center overlap region
     std::vector<Eigen::Vector3d> ground_points;

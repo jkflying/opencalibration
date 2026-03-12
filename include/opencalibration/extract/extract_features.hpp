@@ -16,4 +16,4 @@ struct extracted_features
 };
 
 extracted_features extract_features(const cv::Mat &image);
-}
+} // namespace opencalibration

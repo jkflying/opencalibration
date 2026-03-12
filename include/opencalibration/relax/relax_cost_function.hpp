@@ -418,9 +418,9 @@ template <int N> struct MultiRayPlaneIntersectionAngleCost_FocalRadial
     static const int NUM_RESIDUALS = N * 3;
 
     MultiRayPlaneIntersectionAngleCost_FocalRadial(const std::array<Eigen::Vector3d, N> &camera_locs,
-                                                    const std::array<Eigen::Vector2d, N> &camera_pixels,
-                                                    const std::array<Eigen::Vector2d, 3> &plane_points,
-                                                    const InverseDifferentiableCameraModel<double> &model)
+                                                   const std::array<Eigen::Vector2d, N> &camera_pixels,
+                                                   const std::array<Eigen::Vector2d, 3> &plane_points,
+                                                   const InverseDifferentiableCameraModel<double> &model)
         : camera_loc(camera_locs), camera_pixel(camera_pixels), plane_point(plane_points), sharedModel(model)
     {
     }
@@ -613,8 +613,7 @@ template <int N> struct PlaneIntersectionAngleCost_NRay
     {
     }
 
-    template <typename T>
-    bool eval(const T *z0, const T *z1, const T *z2, const T *const *rots, T *res) const
+    template <typename T> bool eval(const T *z0, const T *z1, const T *z2, const T *const *rots, T *res) const
     {
         const T *rotations[N];
         for (int i = 0; i < N; i++)
@@ -659,9 +658,9 @@ template <int N> struct PlaneIntersectionAngleCost_NRay_FocalRadial
     static const int NUM_RESIDUALS = N * 3;
 
     PlaneIntersectionAngleCost_NRay_FocalRadial(const std::array<Eigen::Vector3d, N> &locs,
-                                                 const std::array<Eigen::Vector2d, N> &pixels,
-                                                 const std::array<Eigen::Vector2d, 3> &plane_points,
-                                                 const InverseDifferentiableCameraModel<double> &model)
+                                                const std::array<Eigen::Vector2d, N> &pixels,
+                                                const std::array<Eigen::Vector2d, 3> &plane_points,
+                                                const InverseDifferentiableCameraModel<double> &model)
         : _impl(locs, pixels, plane_points, model)
     {
     }

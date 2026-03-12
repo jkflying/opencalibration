@@ -347,8 +347,7 @@ void RelaxProblem::addRelationCost(const MeasurementGraph &graph, size_t edge_id
     _edges_used.emplace(edge_id);
 }
 
-void RelaxProblem::collectEdgeTracks(const MeasurementGraph &graph, size_t edge_id,
-                                     const MeasurementGraph::Edge &edge)
+void RelaxProblem::collectEdgeTracks(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge)
 {
     auto &points = _edge_tracks[edge_id];
     points.reserve(edge.payload.inlier_matches.size());
@@ -563,7 +562,7 @@ struct RayInfo
 
 template <int N, int... RotSizes>
 ceres::CostFunction *makeMultiRayCostImpl(const std::vector<RayInfo> &good_rays,
-                                           const std::array<Eigen::Vector2d, 3> &corner2d)
+                                          const std::array<Eigen::Vector2d, 3> &corner2d)
 {
     using F = PlaneIntersectionAngleCost_NRay<N>;
     std::array<Eigen::Vector3d, N> locs, dirs;
@@ -577,8 +576,8 @@ ceres::CostFunction *makeMultiRayCostImpl(const std::vector<RayInfo> &good_rays,
 
 template <int N, int... RotSizes>
 ceres::CostFunction *makeMultiRayCostFocalRadialImpl(const std::vector<RayInfo> &good_rays,
-                                                      const std::array<Eigen::Vector2d, 3> &corner2d,
-                                                      const InverseDifferentiableCameraModel<double> &model)
+                                                     const std::array<Eigen::Vector2d, 3> &corner2d,
+                                                     const InverseDifferentiableCameraModel<double> &model)
 {
     using F = PlaneIntersectionAngleCost_NRay_FocalRadial<N>;
     std::array<Eigen::Vector3d, N> locs;
@@ -682,8 +681,8 @@ void RelaxProblem::addMultiRayTrackCosts(const MeasurementGraph &graph, const Re
         // Intersect first ray pair to find approximate 3D point for mesh lookup
         Eigen::Vector3d ray0_world = rays[0].orientation * rays[0].camera_ray;
         Eigen::Vector3d ray1_world = rays[1].orientation * rays[1].camera_ray;
-        auto intersection_3d = rayIntersection(ray_d{ray0_world, rays[0].camera_loc},
-                                               ray_d{ray1_world, rays[1].camera_loc});
+        auto intersection_3d =
+            rayIntersection(ray_d{ray0_world, rays[0].camera_loc}, ray_d{ray1_world, rays[1].camera_loc});
 
         if (!intersection_3d.first.allFinite())
             continue;
@@ -696,7 +695,7 @@ void RelaxProblem::addMultiRayTrackCosts(const MeasurementGraph &graph, const Re
 
         const auto &triangle = tri.nodeLocations;
         std::array<Eigen::Vector2d, 3> corner2d = {triangle[0]->topRows<2>(), triangle[1]->topRows<2>(),
-                                                    triangle[2]->topRows<2>()};
+                                                   triangle[2]->topRows<2>()};
         std::array<double *, 3> zValues;
         for (size_t i = 0; i < 3; i++)
             zValues[i] = const_cast<double *>(&triangle[i]->z());
@@ -763,9 +762,8 @@ void RelaxProblem::addMultiRayTrackCosts(const MeasurementGraph &graph, const Re
         }
 
         bool use_focal_radial =
-            all_same_model &&
-            options.hasAny(
-                RelaxOptionSet{Option::FOCAL_LENGTH, Option::PRINCIPAL_POINT, Option::LENS_DISTORTIONS_RADIAL});
+            all_same_model && options.hasAny(RelaxOptionSet{Option::FOCAL_LENGTH, Option::PRINCIPAL_POINT,
+                                                            Option::LENS_DISTORTIONS_RADIAL});
 
         std::vector<double *> param_blocks;
         ceres::CostFunction *cost = nullptr;
@@ -794,10 +792,17 @@ void RelaxProblem::addMultiRayTrackCosts(const MeasurementGraph &graph, const Re
 
             switch (N)
             {
-            case 3: cost = makeMultiRayCostFocalRadialImpl<3, 4, 4, 4>(good_rays, corner2d, *inv_model_ptr); break;
-            case 4: cost = makeMultiRayCostFocalRadialImpl<4, 4, 4, 4, 4>(good_rays, corner2d, *inv_model_ptr); break;
-            case 5: cost = makeMultiRayCostFocalRadialImpl<5, 4, 4, 4, 4, 4>(good_rays, corner2d, *inv_model_ptr); break;
-            default: continue;
+            case 3:
+                cost = makeMultiRayCostFocalRadialImpl<3, 4, 4, 4>(good_rays, corner2d, *inv_model_ptr);
+                break;
+            case 4:
+                cost = makeMultiRayCostFocalRadialImpl<4, 4, 4, 4, 4>(good_rays, corner2d, *inv_model_ptr);
+                break;
+            case 5:
+                cost = makeMultiRayCostFocalRadialImpl<5, 4, 4, 4, 4, 4>(good_rays, corner2d, *inv_model_ptr);
+                break;
+            default:
+                continue;
             }
         }
         else
@@ -810,10 +815,17 @@ void RelaxProblem::addMultiRayTrackCosts(const MeasurementGraph &graph, const Re
 
             switch (N)
             {
-            case 3: cost = makeMultiRayCostImpl<3, 4, 4, 4>(good_rays, corner2d); break;
-            case 4: cost = makeMultiRayCostImpl<4, 4, 4, 4, 4>(good_rays, corner2d); break;
-            case 5: cost = makeMultiRayCostImpl<5, 4, 4, 4, 4, 4>(good_rays, corner2d); break;
-            default: continue;
+            case 3:
+                cost = makeMultiRayCostImpl<3, 4, 4, 4>(good_rays, corner2d);
+                break;
+            case 4:
+                cost = makeMultiRayCostImpl<4, 4, 4, 4, 4>(good_rays, corner2d);
+                break;
+            case 5:
+                cost = makeMultiRayCostImpl<5, 4, 4, 4, 4, 4>(good_rays, corner2d);
+                break;
+            default:
+                continue;
             }
         }
 

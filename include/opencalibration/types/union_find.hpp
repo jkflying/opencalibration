@@ -10,7 +10,10 @@ namespace opencalibration
 class UnionFind
 {
   public:
-    explicit UnionFind(size_t n) : _parent(n), _rank(n, 0) { std::iota(_parent.begin(), _parent.end(), 0); }
+    explicit UnionFind(size_t n) : _parent(n), _rank(n, 0)
+    {
+        std::iota(_parent.begin(), _parent.end(), 0);
+    }
 
     size_t find(size_t x)
     {

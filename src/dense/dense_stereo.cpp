@@ -98,8 +98,7 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
     for (auto it = graph.cnodebegin(); it != graph.cnodeend(); ++it)
     {
         const auto &img = it->second.payload;
-        if (!img.dense_features.empty() && img.model && !img.position.hasNaN() &&
-            !img.orientation.coeffs().hasNaN())
+        if (!img.dense_features.empty() && img.model && !img.position.hasNaN() && !img.orientation.coeffs().hasNaN())
         {
             node_ids.push_back(it->first);
         }
@@ -170,15 +169,12 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
         }
     }
 
-    auto measurementId = [&](size_t nid, size_t feat_idx) -> size_t {
-        return node_id_to_offset[nid] + feat_idx;
-    };
+    auto measurementId = [&](size_t nid, size_t feat_idx) -> size_t { return node_id_to_offset[nid] + feat_idx; };
 
     std::atomic<size_t> images_done{0};
     std::mutex uf_mutex;
     UnionFind uf(id_to_measurement.size());
-    std::vector<Eigen::Vector3d> mesh_fallbacks(id_to_measurement.size(),
-                                                 Eigen::Vector3d(NAN, NAN, NAN));
+    std::vector<Eigen::Vector3d> mesh_fallbacks(id_to_measurement.size(), Eigen::Vector3d(NAN, NAN, NAN));
 
     const int num_nodes = static_cast<int>(node_ids.size());
 #pragma omp parallel for schedule(dynamic) // NOLINT(modernize-loop-convert)
@@ -224,9 +220,8 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
             size_t src_id = measurementId(src_nid, fi);
             bool has_match = false;
 
-            auto candidates =
-                camera_searcher.search({pt3d.x(), pt3d.y(), pt3d.z()},
-                                       std::numeric_limits<double>::max(), MAX_CANDIDATE_IMAGES + 1);
+            auto candidates = camera_searcher.search({pt3d.x(), pt3d.y(), pt3d.z()}, std::numeric_limits<double>::max(),
+                                                     MAX_CANDIDATE_IMAGES + 1);
 
             for (const auto &candidate : candidates)
             {
@@ -240,8 +235,7 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
                 const auto &cand_pos = cand_img.position;
                 const auto &cand_ori = cand_img.orientation;
 
-                Eigen::Vector2d predicted =
-                    image_from_3d(pt3d, cand_model, cand_pos, cand_ori);
+                Eigen::Vector2d predicted = image_from_3d(pt3d, cand_model, cand_pos, cand_ori);
 
                 if (predicted.x() < 0 || predicted.x() >= cand_model.pixels_cols || predicted.y() < 0 ||
                     predicted.y() >= cand_model.pixels_rows)
@@ -254,9 +248,9 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
                     continue;
 
                 auto ft_searcher = ft_it->second.tree.searcher();
-                const auto &nearby = ft_searcher.search({predicted.x(), predicted.y()},
-                                                        SEARCH_RADIUS_PIXELS * SEARCH_RADIUS_PIXELS,
-                                                        std::numeric_limits<size_t>::max());
+                const auto &nearby =
+                    ft_searcher.search({predicted.x(), predicted.y()}, SEARCH_RADIUS_PIXELS * SEARCH_RADIUS_PIXELS,
+                                       std::numeric_limits<size_t>::max());
 
                 if (nearby.empty())
                     continue;
@@ -283,9 +277,8 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
                     }
                 }
 
-                bool good_match = nearby.size() >= 2
-                                     ? best_dist < RATIO_THRESHOLD * second_best_dist
-                                     : best_dist < MAX_ABSOLUTE_DESCRIPTOR_DISTANCE;
+                bool good_match = nearby.size() >= 2 ? best_dist < RATIO_THRESHOLD * second_best_dist
+                                                     : best_dist < MAX_ABSOLUTE_DESCRIPTOR_DISTANCE;
                 if (good_match)
                 {
                     local_matches.push_back({src_id, measurementId(cand_nid, best_feat_idx)});
@@ -345,8 +338,8 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
         {
             const auto &m = id_to_measurement[id];
             const auto &img = graph.getNode(m.node_id)->payload;
-            rays.push_back(image_to_3d(img.dense_features[m.feat_idx].location, *img.model, img.position,
-                                       img.orientation));
+            rays.push_back(
+                image_to_3d(img.dense_features[m.feat_idx].location, *img.model, img.position, img.orientation));
         }
 
         if (rays.size() >= 2)
