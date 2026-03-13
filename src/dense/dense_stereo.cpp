@@ -72,6 +72,7 @@ constexpr double SEARCH_RADIUS_PIXELS = 150.0;
 constexpr double RATIO_THRESHOLD = 0.8;
 constexpr int MAX_CANDIDATE_IMAGES = 10;
 constexpr double MAX_ABSOLUTE_DESCRIPTOR_DISTANCE = 0.3;
+constexpr double MAX_REPROJECTION_ERROR_PIXELS = 5.0;
 
 double descriptor_distance(const opencalibration::feature_2d &f1, const opencalibration::feature_2d &f2)
 {
@@ -181,7 +182,6 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
     std::atomic<size_t> images_done{0};
     std::mutex uf_mutex;
     UnionFind uf(id_to_measurement.size());
-    std::vector<Eigen::Vector3d> mesh_fallbacks(id_to_measurement.size(), Eigen::Vector3d(NAN, NAN, NAN));
 
     const int num_nodes = static_cast<int>(node_ids.size());
 #pragma omp parallel for schedule(dynamic) // NOLINT(modernize-loop-convert)
@@ -211,7 +211,6 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
             size_t src_id, dst_id;
         };
         std::vector<LocalMatch> local_matches;
-        std::vector<std::pair<size_t, Eigen::Vector3d>> local_fallbacks;
 
         auto camera_searcher = camera_tree.searcher();
 
@@ -228,7 +227,6 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
 
             const Eigen::Vector3d &pt3d = info.intersectionLocation;
             size_t src_id = measurementId(src_nid, global_fi);
-            bool has_match = false;
 
             auto candidates = camera_searcher.search({pt3d.x(), pt3d.y(), pt3d.z()}, std::numeric_limits<double>::max(),
                                                      MAX_CANDIDATE_IMAGES + 1);
@@ -292,14 +290,9 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
                 if (good_match)
                 {
                     local_matches.push_back({src_id, measurementId(cand_nid, best_feat_idx)});
-                    has_match = true;
                 }
             }
 
-            if (has_match)
-            {
-                local_fallbacks.push_back({src_id, pt3d});
-            }
         }
 
         if (!local_matches.empty())
@@ -308,10 +301,6 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
             for (const auto &lm : local_matches)
             {
                 uf.unite(lm.src_id, lm.dst_id);
-            }
-            for (const auto &[id, pt] : local_fallbacks)
-            {
-                mesh_fallbacks[id] = pt;
             }
         }
 
@@ -323,47 +312,78 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
     }
 
     ankerl::unordered_dense::map<size_t, std::vector<size_t>> track_ids;
-    ankerl::unordered_dense::map<size_t, Eigen::Vector3d> track_fallbacks;
 
     for (size_t i = 0; i < id_to_measurement.size(); i++)
     {
         size_t root = uf.find(i);
-        if (root == i && !mesh_fallbacks[i].allFinite())
-            continue;
-
         track_ids[root].push_back(i);
-        if (mesh_fallbacks[i].allFinite())
-            track_fallbacks.try_emplace(root, mesh_fallbacks[i]);
     }
 
     point_cloud merged_points;
     merged_points.reserve(track_ids.size());
 
+    const double max_reproj_err_sq = MAX_REPROJECTION_ERROR_PIXELS * MAX_REPROJECTION_ERROR_PIXELS;
+
+    struct RayMeasurement
+    {
+        ray_d ray;
+        Eigen::Vector2d pixel;
+        const CameraModel *model;
+        const Eigen::Vector3d *position;
+        const Eigen::Quaterniond *orientation;
+    };
+
+    std::vector<RayMeasurement> measurements;
+    std::vector<ray_d> rays;
+    std::vector<size_t> inlier_indices;
+
     for (const auto &[root, ids] : track_ids)
     {
-        std::vector<ray_d> rays;
-        rays.reserve(ids.size());
+        if (ids.size() < 2)
+            continue;
 
+        measurements.clear();
         for (size_t id : ids)
         {
             const auto &m = id_to_measurement[id];
             const auto &img = graph.getNode(m.node_id)->payload;
-            rays.push_back(image_to_3d(img.features[m.feat_idx].location, *img.model, img.position, img.orientation));
+            const auto &pixel = img.features[m.feat_idx].location;
+            measurements.push_back({image_to_3d(pixel, *img.model, img.position, img.orientation), pixel, img.model.get(),
+                                    &img.position, &img.orientation});
         }
 
-        if (rays.size() >= 2)
+        rays.clear();
+        for (const auto &rm : measurements)
+            rays.push_back(rm.ray);
+
+        auto triangulated = rayIntersection(rays);
+        if (!triangulated.first.allFinite() || triangulated.second < 0)
+            continue;
+
+        inlier_indices.clear();
+        for (size_t i = 0; i < measurements.size(); i++)
         {
-            auto triangulated = rayIntersection(rays);
-            if (triangulated.first.allFinite() && triangulated.second >= 0)
-            {
-                merged_points.push_back(triangulated.first);
-                continue;
-            }
+            const auto &rm = measurements[i];
+            Eigen::Vector2d reproj = image_from_3d(triangulated.first, *rm.model, *rm.position, *rm.orientation);
+            double err_sq = (reproj - rm.pixel).squaredNorm();
+            if (err_sq <= max_reproj_err_sq)
+                inlier_indices.push_back(i);
         }
 
-        auto fb = track_fallbacks.find(root);
-        if (fb != track_fallbacks.end())
-            merged_points.push_back(fb->second);
+        if (inlier_indices.size() < 2)
+            continue;
+
+        if (inlier_indices.size() < measurements.size())
+        {
+            rays.clear();
+            for (size_t i : inlier_indices)
+                rays.push_back(measurements[i].ray);
+            triangulated = rayIntersection(rays);
+            if (!triangulated.first.allFinite() || triangulated.second < 0)
+                continue;
+        }
+
+        merged_points.push_back(triangulated.first);
     }
 
     if (!merged_points.empty())

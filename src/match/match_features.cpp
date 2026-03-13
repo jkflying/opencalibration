@@ -18,13 +18,17 @@ double descriptor_distance(const opencalibration::feature_2d &f1, const opencali
 namespace opencalibration
 {
 
-std::vector<size_t> spatially_subsample_feature_indices(const std::vector<feature_2d> &features, double spacing_pixels)
+std::vector<size_t> spatially_subsample_feature_indices(const std::vector<feature_2d> &features, double spacing_pixels,
+                                                        size_t count)
 {
-    if (features.empty())
+    if (count == 0)
+        count = features.size();
+
+    if (count == 0)
         return {};
 
-    std::vector<size_t> sorted_indices(features.size());
-    for (size_t i = 0; i < features.size(); i++)
+    std::vector<size_t> sorted_indices(count);
+    for (size_t i = 0; i < count; i++)
     {
         sorted_indices[i] = i;
     }
@@ -155,8 +159,13 @@ std::vector<feature_match> match_features_local_guided(const std::vector<feature
                                                        const std::vector<feature_2d> &set_2,
                                                        const Eigen::Matrix3d &homography, double search_radius_pixels,
                                                        const Eigen::Matrix3d *fundamental_matrix,
-                                                       double epipolar_threshold_pixels)
+                                                       double epipolar_threshold_pixels, size_t count_1, size_t count_2)
 {
+    if (count_1 == 0)
+        count_1 = set_1.size();
+    if (count_2 == 0)
+        count_2 = set_2.size();
+
     const double ratio_threshold = 0.8;
 
     // Epipolar line distance: |x2' * F * x1| / ||(Fx1)[0:1]||
@@ -169,16 +178,16 @@ std::vector<feature_match> match_features_local_guided(const std::vector<feature
 
     auto toArray = [](const Eigen::Vector2d &v) -> std::array<double, 2> { return {v.x(), v.y()}; };
     jk::tree::KDTree<size_t, 2, 8> tree;
-    for (size_t i = 0; i < set_2.size(); i++)
+    for (size_t i = 0; i < count_2; i++)
     {
         tree.addPoint(toArray(set_2[i].location), i);
     }
 
     std::vector<feature_match> forward_matches;
-    forward_matches.reserve(set_1.size());
+    forward_matches.reserve(count_1);
 
     auto searcher = tree.searcher();
-    for (size_t i = 0; i < set_1.size(); i++)
+    for (size_t i = 0; i < count_1; i++)
     {
         const auto &f1 = set_1[i];
 
@@ -233,7 +242,7 @@ std::vector<feature_match> match_features_local_guided(const std::vector<feature
     }
 
     jk::tree::KDTree<size_t, 2, 8> tree1;
-    for (size_t i = 0; i < set_1.size(); i++)
+    for (size_t i = 0; i < count_1; i++)
     {
         tree1.addPoint(toArray(set_1[i].location), i);
     }
@@ -245,7 +254,7 @@ std::vector<feature_match> match_features_local_guided(const std::vector<feature
         F_transpose = fundamental_matrix->transpose();
     }
     auto searcher1 = tree1.searcher();
-    std::vector<size_t> backward_best(set_2.size(), SIZE_MAX);
+    std::vector<size_t> backward_best(count_2, SIZE_MAX);
     for (size_t j : matched_in_set2)
     {
         const auto &f2 = set_2[j];
