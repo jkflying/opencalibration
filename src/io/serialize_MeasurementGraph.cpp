@@ -450,34 +450,8 @@ template <> class Serializer<MeasurementGraph>
                 }
                 writer.EndArray();
 
-                writer.Key("dense_features");
-                writer.StartArray();
-
-                for (const auto &feature : node.payload.dense_features)
-                {
-                    writer.StartObject();
-
-                    writer.Key("location");
-                    writer.StartArray();
-                    {
-                        writer.Double(feature.location.x());
-                        writer.Double(feature.location.y());
-                    }
-                    writer.EndArray();
-
-                    writer.Key("strength");
-                    writer.Double(feature.strength);
-
-                    writer.Key("descriptor");
-                    std::string descriptor = bitset_to_bytes(feature.descriptor);
-                    std::string base64_descriptor;
-                    base64_descriptor.resize(Base64encode_len(descriptor.size()));
-                    int actual_size = Base64encode(base64_descriptor.data(), descriptor.c_str(), descriptor.size());
-                    writer.String(base64_descriptor.c_str(), actual_size - 1);
-
-                    writer.EndObject();
-                }
-                writer.EndArray();
+                writer.Key("num_sparse_features");
+                writer.Uint64(node.payload.num_sparse_features);
             }
             writer.EndObject();
         }

@@ -105,6 +105,14 @@ feature_2d noisyFeature(const feature_2d &f, std::mt19937 &rng, int num_flips)
     return out;
 }
 
+// Helper: add dense features to an image (appended after num_sparse_features)
+void addDenseFeatures(image &img, std::vector<feature_2d> dense)
+{
+    img.num_sparse_features = img.features.size();
+    img.features.insert(img.features.end(), std::make_move_iterator(dense.begin()),
+                        std::make_move_iterator(dense.end()));
+}
+
 struct SceneResult
 {
     size_t total_points = 0;
@@ -113,7 +121,6 @@ struct SceneResult
 };
 
 // Build a synthetic scene with two cameras and ground truth points, optionally with noise.
-// Returns the output points and error statistics relative to ground truth.
 SceneResult runNoisyScene(const CameraModel &cam_model, const Eigen::Quaterniond &base_ori, double pixel_noise_stddev,
                           double orientation_noise_deg, int descriptor_bit_flips)
 {
@@ -123,7 +130,6 @@ SceneResult runNoisyScene(const CameraModel &cam_model, const Eigen::Quaterniond
     Eigen::Vector3d cam1_pos(0, 0, 100);
     Eigen::Vector3d cam2_pos(10, 0, 100);
 
-    // Apply orientation noise as small random rotations
     auto perturbOrientation = [&](const Eigen::Quaterniond &ori) -> Eigen::Quaterniond {
         if (orientation_noise_deg == 0)
             return ori;
@@ -141,7 +147,6 @@ SceneResult runNoisyScene(const CameraModel &cam_model, const Eigen::Quaterniond
 
     auto model_ptr = std::make_shared<CameraModel>(cam_model);
 
-    // Ground truth points on z=0 in the overlap region
     std::vector<Eigen::Vector3d> gt_points;
     for (double x = 0; x <= 10; x += 2)
     {
@@ -163,14 +168,13 @@ SceneResult runNoisyScene(const CameraModel &cam_model, const Eigen::Quaterniond
     img2.position = cam2_pos;
     img2.orientation = cam2_ori;
 
+    std::vector<feature_2d> dense1, dense2;
     uint64_t seed = 500;
     for (const auto &pt : gt_points)
     {
-        // Project using the *perturbed* camera orientations (as the system would see them)
         Eigen::Vector2d px1 = image_from_3d(pt, cam_model, cam1_pos, cam1_ori);
         Eigen::Vector2d px2 = image_from_3d(pt, cam_model, cam2_pos, cam2_ori);
 
-        // Add pixel noise
         px1 += Eigen::Vector2d(pixel_dist(rng), pixel_dist(rng));
         px2 += Eigen::Vector2d(pixel_dist(rng), pixel_dist(rng));
 
@@ -185,7 +189,7 @@ SceneResult runNoisyScene(const CameraModel &cam_model, const Eigen::Quaterniond
             f1.location = px1;
             if (descriptor_bit_flips > 0)
                 f1 = noisyFeature(f1, rng, descriptor_bit_flips);
-            img1.dense_features.push_back(f1);
+            dense1.push_back(f1);
         }
         if (in2)
         {
@@ -193,10 +197,13 @@ SceneResult runNoisyScene(const CameraModel &cam_model, const Eigen::Quaterniond
             f2.location = px2;
             if (descriptor_bit_flips > 0)
                 f2 = noisyFeature(f2, rng, descriptor_bit_flips);
-            img2.dense_features.push_back(f2);
+            dense2.push_back(f2);
         }
         seed++;
     }
+
+    addDenseFeatures(img1, std::move(dense1));
+    addDenseFeatures(img2, std::move(dense2));
 
     MeasurementGraph graph;
     graph.addNode(std::move(img1));
@@ -214,7 +221,6 @@ SceneResult runNoisyScene(const CameraModel &cam_model, const Eigen::Quaterniond
         for (const auto &pt : cloud)
         {
             result.total_points++;
-            // Find closest ground truth point in XY
             double min_err = std::numeric_limits<double>::max();
             for (const auto &gt : gt_points)
             {
@@ -238,12 +244,7 @@ class DenseStereoTest : public ::testing::Test
   protected:
     void SetUp() override
     {
-        // Camera looking straight down: orientation that rotates camera z-axis to world -z
-        // Camera convention: z forward, x right, y down
-        // We want camera z to point toward world -z (down)
-        // This is a 180 degree rotation around x-axis
         cam_ori = Eigen::Quaterniond(Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()));
-
         cam_model = makeDownwardCamera();
     }
 
@@ -255,7 +256,6 @@ TEST_F(DenseStereoTest, synthetic_overlapping_cameras)
 {
     MeasurementGraph graph;
 
-    // Two cameras at z=100, separated by 10 units in x, looking straight down
     Eigen::Vector3d cam1_pos(0, 0, 100);
     Eigen::Vector3d cam2_pos(10, 0, 100);
 
@@ -273,7 +273,6 @@ TEST_F(DenseStereoTest, synthetic_overlapping_cameras)
     img2.position = cam2_pos;
     img2.orientation = cam_ori;
 
-    // Create ground truth 3D points on the z=0 plane in the overlap region
     std::vector<Eigen::Vector3d> ground_truth_points;
     for (double x = -5; x <= 15; x += 2)
     {
@@ -283,7 +282,7 @@ TEST_F(DenseStereoTest, synthetic_overlapping_cameras)
         }
     }
 
-    // Project each ground truth point into both cameras → dense features with matching descriptors
+    std::vector<feature_2d> dense1, dense2;
     uint64_t seed = 42;
     for (const auto &pt : ground_truth_points)
     {
@@ -294,26 +293,27 @@ TEST_F(DenseStereoTest, synthetic_overlapping_cameras)
         bool in2 = px2.x() >= 0 && px2.x() < cam_model.pixels_cols && px2.y() >= 0 && px2.y() < cam_model.pixels_rows;
 
         if (in1)
-            img1.dense_features.push_back(makeFeature(px1, seed));
+            dense1.push_back(makeFeature(px1, seed));
         if (in2)
-            img2.dense_features.push_back(makeFeature(px2, seed));
+            dense2.push_back(makeFeature(px2, seed));
 
         seed++;
     }
 
-    ASSERT_GT(img1.dense_features.size(), 0);
-    ASSERT_GT(img2.dense_features.size(), 0);
+    addDenseFeatures(img1, std::move(dense1));
+    addDenseFeatures(img2, std::move(dense2));
+
+    ASSERT_GT(img1.features.size(), img1.num_sparse_features);
+    ASSERT_GT(img2.features.size(), img2.num_sparse_features);
 
     size_t nid1 = graph.addNode(std::move(img1));
     size_t nid2 = graph.addNode(std::move(img2));
     (void)nid1;
     (void)nid2;
 
-    // Build surface with flat mesh
     std::vector<surface_model> surfaces(1);
     surfaces[0].mesh = buildFlatMesh();
 
-    // Verify mesh intersection works before running dense
     {
         MeshIntersectionSearcher test_searcher;
         ASSERT_TRUE(test_searcher.init(surfaces[0].mesh));
@@ -327,7 +327,6 @@ TEST_F(DenseStereoTest, synthetic_overlapping_cameras)
 
     densifyMesh(graph, surfaces);
 
-    // Check that we got 3D points
     size_t total_points = 0;
     for (const auto &cloud : surfaces[0].cloud)
     {
@@ -336,7 +335,6 @@ TEST_F(DenseStereoTest, synthetic_overlapping_cameras)
 
     EXPECT_GT(total_points, 0) << "Expected dense matching to produce 3D points";
 
-    // All produced points should lie on the z=0 plane (the mesh surface)
     for (const auto &cloud : surfaces[0].cloud)
     {
         for (const auto &pt : cloud)
@@ -371,13 +369,12 @@ TEST_F(DenseStereoTest, no_match_with_different_descriptors)
     img2.position = cam2_pos;
     img2.orientation = cam_ori;
 
-    // Same ground point but different descriptors → should not match
     Eigen::Vector3d pt(5, 0, 0);
     Eigen::Vector2d px1 = projectPoint(pt, cam_model, cam1_pos, cam_ori);
     Eigen::Vector2d px2 = projectPoint(pt, cam_model, cam2_pos, cam_ori);
 
-    img1.dense_features.push_back(makeFeature(px1, 100));
-    img2.dense_features.push_back(makeFeature(px2, 999));
+    addDenseFeatures(img1, {makeFeature(px1, 100)});
+    addDenseFeatures(img2, {makeFeature(px2, 999)});
 
     graph.addNode(std::move(img1));
     graph.addNode(std::move(img2));
@@ -431,10 +428,8 @@ TEST_F(DenseStereoTest, points_from_multiple_cameras)
 
     auto model_ptr = std::make_shared<CameraModel>(cam_model);
 
-    // 4 cameras in a grid pattern at z=100
     std::vector<Eigen::Vector3d> cam_positions = {{0, 0, 100}, {10, 0, 100}, {0, 10, 100}, {10, 10, 100}};
 
-    // Ground truth points in the center overlap region
     std::vector<Eigen::Vector3d> ground_points;
     for (double x = 2; x <= 8; x += 2)
     {
@@ -453,17 +448,19 @@ TEST_F(DenseStereoTest, points_from_multiple_cameras)
         img.position = cam_pos;
         img.orientation = cam_ori;
 
+        std::vector<feature_2d> dense;
         uint64_t pt_seed = seed;
         for (const auto &pt : ground_points)
         {
             Eigen::Vector2d px = projectPoint(pt, cam_model, cam_pos, cam_ori);
             if (px.x() >= 0 && px.x() < cam_model.pixels_cols && px.y() >= 0 && px.y() < cam_model.pixels_rows)
             {
-                img.dense_features.push_back(makeFeature(px, pt_seed));
+                dense.push_back(makeFeature(px, pt_seed));
             }
             pt_seed++;
         }
 
+        addDenseFeatures(img, std::move(dense));
         graph.addNode(std::move(img));
     }
 
@@ -480,8 +477,6 @@ TEST_F(DenseStereoTest, points_from_multiple_cameras)
 
     EXPECT_GT(total_points, 0) << "Multiple cameras should produce matches";
 
-    // Track merging should produce at most one point per ground truth point,
-    // not one per (source image, ground truth point) pair
     EXPECT_LE(total_points, ground_points.size())
         << "Track merging should deduplicate points seen from multiple cameras";
 
@@ -496,7 +491,6 @@ TEST_F(DenseStereoTest, points_from_multiple_cameras)
 
 TEST_F(DenseStereoTest, accuracy_with_pixel_noise)
 {
-    // 1 pixel stddev noise → at altitude 100, focal 800: ~0.125 world units per pixel
     auto result = runNoisyScene(cam_model, cam_ori, 1.0, 0, 0);
 
     EXPECT_GT(result.total_points, 0) << "Should still find matches with 1px noise";
@@ -506,7 +500,6 @@ TEST_F(DenseStereoTest, accuracy_with_pixel_noise)
 
 TEST_F(DenseStereoTest, accuracy_with_orientation_noise)
 {
-    // 0.1 degree orientation noise → at altitude 100: ~0.17 world units
     auto result = runNoisyScene(cam_model, cam_ori, 0, 0.1, 0);
 
     EXPECT_GT(result.total_points, 0) << "Should still find matches with 0.1deg orientation noise";
@@ -516,17 +509,14 @@ TEST_F(DenseStereoTest, accuracy_with_orientation_noise)
 
 TEST_F(DenseStereoTest, accuracy_with_descriptor_noise)
 {
-    // Flip 20 out of 256 bits (~8% noise) — should still match
     auto result = runNoisyScene(cam_model, cam_ori, 0, 0, 20);
 
     EXPECT_GT(result.total_points, 0) << "Should still find matches with 20-bit descriptor noise";
-    // No pixel/orientation noise so points should land exactly on ground truth
     EXPECT_LT(result.max_xy_error, 0.01);
 }
 
 TEST_F(DenseStereoTest, accuracy_with_combined_noise)
 {
-    // Realistic scenario: small pixel noise + small orientation noise + descriptor noise
     auto result = runNoisyScene(cam_model, cam_ori, 0.5, 0.05, 10);
 
     EXPECT_GT(result.total_points, 0) << "Should find matches with combined noise";
@@ -535,8 +525,6 @@ TEST_F(DenseStereoTest, accuracy_with_combined_noise)
 
 TEST_F(DenseStereoTest, heavy_descriptor_noise_rejects)
 {
-    // Flip 200 out of 256 bits per image — after independent noise on both images,
-    // the expected inter-image hamming distance is ~0.5, well above the 0.3 threshold
     auto result = runNoisyScene(cam_model, cam_ori, 0, 0, 200);
 
     EXPECT_EQ(result.total_points, 0) << "Heavy descriptor noise should prevent matches";

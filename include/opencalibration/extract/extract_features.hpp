@@ -12,7 +12,7 @@ namespace opencalibration
 struct extracted_features
 {
     std::vector<feature_2d> features;
-    std::vector<feature_2d> dense_features;
+    size_t num_sparse_features = 0;
 };
 
 extracted_features extract_features(const cv::Mat &image);

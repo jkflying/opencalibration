@@ -18,7 +18,7 @@ extracted_features extract_features(const cv::Mat &image)
 
     if (image.empty())
     {
-        return {results, dense};
+        return {results, 0};
     }
 
     cv::Mat image_scaled;
@@ -79,7 +79,9 @@ extracted_features extract_features(const cv::Mat &image)
         }
     }
 
-    return {std::move(results), std::move(dense)};
+    size_t num_sparse = results.size();
+    results.insert(results.end(), std::make_move_iterator(dense.begin()), std::make_move_iterator(dense.end()));
+    return {std::move(results), num_sparse};
 }
 
 } // namespace opencalibration

@@ -59,7 +59,7 @@ std::optional<image> extract_image(const std::string &path)
         p.reset("Load features");
         auto extracted = extract_features(image);
         img.features = std::move(extracted.features);
-        img.dense_features = std::move(extracted.dense_features);
+        img.num_sparse_features = extracted.num_sparse_features;
     }
 
     p.reset("Load metadata");

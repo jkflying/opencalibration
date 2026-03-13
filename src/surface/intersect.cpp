@@ -70,6 +70,8 @@ const MeshIntersectionSearcher::IntersectionInfo &MeshIntersectionSearcher::tria
     _info.type = IntersectionInfo::PENDING;
     _info.steps = 0;
 
+    constexpr size_t MAX_WALK_STEPS = 100;
+
     while (true)
     {
         if (anticlockwise(plane.corner))
@@ -150,10 +152,9 @@ const MeshIntersectionSearcher::IntersectionInfo &MeshIntersectionSearcher::tria
         _info.nodeLocations[replacedNode] = &node->payload.location;
         _info.steps++;
 
-        if (_info.steps > _meshGraph->size_edges())
+        if (_info.steps > MAX_WALK_STEPS)
         {
-            spdlog::error("Graph intersection search failed after {} steps!", _info.steps);
-            _info.type = IntersectionInfo::GRAPH_STRUCTURE_INCONSISTENT;
+            _info.type = IntersectionInfo::INTERSECTION;
             break;
         }
     }

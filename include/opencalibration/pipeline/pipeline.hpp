@@ -163,6 +163,7 @@ class Pipeline : public usm::StateMachine<PipelineState, PipelineTransition>
     PipelineTransition mesh_refinement();
     PipelineTransition generate_thumbnail();
     PipelineTransition densify_mesh();
+    PipelineTransition dense_mesh_relax();
     PipelineTransition generate_layers();
     PipelineTransition color_balance();
     PipelineTransition blend_layers();

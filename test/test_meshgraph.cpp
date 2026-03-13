@@ -71,6 +71,58 @@ TEST(meshgraph, intersects_rays)
     }
 }
 
+TEST(meshgraph, cycle_on_vertex_resolves)
+{
+    // Build a mesh with enough triangles that shooting a ray at a vertex
+    // can cause the triangle walk to cycle between adjacent triangles.
+    MeshGraph g;
+    point_cloud p;
+    for (double x = -2; x <= 2; x += 0.5)
+    {
+        for (double y = -2; y <= 2; y += 0.5)
+        {
+            p.push_back(Eigen::Vector3d(x, y, 0));
+        }
+    }
+    g = rebuildMesh(p, {surface_model{{}, g}});
+
+    ASSERT_GT(g.size_nodes(), 10);
+
+    MeshIntersectionSearcher s;
+    ASSERT_TRUE(s.init(g));
+
+    // Shoot rays at every mesh vertex — these land exactly on shared edges
+    // and are the classic trigger for walk oscillation
+    for (auto it = g.cnodebegin(); it != g.cnodeend(); ++it)
+    {
+        const auto &loc = it->second.payload.location;
+        const ray_d r{{0, 0, 1}, {loc.x(), loc.y(), 5}};
+        auto result = s.triangleIntersect(r);
+
+        EXPECT_NE(result.type, MeshIntersectionSearcher::IntersectionInfo::GRAPH_STRUCTURE_INCONSISTENT)
+            << "Ray at vertex (" << loc.x() << ", " << loc.y() << ") should not fail";
+        if (result.type == MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
+        {
+            EXPECT_NEAR(result.intersectionLocation.z(), 0, 0.01);
+        }
+    }
+
+    // Also shoot rays at edge midpoints
+    for (auto it = g.cedgebegin(); it != g.cedgeend(); ++it)
+    {
+        const auto *src = g.getNode(it->second.getSource());
+        const auto *dst = g.getNode(it->second.getDest());
+        if (!src || !dst)
+            continue;
+        Eigen::Vector3d mid = (src->payload.location + dst->payload.location) * 0.5;
+        const ray_d r{{0, 0, 1}, {mid.x(), mid.y(), 5}};
+        auto result = s.triangleIntersect(r);
+
+        EXPECT_NE(result.type, MeshIntersectionSearcher::IntersectionInfo::GRAPH_STRUCTURE_INCONSISTENT)
+            << "Ray at edge midpoint (" << mid.x() << ", " << mid.y() << ") should not fail";
+    }
+}
+
 TEST(meshgraph, doesnt_intersect_outside)
 {
     MeshGraph g;

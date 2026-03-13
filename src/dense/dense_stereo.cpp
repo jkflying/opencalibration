@@ -3,6 +3,7 @@
 #include <opencalibration/distort/distort_keypoints.hpp>
 #include <opencalibration/geometry/intersection.hpp>
 #include <opencalibration/surface/intersect.hpp>
+#include <opencalibration/surface/refine_mesh.hpp>
 #include <opencalibration/types/feature_2d.hpp>
 #include <opencalibration/types/union_find.hpp>
 
@@ -67,7 +68,7 @@ std::vector<size_t> hilbertFeatureOrder(const std::vector<opencalibration::featu
     return result;
 }
 
-constexpr double SEARCH_RADIUS_PIXELS = 20.0;
+constexpr double SEARCH_RADIUS_PIXELS = 150.0;
 constexpr double RATIO_THRESHOLD = 0.8;
 constexpr int MAX_CANDIDATE_IMAGES = 10;
 constexpr double MAX_ABSOLUTE_DESCRIPTOR_DISTANCE = 0.3;
@@ -98,7 +99,8 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
     for (auto it = graph.cnodebegin(); it != graph.cnodeend(); ++it)
     {
         const auto &img = it->second.payload;
-        if (!img.dense_features.empty() && img.model && !img.position.hasNaN() && !img.orientation.coeffs().hasNaN())
+        if (img.features.size() > img.num_sparse_features && img.model && !img.position.hasNaN() &&
+            !img.orientation.coeffs().hasNaN())
         {
             node_ids.push_back(it->first);
         }
@@ -122,7 +124,7 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
         camera_tree.addPoint({pos.x(), pos.y(), pos.z()}, nid);
     }
 
-    // Build per-image KDTrees of dense features (indexed by node_id)
+    // Build per-image KDTrees of dense features
     struct ImageFeatureTree
     {
         jk::tree::KDTree<size_t, 2, 8> tree;
@@ -133,9 +135,9 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
     {
         const auto &img = graph.getNode(nid)->payload;
         auto &ft = feature_trees[nid];
-        for (size_t i = 0; i < img.dense_features.size(); i++)
+        for (size_t i = img.num_sparse_features; i < img.features.size(); i++)
         {
-            const auto &loc = img.dense_features[i].location;
+            const auto &loc = img.features[i].location;
             ft.tree.addPoint({loc.x(), loc.y()}, i);
         }
     }
@@ -154,22 +156,27 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
         size_t total_features = 0;
         for (size_t nid : node_ids)
         {
+            const auto &img = graph.getNode(nid)->payload;
+            size_t dense_count = img.features.size() - img.num_sparse_features;
             node_id_to_offset[nid] = total_features;
-            total_features += graph.getNode(nid)->payload.dense_features.size();
+            total_features += dense_count;
         }
         id_to_measurement.resize(total_features);
         for (size_t nid : node_ids)
         {
+            const auto &img = graph.getNode(nid)->payload;
             size_t offset = node_id_to_offset[nid];
-            size_t count = graph.getNode(nid)->payload.dense_features.size();
-            for (size_t i = 0; i < count; i++)
+            size_t dense_count = img.features.size() - img.num_sparse_features;
+            for (size_t i = 0; i < dense_count; i++)
             {
-                id_to_measurement[offset + i] = {nid, i};
+                id_to_measurement[offset + i] = {nid, img.num_sparse_features + i};
             }
         }
     }
 
-    auto measurementId = [&](size_t nid, size_t feat_idx) -> size_t { return node_id_to_offset[nid] + feat_idx; };
+    auto measurementId = [&](size_t nid, size_t feat_idx) -> size_t {
+        return node_id_to_offset[nid] + feat_idx - graph.getNode(nid)->payload.num_sparse_features;
+    };
 
     std::atomic<size_t> images_done{0};
     std::mutex uf_mutex;
@@ -194,7 +201,9 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
             continue;
         }
 
-        auto order = hilbertFeatureOrder(src_img.dense_features, static_cast<int>(src_model.pixels_cols),
+        std::vector<feature_2d> src_dense_features(src_img.features.begin() + src_img.num_sparse_features,
+                                                   src_img.features.end());
+        auto order = hilbertFeatureOrder(src_dense_features, static_cast<int>(src_model.pixels_cols),
                                          static_cast<int>(src_model.pixels_rows));
 
         struct LocalMatch
@@ -208,7 +217,8 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
 
         for (size_t fi : order)
         {
-            const auto &feat = src_img.dense_features[fi];
+            const size_t global_fi = src_img.num_sparse_features + fi;
+            const auto &feat = src_img.features[global_fi];
 
             ray_d r = image_to_3d(feat.location, src_model, src_pos, src_ori);
             const auto &info = searcher.triangleIntersect(r);
@@ -217,7 +227,7 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
                 continue;
 
             const Eigen::Vector3d &pt3d = info.intersectionLocation;
-            size_t src_id = measurementId(src_nid, fi);
+            size_t src_id = measurementId(src_nid, global_fi);
             bool has_match = false;
 
             auto candidates = camera_searcher.search({pt3d.x(), pt3d.y(), pt3d.z()}, std::numeric_limits<double>::max(),
@@ -261,7 +271,7 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
 
                 for (const auto &n : nearby)
                 {
-                    double d = descriptor_distance(feat, cand_img.dense_features[n.payload]);
+                    double d = descriptor_distance(feat, cand_img.features[n.payload]);
                     if (d < second_best_dist)
                     {
                         if (d < best_dist)
@@ -338,8 +348,7 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
         {
             const auto &m = id_to_measurement[id];
             const auto &img = graph.getNode(m.node_id)->payload;
-            rays.push_back(
-                image_to_3d(img.dense_features[m.feat_idx].location, *img.model, img.position, img.orientation));
+            rays.push_back(image_to_3d(img.features[m.feat_idx].location, *img.model, img.position, img.orientation));
         }
 
         if (rays.size() >= 2)

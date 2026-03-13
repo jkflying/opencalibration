@@ -85,6 +85,8 @@ PipelineState Pipeline::chooseNextState(PipelineState currentState, Transition t
         USM_STATE(transition, State::GENERATE_THUMBNAIL,
                   USM_MAP(Transition::NEXT, State::DENSIFY_MESH, s));
         USM_STATE(transition, State::DENSIFY_MESH,
+                  USM_MAP(Transition::NEXT, State::DENSE_MESH_RELAX, s));
+        USM_STATE(transition, State::DENSE_MESH_RELAX,
                   USM_MAP(Transition::NEXT, State::GENERATE_LAYERS, s));
         USM_STATE(transition, State::GENERATE_LAYERS,
                   USM_MAP(Transition::NEXT, State::COLOR_BALANCE, s));
@@ -113,6 +115,7 @@ Pipeline::Transition Pipeline::runCurrentState(PipelineState currentState)
               USM_MAP(State::COMPLETE, complete(), t);
               USM_MAP(State::GENERATE_THUMBNAIL, generate_thumbnail(), t);
               USM_MAP(State::DENSIFY_MESH, densify_mesh(), t);
+              USM_MAP(State::DENSE_MESH_RELAX, dense_mesh_relax(), t);
               USM_MAP(State::GENERATE_LAYERS, generate_layers(), t);
               USM_MAP(State::COLOR_BALANCE, color_balance(), t);
               USM_MAP(State::BLEND_LAYERS, blend_layers(), t)
@@ -149,6 +152,11 @@ Pipeline::Transition Pipeline::runCurrentState(PipelineState currentState)
                            std::to_string(FINAL_RELAX_MAX_ITERATIONS + 1) + ")",
                        local, true);
         return t;
+    case State::DENSE_MESH_RELAX:
+        local = std::min(1.f, float(stateRunCount() + 1) / float(MESH_REFINEMENT_MAX_ITERATIONS));
+        _emit_progress("Dense mesh relaxation (iter " + std::to_string(stateRunCount() + 1) + ")",
+                       local, true);
+        return t;
     default:
         break;
     }
@@ -160,17 +168,18 @@ Pipeline::Transition Pipeline::runCurrentState(PipelineState currentState)
 void Pipeline::_emit_progress(std::string activity, float local_fraction, bool surfaces_updated,
                               std::optional<TileUpdate> tile_update)
 {
-    static const std::array<std::pair<PipelineState, float>, 10> stage_order = {{
+    static const std::array<std::pair<PipelineState, float>, 11> stage_order = {{
         {State::INITIAL_PROCESSING, 0.20f},
         {State::MESH_REFINEMENT, 0.15f},
         {State::INITIAL_GLOBAL_RELAX, 0.12f},
         {State::CAMERA_PARAMETER_RELAX, 0.12f},
         {State::FINAL_GLOBAL_RELAX, 0.05f},
         {State::GENERATE_THUMBNAIL, 0.03f},
-        {State::DENSIFY_MESH, 0.05f},
-        {State::GENERATE_LAYERS, 0.13f},
+        {State::DENSIFY_MESH, 0.04f},
+        {State::DENSE_MESH_RELAX, 0.03f},
+        {State::GENERATE_LAYERS, 0.12f},
         {State::COLOR_BALANCE, 0.02f},
-        {State::BLEND_LAYERS, 0.13f},
+        {State::BLEND_LAYERS, 0.12f},
     }};
 
     PipelineState current = getState();
@@ -527,6 +536,87 @@ Pipeline::Transition Pipeline::densify_mesh()
     USM_DECISION_TABLE(Transition::NEXT, );
 }
 
+Pipeline::Transition Pipeline::dense_mesh_relax()
+{
+    if (!_generate_dense_mesh)
+    {
+        spdlog::info("Skipping dense mesh relax stage");
+        USM_DECISION_TABLE(Transition::NEXT, USM_MAKE_DECISION(!_generate_dense_mesh, Transition::NEXT));
+    }
+
+    if (_surfaces.empty())
+    {
+        spdlog::warn("No surfaces available for dense mesh relax");
+        USM_DECISION_TABLE(Transition::NEXT, USM_MAKE_DECISION(_surfaces.empty(), Transition::NEXT));
+    }
+
+    PerformanceMeasure p("Dense mesh refine");
+
+    const size_t maxPointsPerTriangle = 20;
+    const double varianceGsdMultiplier = 2.0;
+    const double baseGridFraction = 0.05;
+
+    double meanSurfaceZ = 0;
+    size_t surfNodeCount = 0;
+    for (const auto &surface : _surfaces)
+    {
+        for (auto it = surface.mesh.cnodebegin(); it != surface.mesh.cnodeend(); ++it)
+        {
+            meanSurfaceZ += it->second.payload.location.z();
+            surfNodeCount++;
+        }
+    }
+    if (surfNodeCount > 0)
+        meanSurfaceZ /= surfNodeCount;
+
+    double meanCameraZ = 0;
+    double meanArcPerPixel = 0;
+    double meanImageSize = 0;
+    size_t camCount = 0;
+    for (auto it = _graph.cnodebegin(); it != _graph.cnodeend(); ++it)
+    {
+        const auto &payload = it->second.payload;
+        if (!payload.model || payload.model->focal_length_pixels <= 0 || !payload.position.allFinite())
+            continue;
+        meanCameraZ += payload.position.z();
+        meanArcPerPixel += 1.0 / payload.model->focal_length_pixels;
+        meanImageSize += static_cast<double>(std::max(payload.model->pixels_cols, payload.model->pixels_rows));
+        camCount++;
+    }
+
+    double gsd = 0.01;
+    double reducedGsd = 0.0;
+    if (camCount > 0)
+    {
+        meanCameraZ /= camCount;
+        meanArcPerPixel /= camCount;
+        meanImageSize /= camCount;
+        gsd = std::max(0.001, std::abs(meanCameraZ - meanSurfaceZ) * meanArcPerPixel);
+        reducedGsd = std::sqrt(static_cast<double>(maxPointsPerTriangle) / 8.0) * baseGridFraction * meanImageSize * gsd;
+    }
+    const double minDistanceStddev = varianceGsdMultiplier * gsd;
+    const double minDistanceVariance = minDistanceStddev * minDistanceStddev;
+
+    size_t totalRefined = 0;
+    for (auto &surface : _surfaces)
+    {
+        if (surface.mesh.size_nodes() == 0)
+            continue;
+        totalRefined +=
+            refineByPointDensity(surface.mesh, surface.cloud, maxPointsPerTriangle, minDistanceVariance, 1, reducedGsd);
+    }
+
+    if (totalRefined > 0)
+    {
+        spdlog::info("Dense mesh refine: refined {} triangles, repeating", totalRefined);
+        USM_DECISION_TABLE(Transition::REPEAT,
+                           USM_MAKE_DECISION(stateRunCount() >= MESH_REFINEMENT_MAX_ITERATIONS, Transition::NEXT));
+    }
+
+    spdlog::info("Dense mesh refine complete after {} iterations", stateRunCount() + 1);
+    USM_DECISION_TABLE(Transition::NEXT, );
+}
+
 Pipeline::Transition Pipeline::generate_thumbnail()
 {
     if (!_generate_thumbnails || (_thumbnail_filename.empty() && _source_filename.empty() && _overlap_filename.empty()))
@@ -679,6 +769,8 @@ std::string Pipeline::toString(PipelineState state)
         return "Generate Thumbnail";
     case State::DENSIFY_MESH:
         return "Densify Mesh";
+    case State::DENSE_MESH_RELAX:
+        return "Dense Mesh Relax";
     case State::GENERATE_LAYERS:
         return "Generate Layers";
     case State::COLOR_BALANCE:
@@ -708,6 +800,8 @@ std::optional<PipelineState> Pipeline::fromString(const std::string &str)
         return State::GENERATE_THUMBNAIL;
     if (str == "DENSIFY_MESH" || str == "Densify Mesh")
         return State::DENSIFY_MESH;
+    if (str == "DENSE_MESH_RELAX" || str == "Dense Mesh Relax")
+        return State::DENSE_MESH_RELAX;
     if (str == "GENERATE_LAYERS" || str == "Generate Layers" || str == "GENERATE_DSM" || str == "Generate DSM")
         return State::GENERATE_LAYERS;
     if (str == "COLOR_BALANCE" || str == "Color Balance")
