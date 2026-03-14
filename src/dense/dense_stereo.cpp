@@ -69,10 +69,10 @@ std::vector<size_t> hilbertFeatureOrder(const std::vector<opencalibration::featu
 }
 
 constexpr double SEARCH_RADIUS_PIXELS = 150.0;
-constexpr double RATIO_THRESHOLD = 0.8;
+constexpr double RATIO_THRESHOLD = 0.85;
 constexpr int MAX_CANDIDATE_IMAGES = 10;
-constexpr double MAX_ABSOLUTE_DESCRIPTOR_DISTANCE = 0.3;
-constexpr double MAX_REPROJECTION_ERROR_PIXELS = 5.0;
+constexpr double MAX_ABSOLUTE_DESCRIPTOR_DISTANCE = 0.35;
+constexpr double MAX_REPROJECTION_ERROR_PIXELS = 8.0;
 
 double descriptor_distance(const opencalibration::feature_2d &f1, const opencalibration::feature_2d &f2)
 {
