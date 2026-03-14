@@ -48,4 +48,11 @@ group "Coverage Test"
 ninja -C build_coverage test_coverage_html
 endgroup
 
+group "Package (DEB)"
+mkdir -p build_package
+cmake -S . -B build_package -G Ninja -DCMAKE_BUILD_TYPE=Release -DOPENCALIBRATION_TESTING=OFF
+ninja -C build_package
+cd build_package && cpack -G DEB && cd ..
+endgroup
+
 echo "All CI steps passed."
