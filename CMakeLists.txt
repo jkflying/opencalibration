@@ -34,7 +34,7 @@ find_package(Ceres 2.0 REQUIRED )
 add_compile_definitions(CERES_USE_CXX11 TRUE)
 include_directories(SYSTEM ${CERES_INCLUDE_DIRS})
 
-find_package(OpenCV REQUIRED HINTS external/install/lib/cmake/)
+find_package(OpenCV REQUIRED)
 include_directories(SYSTEM ${OpenCV_INCLUDE_DIRS})
 
 find_package(GDAL 2.4 REQUIRED)

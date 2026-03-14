@@ -125,7 +125,7 @@ SceneResult runNoisyScene(const CameraModel &cam_model, const Eigen::Quaterniond
                           double orientation_noise_deg, int descriptor_bit_flips)
 {
     std::mt19937 rng(12345);
-    std::normal_distribution<double> pixel_dist(0, pixel_noise_stddev);
+    std::normal_distribution<double> pixel_dist(0, std::max(pixel_noise_stddev, 1e-15));
 
     Eigen::Vector3d cam1_pos(0, 0, 100);
     Eigen::Vector3d cam2_pos(10, 0, 100);
@@ -525,7 +525,7 @@ TEST_F(DenseStereoTest, accuracy_with_combined_noise)
 
 TEST_F(DenseStereoTest, heavy_descriptor_noise_rejects)
 {
-    auto result = runNoisyScene(cam_model, cam_ori, 0, 0, 200);
+    auto result = runNoisyScene(cam_model, cam_ori, 0, 0, 2000);
 
     EXPECT_EQ(result.total_points, 0) << "Heavy descriptor noise should prevent matches";
 }

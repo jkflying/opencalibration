@@ -44,7 +44,10 @@ extracted_features extract_features(const cv::Mat &image)
         point.location.x() = keypoints[i].pt.x / scale;
         point.location.y() = keypoints[i].pt.y / scale;
         point.strength = keypoints[i].response;
-        point.descriptor = *reinterpret_cast<std::bitset<feature_2d::DESCRIPTOR_BITS> *>(&descriptors.at<uchar>(i, 0));
+        point.descriptor.reset();
+        const uchar *row = &descriptors.at<uchar>(i, 0);
+        for (int j = 0; j < feature_2d::DESCRIPTOR_BITS; j++)
+            point.descriptor[j] = (row[j >> 3] >> (j & 7)) & 1;
         oc_keypoints.push_back(point);
     }
 
