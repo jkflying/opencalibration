@@ -85,7 +85,8 @@ class RelaxProblem
     void addRayTriangleMeasurementCost(const MeasurementGraph &graph, size_t edge_id,
                                        const MeasurementGraph::Edge &edge, const RelaxOptionSet &options);
 
-    void addMultiRayTrackCosts(const MeasurementGraph &graph, const RelaxOptionSet &options);
+    void addMultiRayTrackCosts(const MeasurementGraph &graph, const RelaxOptionSet &options,
+                               double grid_fraction = 0.1);
 
     void initializeGroundPlane();
     void initializeGroundMesh(const std::vector<surface_model> &previousSurfaces, bool useMinimalMesh = false);
@@ -133,6 +134,8 @@ class RelaxProblem
     using track_vec = std::vector<FeatureTrack, Eigen::aligned_allocator<FeatureTrack>>;
     ankerl::unordered_dense::map<size_t, track_vec> _edge_tracks;
     ankerl::unordered_dense::set<NodeIdFeatureIndex, NodeIdFeatureIndex> _multi_ray_measurements;
+    ankerl::unordered_dense::map<size_t, ankerl::unordered_dense::set<uint64_t>> _multi_ray_covered_cells;
+    double _track_grid_fraction = 0.1;
     MeshGraph _mesh;
     std::vector<double> _mesh_initial_z;
 };

@@ -8,13 +8,13 @@
 namespace opencalibration
 {
 
+inline uint64_t gridCellKey(int i, int j)
+{
+    return (static_cast<uint64_t>(i) << 32) | static_cast<uint32_t>(j);
+}
+
 template <typename T> class GridFilter
 {
-
-    inline uint64_t key(int i, int j)
-    {
-        return ((uint64_t)i << 32) | (unsigned int)j;
-    }
 
   public:
     GridFilter(double grid_resolution = 0.075) : _grid_resolution(grid_resolution)
@@ -32,7 +32,7 @@ template <typename T> class GridFilter
 
     void addMeasurement(double x, double y, double score, const T &value)
     {
-        uint64_t index = key(std::floor(x / _grid_resolution), std::floor(y / _grid_resolution));
+        uint64_t index = gridCellKey(std::floor(x / _grid_resolution), std::floor(y / _grid_resolution));
         auto iter = _map.find(index);
         if (iter == _map.end())
         {

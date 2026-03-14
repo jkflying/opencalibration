@@ -89,9 +89,8 @@ void RelaxProblem::setupGroundMeshProblem(const MeasurementGraph &graph, std::ve
     initialize(nodes, cam_models);
     initializeGroundMesh(previousSurfaces, options.get(Option::MINIMAL_MESH));
     _loss.Reset(new ceres::HuberLoss(1 * M_PI / 180), ceres::TAKE_OWNERSHIP);
-    gridFilterMatchesPerImage(graph, edges_to_optimize, grid_fraction);
 
-    // Phase 1: collect track data from all edges
+    // Phase 1: collect track data from all edges (unfiltered)
     for (size_t edge_id : edges_to_optimize)
     {
         const MeasurementGraph::Edge *edge = graph.getEdge(edge_id);
@@ -101,10 +100,11 @@ void RelaxProblem::setupGroundMeshProblem(const MeasurementGraph &graph, std::ve
         }
     }
 
-    // Phase 2: build multi-ray tracks, add their costs, mark their measurements
-    addMultiRayTrackCosts(graph, options);
+    // Phase 2: build multi-ray tracks, grid-filter by track length, add costs
+    addMultiRayTrackCosts(graph, options, grid_fraction);
 
-    // Phase 3: add 2-ray costs for remaining matches not handled by multi-ray tracks
+    // Phase 3: 2-ray fallback for grid cells not covered by multi-ray tracks
+    gridFilterMatchesPerImage(graph, edges_to_optimize, grid_fraction);
     for (size_t edge_id : edges_to_optimize)
     {
         const MeasurementGraph::Edge *edge = graph.getEdge(edge_id);
@@ -364,15 +364,8 @@ void RelaxProblem::collectEdgeTracks(const MeasurementGraph &graph, size_t edge_
     const auto &source_model = *pkg.source.model_ptr;
     const auto &dest_model = *pkg.dest.model_ptr;
 
-    const auto &source_whitelist = _grid_filter[edge.getSource()][edge_id].getBestMeasurementsPerCell();
-    const auto &dest_whitelist = _grid_filter[edge.getDest()][edge_id].getBestMeasurementsPerCell();
-
     for (const auto &inlier : edge.payload.inlier_matches)
     {
-        if (source_whitelist.find(&inlier) == source_whitelist.end() &&
-            dest_whitelist.find(&inlier) == dest_whitelist.end())
-            continue;
-
         ray_d sourceRay, destRay;
         sourceRay.dir = image_to_3d(inlier.pixel_1, source_model);
         sourceRay.offset = *pkg.source.loc_ptr;
@@ -437,6 +430,25 @@ void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, 
         NodeIdFeatureIndex nifi_dst{edge.getDest(), inlier.feature_index_2};
         if (_multi_ray_measurements.contains(nifi_src) || _multi_ray_measurements.contains(nifi_dst))
             continue;
+
+        // Skip if both images' grid cells are already covered by multi-ray tracks
+        {
+            auto cellKey = [this](double px, double py, double cols, double rows) {
+                int gi = static_cast<int>(std::floor((px / cols) / _track_grid_fraction));
+                int gj = static_cast<int>(std::floor((py / rows) / _track_grid_fraction));
+                return gridCellKey(gi, gj);
+            };
+            auto src_cells = _multi_ray_covered_cells.find(edge.getSource());
+            auto dst_cells = _multi_ray_covered_cells.find(edge.getDest());
+            bool src_covered = src_cells != _multi_ray_covered_cells.end() &&
+                               src_cells->second.contains(cellKey(inlier.pixel_1.x(), inlier.pixel_1.y(),
+                                                                  source_model.pixels_cols, source_model.pixels_rows));
+            bool dst_covered = dst_cells != _multi_ray_covered_cells.end() &&
+                               dst_cells->second.contains(cellKey(inlier.pixel_2.x(), inlier.pixel_2.y(),
+                                                                  dest_model.pixels_cols, dest_model.pixels_rows));
+            if (src_covered && dst_covered)
+                continue;
+        }
 
         ray_d sourceRay, destRay;
         sourceRay.dir = image_to_3d(inlier.pixel_1, source_model);
@@ -593,8 +605,11 @@ ceres::CostFunction *makeMultiRayCostFocalRadialImpl(const std::vector<RayInfo> 
 }
 } // namespace
 
-void RelaxProblem::addMultiRayTrackCosts(const MeasurementGraph &graph, const RelaxOptionSet &options)
+void RelaxProblem::addMultiRayTrackCosts(const MeasurementGraph &graph, const RelaxOptionSet &options,
+                                         double grid_fraction)
 {
+    _track_grid_fraction = grid_fraction;
+
     // Merge edge tracks into multi-image tracks via UnionFind
     std::vector<const FeatureTrack *> flat_tracks;
     for (const auto &[edge_id, tracks] : _edge_tracks)
@@ -663,6 +678,34 @@ void RelaxProblem::addMultiRayTrackCosts(const MeasurementGraph &graph, const Re
         }
     }
 
+    // Grid-filter tracks by length: keep the longest track per grid cell per image
+    ankerl::unordered_dense::map<size_t, GridFilter<size_t>> track_grid_filter;
+    for (auto &[root, rays] : track_rays)
+    {
+        if (rays.size() < 3)
+            continue;
+
+        double score = static_cast<double>(rays.size());
+        for (const auto &r : rays)
+        {
+            const auto *node = graph.getNode(r.node_id);
+            if (node == nullptr)
+                continue;
+            const auto &model = *node->payload.model;
+            auto &filter = track_grid_filter[r.node_id];
+            filter.setResolution(grid_fraction);
+            filter.addMeasurement(r.pixel.x() / model.pixels_cols, r.pixel.y() / model.pixels_rows, score, root);
+        }
+    }
+
+    // Collect the set of track roots that survived filtering
+    ankerl::unordered_dense::set<size_t> accepted_tracks;
+    for (const auto &[node_id, filter] : track_grid_filter)
+    {
+        for (size_t root : filter.getBestMeasurementsPerCell())
+            accepted_tracks.insert(root);
+    }
+
     MeshIntersectionSearcher intersectionSearcher;
     if (!intersectionSearcher.init(_mesh))
         return;
@@ -671,6 +714,9 @@ void RelaxProblem::addMultiRayTrackCosts(const MeasurementGraph &graph, const Re
     for (auto &[root, rays] : track_rays)
     {
         if (rays.size() < 3)
+            continue;
+
+        if (!accepted_tracks.contains(root))
             continue;
 
         // Compute mean camera location for mesh triangle lookup
@@ -863,6 +909,17 @@ void RelaxProblem::addMultiRayTrackCosts(const MeasurementGraph &graph, const Re
         {
             _problem->SetManifold(good_rays[i].rot_ptr, &_quat_parameterization);
             _multi_ray_measurements.insert(NodeIdFeatureIndex{good_rays[i].node_id, good_rays[i].feature_index});
+
+            const auto *node = graph.getNode(good_rays[i].node_id);
+            if (node != nullptr)
+            {
+                const auto &model = *node->payload.model;
+                double nx = good_rays[i].pixel.x() / model.pixels_cols;
+                double ny = good_rays[i].pixel.y() / model.pixels_rows;
+                int gi = static_cast<int>(std::floor(nx / grid_fraction));
+                int gj = static_cast<int>(std::floor(ny / grid_fraction));
+                _multi_ray_covered_cells[good_rays[i].node_id].insert(gridCellKey(gi, gj));
+            }
         }
 
         tracks_added++;
