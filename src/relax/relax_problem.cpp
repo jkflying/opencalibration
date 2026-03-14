@@ -875,7 +875,7 @@ void RelaxProblem::addMultiRayTrackCosts(const MeasurementGraph &graph, const Re
             }
         }
 
-        _problem->AddResidualBlock(cost, &_loss, param_blocks);
+        _problem->AddResidualBlock(cost, nullptr, param_blocks);
 
         if (inv_model_ptr != nullptr)
         {
