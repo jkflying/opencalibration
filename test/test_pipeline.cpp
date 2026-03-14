@@ -6,6 +6,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <thread>
 
 using namespace opencalibration;
 using namespace std::chrono_literals;

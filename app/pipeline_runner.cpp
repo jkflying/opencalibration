@@ -226,7 +226,7 @@ int main(int argc, char *argv[])
 
     auto total_start_time = std::chrono::steady_clock::now();
 
-    p.set_callback([total_start_time, format_time](const Pipeline::StepCompletionInfo &info) {
+    p.set_callback([total_start_time, format_time](const StepCompletionInfo &info) {
         static std::optional<PipelineState> previous_state;
         static auto state_start_time = std::chrono::steady_clock::now();
 

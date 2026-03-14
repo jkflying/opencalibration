@@ -1,4 +1,4 @@
-#include <opencalibration/pipeline/relax_stage.hpp>
+#include "relax_stage.hpp"
 
 #include <opencalibration/geometry/spectral_cluster.hpp>
 #include <opencalibration/performance/performance.hpp>

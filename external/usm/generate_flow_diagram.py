@@ -73,8 +73,28 @@ def extract_all_wrapped(table_string, key, open_char="(", close_char=")", exclud
     return states_strings
 
 
+def find_function_body(file_string, function_name):
+    """Find a function definition body, skipping forward declarations."""
+    offset = 0
+    while offset < len(file_string):
+        idx = file_string.find(function_name, offset)
+        if idx < 0:
+            break
+        # Find the next '{' or ';' after the function name
+        pos = idx + len(function_name)
+        while pos < len(file_string) and file_string[pos] not in '{;':
+            pos += 1
+        if pos < len(file_string) and file_string[pos] == '{':
+            # This is a definition — extract the body
+            body, start, end = extract_first_wrapped(file_string[idx:], function_name, "{", "}")
+            if len(body) > 0:
+                return body, idx + start, idx + end
+        # Skip past this occurrence (declaration or failed match)
+        offset = idx + len(function_name)
+    return "", 0, 0
+
 def extract_transitions(file_string):
-    choose_state_function,_,_ = extract_first_wrapped(file_string, "chooseNextState", "{", "}")
+    choose_state_function,_,_ = find_function_body(file_string, "chooseNextState")
     table_string,_,_ = extract_first_wrapped(choose_state_function, "USM_TABLE")
     state_strings = extract_all_wrapped(table_string, "USM_STATE")
     error_state = table_string.split(",")[1].strip().split("::")[-1]
@@ -99,7 +119,7 @@ def extract_transitions(file_string):
     return transitions
 
 def extract_functions(file_string):
-    run_state_function_string, run_functions_start, run_function_end = extract_first_wrapped(file_string, "runCurrentState", "{", "}")
+    run_state_function_string, run_functions_start, run_function_end = find_function_body(file_string, "runCurrentState")
     table_string,_,_ = extract_first_wrapped(run_state_function_string, "USM_TABLE")
     run_state_strings = extract_all_wrapped(table_string, "USM_MAP")
     functions = []
@@ -107,12 +127,12 @@ def extract_functions(file_string):
         state_name, function_name, _ = (run_state_string.split(","))
         f = Function(function_name.strip().split("::")[-1], state_name.replace("(","").replace(")","").strip().split("::")[-1])
 
-        function_f_strings = extract_all_wrapped(file_string, f.function_name, "{", "}", [[run_functions_start, run_function_end]])
-        if len(function_f_strings) != 1:
-            print(f"ERROR: your state names cannot be subsets of other state names: {state_name}")
+        f_body, _, _ = find_function_body(file_string[run_function_end:], f.function_name)
+        if len(f_body) == 0:
+            print(f"ERROR: could not find function body for state: {state_name}")
             exit(1)
 
-        f_string = function_f_strings[0]
+        f_string = f_body
 
         # Find all USM_DECISION_TABLE calls in the function
         decision_table_strings = extract_all_wrapped(f_string, "USM_DECISION_TABLE")

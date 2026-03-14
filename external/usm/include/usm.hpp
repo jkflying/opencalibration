@@ -50,8 +50,8 @@ class StateMachine {
   StateMachine(State startingState);
   void iterateOnce();
 
-  State getState();
-  uint64_t stateRunCount();
+  State getState() const;
+  uint64_t stateRunCount() const;
 
  protected:
   virtual Transition runCurrentState(State currentState) = 0;  // a big switch
@@ -81,12 +81,12 @@ void StateMachine<StateEnum, TransitionEnum>::iterateOnce() {
 }
 
 template <typename StateEnum, typename TransitionEnum>
-StateEnum StateMachine<StateEnum, TransitionEnum>::getState() {
+StateEnum StateMachine<StateEnum, TransitionEnum>::getState() const {
   return m_currentState;
 }
 
 template <typename StateEnum, typename TransitionEnum>
-uint64_t StateMachine<StateEnum, TransitionEnum>::stateRunCount() {
+uint64_t StateMachine<StateEnum, TransitionEnum>::stateRunCount() const {
     return m_stateRunCount;
 }
 

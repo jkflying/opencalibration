@@ -4,12 +4,21 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
+SKIP_DEPS=false
+for arg in "$@"; do
+    case "$arg" in
+        --skip-deps) SKIP_DEPS=true ;;
+    esac
+done
+
 group()    { echo "::group::$1"; date; }
 endgroup() { echo "::endgroup::"; }
 
-group "Install dependencies"
-tools/install_dependencies.sh
-endgroup
+if [ "$SKIP_DEPS" = false ]; then
+    group "Install dependencies"
+    tools/install_dependencies.sh
+    endgroup
+fi
 
 group "Validate state machine"
 python3 external/usm/generate_flow_diagram.py -v src/pipeline/pipeline.cpp src/pipeline/pipeline.cpp.dot

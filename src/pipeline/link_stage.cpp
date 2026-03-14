@@ -1,4 +1,4 @@
-#include <opencalibration/pipeline/link_stage.hpp>
+#include "link_stage.hpp"
 
 #include <opencalibration/distort/distort_keypoints.hpp>
 #include <opencalibration/match/match_features.hpp>

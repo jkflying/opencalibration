@@ -1,5 +1,7 @@
 #include <opencalibration/ortho/ortho.hpp>
 
+#include "thumbnail_encode.hpp"
+
 #include <opencalibration/ortho/blending.hpp>
 #include <opencalibration/ortho/color_balance.hpp>
 
@@ -1644,7 +1646,8 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
             tu.total_output_height = height;
             tu.tile_index = completed_tiles + 1;
             tu.total_tiles = total_tiles;
-            tu.thumbnail = std::move(thumbnail);
+            tu.thumbnail_jpeg_base64 = encodeThumbnailToBase64JPEG(
+                thumbnail.layers[0].pixels, thumbnail.layers[1].pixels, thumbnail.layers[2].pixels);
             tile_progress(tu);
         }
 
@@ -2034,7 +2037,8 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
                         tu.total_output_height = height;
                         tu.tile_index = done;
                         tu.total_tiles = total_tiles;
-                        tu.thumbnail = std::move(thumbnail);
+                        tu.thumbnail_jpeg_base64 = encodeThumbnailToBase64JPEG(
+                            thumbnail.layers[0].pixels, thumbnail.layers[1].pixels, thumbnail.layers[2].pixels);
                         tile_progress(tu);
                     }
                 }

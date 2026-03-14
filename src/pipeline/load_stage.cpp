@@ -1,4 +1,4 @@
-#include <opencalibration/pipeline/load_stage.hpp>
+#include "load_stage.hpp"
 
 #include <opencalibration/extract/extract_image.hpp>
 #include <opencalibration/performance/performance.hpp>
