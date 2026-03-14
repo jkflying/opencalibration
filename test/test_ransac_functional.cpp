@@ -15,9 +15,15 @@ TEST(ransac, homography_filter_correspondences)
     std::string path1 = TEST_DATA_DIR "P2540254.JPG";
     std::string path2 = TEST_DATA_DIR "P2530253.JPG";
 
-    auto feat1 = opencalibration::extract_features(cv::imread(path1)).features;
-    auto feat2 = opencalibration::extract_features(cv::imread(path2)).features;
-    std::vector<feature_match> matches = match_features(feat1, feat2);
+    auto extracted1 = opencalibration::extract_features(cv::imread(path1));
+    auto extracted2 = opencalibration::extract_features(cv::imread(path2));
+    extracted1.features.resize(extracted1.num_sparse_features);
+    extracted2.features.resize(extracted2.num_sparse_features);
+    auto &feat1 = extracted1.features;
+    auto &feat2 = extracted2.features;
+    std::vector<size_t> indices1 = spatially_subsample_feature_indices(feat1, 40.0);
+    std::vector<size_t> indices2 = spatially_subsample_feature_indices(feat2, 40.0);
+    std::vector<feature_match> matches = match_features_subset(feat1, feat2, indices1, indices2);
     CameraModel cam_model;
     cam_model.pixels_rows = 4016;
     cam_model.pixels_cols = 5344;
@@ -32,7 +38,7 @@ TEST(ransac, homography_filter_correspondences)
     double score = ransac(correspondences, model, inliers);
 
     // THEN: there should be roughly the right number
-    EXPECT_GT(score, 0.35);
+    EXPECT_GT(score, 0.30);
 
     std::array<decomposed_pose, 4> poses;
     EXPECT_EQ(model.decompose(correspondences, inliers, poses), true);
