@@ -96,14 +96,14 @@ TEST(meshgraph, cycle_on_vertex_resolves)
     for (auto it = g.cnodebegin(); it != g.cnodeend(); ++it)
     {
         const auto &loc = it->second.payload.location;
-        const ray_d r{{0, 0, 1}, {loc.x(), loc.y(), 5}};
+        const ray_d r{{0, 0, 1}, {loc.x(), loc.y(), loc.z() + 5}};
         auto result = s.triangleIntersect(r);
 
         EXPECT_NE(result.type, MeshIntersectionSearcher::IntersectionInfo::GRAPH_STRUCTURE_INCONSISTENT)
             << "Ray at vertex (" << loc.x() << ", " << loc.y() << ") should not fail";
         if (result.type == MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
         {
-            EXPECT_NEAR(result.intersectionLocation.z(), 0, 0.01);
+            EXPECT_NEAR(result.intersectionLocation.z(), loc.z(), 0.01);
         }
     }
 
@@ -115,7 +115,7 @@ TEST(meshgraph, cycle_on_vertex_resolves)
         if (!src || !dst)
             continue;
         Eigen::Vector3d mid = (src->payload.location + dst->payload.location) * 0.5;
-        const ray_d r{{0, 0, 1}, {mid.x(), mid.y(), 5}};
+        const ray_d r{{0, 0, 1}, {mid.x(), mid.y(), mid.z() + 5}};
         auto result = s.triangleIntersect(r);
 
         EXPECT_NE(result.type, MeshIntersectionSearcher::IntersectionInfo::GRAPH_STRUCTURE_INCONSISTENT)
