@@ -2,7 +2,7 @@
 add_library(cv_raster_obj OBJECT cv_raster_conversion.cpp)
 set_target_properties(cv_raster_obj PROPERTIES CXX_CLANG_TIDY "")
 target_include_directories(cv_raster_obj SYSTEM PRIVATE ${OpenCV_INCLUDE_DIRS})
-target_include_directories(cv_raster_obj PRIVATE ${PROJECT_SOURCE_DIR}/include)
+target_include_directories(cv_raster_obj PRIVATE $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>)
 
 add_library(oc_io $<TARGET_OBJECTS:cv_raster_obj>
                   serialize_MeasurementGraph.cpp
@@ -13,4 +13,7 @@ add_library(oc_io $<TARGET_OBJECTS:cv_raster_obj>
                   saveXYZ.cpp
                   checkpoint.cpp
                   base64.c)
+target_include_directories(oc_io PUBLIC
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 target_link_libraries(oc_io PUBLIC spdlog::spdlog)

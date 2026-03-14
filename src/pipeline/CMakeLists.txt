@@ -12,5 +12,9 @@ target_link_libraries(oc_pipeline PUBLIC oc_dense
                                           oc_performance
                                           oc_ortho
                                           spdlog::spdlog)
-target_include_directories(oc_pipeline SYSTEM PUBLIC ${PROJECT_SOURCE_DIR}/external/jk-tree/include
-                                                    ${PROJECT_SOURCE_DIR}/external/usm/include)
+target_include_directories(oc_pipeline PUBLIC
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/external/jk-tree/include>
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/external/usm/include>
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/external/unordered_dense/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)

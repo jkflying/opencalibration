@@ -1,5 +1,5 @@
-cmake_minimum_required(VERSION 3.13)
-project(opencalibration)
+cmake_minimum_required(VERSION 3.14)
+project(opencalibration VERSION 0.1.0)
 
 #============= OPTIONS ===============
 if(NOT DEFINED OPENCALIBRATION_TESTING)
@@ -11,6 +11,9 @@ if(NOT DEFINED OPENCALIBRATION_APP)
 endif()
 
 option(OPENCALIBRATION_CLANG_TIDY "Run clang-tidy during compilation" OFF)
+
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
 
 # =====================================
 
@@ -70,8 +73,6 @@ if ("${CMAKE_BUILD_TYPE}" STREQUAL "Release")
     set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
 endif()
 
-include_directories(include)
-
 if(OPENCALIBRATION_CLANG_TIDY)
     find_program(CLANG_TIDY_EXE
         NAMES clang-tidy-18 clang-tidy-17 clang-tidy-16 clang-tidy-15 clang-tidy-14 clang-tidy
@@ -109,6 +110,16 @@ configure_file(${CAMERA_DATABASE_SOURCE} ${CAMERA_DATABASE_DEST} COPYONLY)
 
 add_subdirectory(src)
 
+set(OPENCALIBRATION_LIBRARIES
+    oc_dense oc_distort oc_extract oc_geo_coord oc_geometry
+    oc_io oc_match oc_model_inliers oc_ortho oc_performance
+    oc_pipeline oc_relax oc_surface)
+
+# Namespace aliases for add_subdirectory() consumers
+foreach(_target IN LISTS OPENCALIBRATION_LIBRARIES)
+    add_library(opencalibration::${_target} ALIAS ${_target})
+endforeach()
+
 message("-- OPENCALIBRATION_TESTING: ${OPENCALIBRATION_TESTING}")
 message("-- OPENCALIBRATION_APP: ${OPENCALIBRATION_APP}")
 
@@ -119,3 +130,59 @@ endif()
 if (OPENCALIBRATION_TESTING)
     add_subdirectory(test)
 endif()
+
+# ============= INSTALL ==============
+install(TARGETS ${OPENCALIBRATION_LIBRARIES}
+    EXPORT opencalibrationTargets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+install(DIRECTORY include/opencalibration
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+install(DIRECTORY external/unordered_dense/include/ankerl
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(FILES external/usm/include/usm.hpp
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(DIRECTORY external/spectra/include/Spectra
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(DIRECTORY external/jk-tree/include/jk
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+install(FILES data/camera_database.json
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/opencalibration)
+
+install(EXPORT opencalibrationTargets
+    NAMESPACE opencalibration::
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/opencalibration)
+
+configure_package_config_file(
+    cmake/opencalibrationConfig.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/opencalibrationConfig.cmake
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/opencalibration)
+
+write_basic_package_version_file(
+    ${CMAKE_CURRENT_BINARY_DIR}/opencalibrationConfigVersion.cmake
+    COMPATIBILITY SameMajorVersion)
+
+install(FILES
+    ${CMAKE_CURRENT_BINARY_DIR}/opencalibrationConfig.cmake
+    ${CMAKE_CURRENT_BINARY_DIR}/opencalibrationConfigVersion.cmake
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/opencalibration)
+
+# ============= CPACK ================
+set(CPACK_PACKAGE_NAME "opencalibration")
+set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Open source camera calibration and orthophoto pipeline")
+set(CPACK_PACKAGE_CONTACT "maintainer@opencalibration.org")
+
+set(CPACK_DEBIAN_PACKAGE_DEPENDS
+    "libeigen3-dev, libceres-dev, libopencv-dev, libgdal-dev, rapidjson-dev, libspdlog-dev, libtinyxml2-dev")
+set(CPACK_DEBIAN_PACKAGE_SECTION "science")
+
+set(CPACK_RPM_PACKAGE_REQUIRES
+    "eigen3-devel, ceres-solver-devel, opencv-devel, gdal-devel, rapidjson-devel, spdlog-devel, tinyxml2-devel")
+set(CPACK_RPM_PACKAGE_LICENSE "MIT")
+
+include(CPack)

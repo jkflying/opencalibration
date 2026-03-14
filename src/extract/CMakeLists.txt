@@ -10,6 +10,9 @@ add_library(oc_extract extract_features.cpp
                        camera_database.cpp
                        $<TARGET_OBJECTS:tinyexif_obj>)
 
+target_include_directories(oc_extract PUBLIC
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 target_include_directories(oc_extract SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/external/TinyEXIF-master
                                                      ${PROJECT_SOURCE_DIR}/external/jk-tree/include)
 
