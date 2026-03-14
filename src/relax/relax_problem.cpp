@@ -1395,7 +1395,14 @@ surface_model RelaxProblem::getSurfaceModel()
         }
     }
 
-    ankerl::unordered_dense::map<size_t, std::pair<Eigen::Vector3d, size_t>> merged;
+    struct MergedTrack
+    {
+        std::vector<Eigen::Vector3d> points;
+        double min_error = std::numeric_limits<double>::infinity();
+        ankerl::unordered_dense::set<size_t> unique_nodes;
+    };
+
+    ankerl::unordered_dense::map<size_t, MergedTrack> merged;
     for (size_t i = 0; i < flat_tracks.size(); i++)
     {
         const auto &t = *flat_tracks[i];
@@ -1403,21 +1410,39 @@ surface_model RelaxProblem::getSurfaceModel()
             continue;
 
         size_t root = uf.find(i);
-        auto [it, inserted] = merged.try_emplace(root, std::make_pair(Eigen::Vector3d::Zero(), size_t{0}));
-        it->second.first += t.point;
-        it->second.second++;
+        auto &m = merged[root];
+        m.points.push_back(t.point);
+        if (std::isfinite(t.error))
+            m.min_error = std::min(m.min_error, t.error);
+        for (const auto &meas : t.measurements)
+            m.unique_nodes.insert(meas.node_id);
     }
 
-    point_cloud points;
-    points.reserve(merged.size());
-    for (const auto &[root, acc] : merged)
+    point_cloud cloud_points;
+    cloud_points.reserve(merged.size());
+    for (const auto &[root, m] : merged)
     {
-        points.push_back(acc.first / static_cast<double>(acc.second));
+        size_t num_views = m.unique_nodes.size();
+        double max_allowed_error = (num_views >= 3) ? 10.0 : 1.0;
+        if (m.min_error > max_allowed_error)
+            continue;
+
+        Eigen::Vector3d pt;
+        if (m.points.size() == 1)
+        {
+            pt = m.points[0];
+        }
+        else
+        {
+            int n = std::min(static_cast<int>(m.points.size()), ROBUST_CENTROID_MAX_POINTS);
+            pt = robustCentroid(m.points.data(), n, 1.0);
+        }
+        cloud_points.push_back(pt);
     }
 
-    if (!points.empty())
+    if (!cloud_points.empty())
     {
-        s.cloud.emplace_back(std::move(points));
+        s.cloud.emplace_back(std::move(cloud_points));
     }
 
     s.mesh = _mesh;

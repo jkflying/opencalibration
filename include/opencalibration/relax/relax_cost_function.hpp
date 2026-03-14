@@ -68,6 +68,54 @@ struct DifferenceCost
     const double _weight;
 };
 
+constexpr int ROBUST_CENTROID_MAX_POINTS = 5;
+
+template <typename T>
+Eigen::Matrix<T, 3, 1> robustCentroid(const Eigen::Matrix<T, 3, 1> *points, int n, T huber_threshold)
+{
+    using Vector3T = Eigen::Matrix<T, 3, 1>;
+    constexpr int MAX_STAGES = 3;
+
+    Vector3T centroid = Vector3T::Zero();
+    for (int i = 0; i < n; i++)
+        centroid += points[i];
+    centroid /= T(n);
+
+    T weights[ROBUST_CENTROID_MAX_POINTS];
+    for (int i = 0; i < n; i++)
+        weights[i] = T(1.0);
+
+    for (int stage = 0; stage < MAX_STAGES; stage++)
+    {
+        T total_w = T(0);
+        T min_w = T(std::numeric_limits<double>::max());
+        T max_w = T(0);
+        for (int i = 0; i < n; i++)
+        {
+            T err = (points[i] - centroid).norm();
+            T w = T(1.0) / (err + T(1e-8));
+            if (err > huber_threshold)
+                w *= huber_threshold / err;
+            weights[i] = w;
+            total_w += w;
+            if (w < min_w)
+                min_w = w;
+            if (w > max_w)
+                max_w = w;
+        }
+
+        Vector3T weighted_sum = Vector3T::Zero();
+        for (int i = 0; i < n; i++)
+            weighted_sum += weights[i] * points[i];
+        centroid = weighted_sum / total_w;
+
+        if (min_w > max_w * T(0.5))
+            break;
+    }
+
+    return centroid;
+}
+
 struct AdjacentTriangleNormalCost
 {
     static const int NUM_RESIDUALS = 1;

@@ -1048,3 +1048,49 @@ TEST_F(incremental_relax, two_phase_optimization_improves_convergence)
     EXPECT_LT(final_error, initial_error * 0.3) << "Should achieve at least 70% error reduction";
     EXPECT_LT(final_error, 0.1) << "Expected final error < 0.1 rad even with large initial disturbance";
 }
+
+TEST(RobustCentroid, identical_points)
+{
+    Eigen::Vector3d points[] = {{1, 2, 3}, {1, 2, 3}, {1, 2, 3}};
+    auto result = robustCentroid(points, 3, 1.0);
+    EXPECT_NEAR(result.x(), 1.0, 1e-6);
+    EXPECT_NEAR(result.y(), 2.0, 1e-6);
+    EXPECT_NEAR(result.z(), 3.0, 1e-6);
+}
+
+TEST(RobustCentroid, close_points_near_average)
+{
+    Eigen::Vector3d points[] = {{0, 0, 0}, {0.01, 0, 0}, {0, 0.01, 0}};
+    auto result = robustCentroid(points, 3, 100.0);
+    Eigen::Vector3d naive(0.01 / 3, 0.01 / 3, 0);
+    EXPECT_LT((result - naive).norm(), 0.01);
+}
+
+TEST(RobustCentroid, outlier_downweighted)
+{
+    Eigen::Vector3d points[] = {{0, 0, 0}, {1, 0, 0}, {2, 0, 0}, {100, 0, 0}};
+    auto robust = robustCentroid(points, 4, 1.0);
+
+    // Inlier centroid is (1, 0, 0). Robust result should stay close to it.
+    EXPECT_NEAR(robust.x(), 1.0, 0.5);
+    EXPECT_NEAR(robust.y(), 0.0, 1e-6);
+    EXPECT_NEAR(robust.z(), 0.0, 1e-6);
+}
+
+TEST(RobustCentroid, two_points)
+{
+    Eigen::Vector3d points[] = {{0, 0, 0}, {2, 0, 0}};
+    auto result = robustCentroid(points, 2, 10.0);
+    EXPECT_NEAR(result.x(), 1.0, 1e-4);
+    EXPECT_NEAR(result.y(), 0.0, 1e-6);
+    EXPECT_NEAR(result.z(), 0.0, 1e-6);
+}
+
+TEST(RobustCentroid, single_point)
+{
+    Eigen::Vector3d points[] = {{5, 3, 1}};
+    auto result = robustCentroid(points, 1, 1.0);
+    EXPECT_NEAR(result.x(), 5.0, 1e-6);
+    EXPECT_NEAR(result.y(), 3.0, 1e-6);
+    EXPECT_NEAR(result.z(), 1.0, 1e-6);
+}
