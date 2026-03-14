@@ -92,6 +92,7 @@ class RelaxProblem
 
     void addDownwardsPrior();
     void addMeshFlatPrior();
+    void addMeshSmoothPrior();
 
     void trackRadialObservation(double *radial_data, size_t pixels_rows, size_t pixels_cols, double focal_length);
     void addMonotonicityCosts();

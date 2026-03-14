@@ -68,6 +68,44 @@ struct DifferenceCost
     const double _weight;
 };
 
+struct AdjacentTriangleNormalCost
+{
+    static const int NUM_RESIDUALS = 1;
+    static const int NUM_PARAMETERS_1 = 1; // z of edge node A
+    static const int NUM_PARAMETERS_2 = 1; // z of edge node B
+    static const int NUM_PARAMETERS_3 = 1; // z of opposite node C (triangle 1)
+    static const int NUM_PARAMETERS_4 = 1; // z of opposite node D (triangle 2)
+
+    AdjacentTriangleNormalCost(const Eigen::Vector2d &xyA, const Eigen::Vector2d &xyB, const Eigen::Vector2d &xyC,
+                               const Eigen::Vector2d &xyD, double weight)
+        : _xyA(xyA), _xyB(xyB), _xyC(xyC), _xyD(xyD), _weight(weight)
+    {
+    }
+
+    template <typename T> bool operator()(const T *zA, const T *zB, const T *zC, const T *zD, T *residuals) const
+    {
+        using Vector3T = Eigen::Matrix<T, 3, 1>;
+
+        const Vector3T A(T(_xyA.x()), T(_xyA.y()), *zA);
+        const Vector3T B(T(_xyB.x()), T(_xyB.y()), *zB);
+        const Vector3T C(T(_xyC.x()), T(_xyC.y()), *zC);
+        const Vector3T D(T(_xyD.x()), T(_xyD.y()), *zD);
+
+        const Vector3T AB = B - A;
+        const Vector3T n1 = AB.cross(C - A).normalized();
+        const Vector3T n2 = AB.cross(D - A).normalized();
+
+        residuals[0] = T(_weight) * angleBetweenUnitVectors<T>(n1, n2);
+        return true;
+    }
+
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
+  private:
+    const Eigen::Vector2d _xyA, _xyB, _xyC, _xyD;
+    const double _weight;
+};
+
 struct DistortionMonotonicityCost
 {
     static const int NUM_RESIDUALS = 10;

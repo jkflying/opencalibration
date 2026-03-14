@@ -111,4 +111,14 @@ ceres::CostFunction *newAutoDiffDistortionMonotonicityCost(double r_max, double 
     using CostFunction = ceres::AutoDiffCostFunction<Functor, Functor::NUM_RESIDUALS, Functor::NUM_PARAMETERS_1>;
     return new CostFunction(new Functor(r_max, weight));
 }
+ceres::CostFunction *newAutoDiffAdjacentTriangleNormalCost(const Eigen::Vector2d &xyA, const Eigen::Vector2d &xyB,
+                                                           const Eigen::Vector2d &xyC, const Eigen::Vector2d &xyD,
+                                                           double weight)
+{
+    using Functor = AdjacentTriangleNormalCost;
+    using CostFunction = ceres::AutoDiffCostFunction<Functor, Functor::NUM_RESIDUALS, Functor::NUM_PARAMETERS_1,
+                                                     Functor::NUM_PARAMETERS_2, Functor::NUM_PARAMETERS_3,
+                                                     Functor::NUM_PARAMETERS_4>;
+    return new CostFunction(new Functor(xyA, xyB, xyC, xyD, weight));
+}
 } // namespace opencalibration

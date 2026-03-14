@@ -115,6 +115,7 @@ void RelaxProblem::setupGroundMeshProblem(const MeasurementGraph &graph, std::ve
     }
 
     addMeshFlatPrior();
+    addMeshSmoothPrior();
     addMonotonicityCosts();
 }
 
@@ -1272,6 +1273,39 @@ void RelaxProblem::addMeshFlatPrior()
         double *h = &iter->second.payload.location.z();
         _problem->AddResidualBlock(newAutoDiffDifferenceCost(1e-5), nullptr, h, &_mesh_initial_z[i]);
         _problem->SetParameterBlockConstant(&_mesh_initial_z[i]);
+    }
+}
+
+void RelaxProblem::addMeshSmoothPrior()
+{
+    for (auto iter = _mesh.edgebegin(); iter != _mesh.edgeend(); ++iter)
+    {
+        const MeshEdge &edge = iter->second.payload;
+        if (edge.border)
+            continue;
+
+        const size_t idA = iter->second.getSource();
+        const size_t idB = iter->second.getDest();
+        const size_t idC = edge.triangleOppositeNodes[0];
+        const size_t idD = edge.triangleOppositeNodes[1];
+
+        auto *nodeA = _mesh.getNode(idA);
+        auto *nodeB = _mesh.getNode(idB);
+        auto *nodeC = _mesh.getNode(idC);
+        auto *nodeD = _mesh.getNode(idD);
+
+        const Eigen::Vector2d xyA = nodeA->payload.location.head<2>();
+        const Eigen::Vector2d xyB = nodeB->payload.location.head<2>();
+        const Eigen::Vector2d xyC = nodeC->payload.location.head<2>();
+        const Eigen::Vector2d xyD = nodeD->payload.location.head<2>();
+
+        double *zA = &nodeA->payload.location.z();
+        double *zB = &nodeB->payload.location.z();
+        double *zC = &nodeC->payload.location.z();
+        double *zD = &nodeD->payload.location.z();
+
+        _problem->AddResidualBlock(newAutoDiffAdjacentTriangleNormalCost(xyA, xyB, xyC, xyD, 1e-3), nullptr, zA, zB,
+                                   zC, zD);
     }
 }
 

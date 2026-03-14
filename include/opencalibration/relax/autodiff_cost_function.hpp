@@ -43,4 +43,8 @@ ceres::CostFunction *newAutoDiffPointsDownwardsPrior(double weight);
 
 ceres::CostFunction *newAutoDiffDistortionMonotonicityCost(double r_max, double weight);
 
+ceres::CostFunction *newAutoDiffAdjacentTriangleNormalCost(const Eigen::Vector2d &xyA, const Eigen::Vector2d &xyB,
+                                                           const Eigen::Vector2d &xyC, const Eigen::Vector2d &xyD,
+                                                           double weight);
+
 } // namespace opencalibration
