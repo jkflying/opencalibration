@@ -1360,8 +1360,8 @@ void RelaxProblem::addMeshSmoothPrior()
         double *zC = &nodeC->payload.location.z();
         double *zD = &nodeD->payload.location.z();
 
-        _problem->AddResidualBlock(newAutoDiffAdjacentTriangleNormalCost(xyA, xyB, xyC, xyD, 1e-4), nullptr, zA, zB,
-                                   zC, zD);
+        _problem->AddResidualBlock(newAutoDiffAdjacentTriangleNormalCost(xyA, xyB, xyC, xyD, 1e-4), nullptr, zA, zB, zC,
+                                   zD);
     }
 }
 

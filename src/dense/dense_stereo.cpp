@@ -292,7 +292,6 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
                     local_matches.push_back({src_id, measurementId(cand_nid, best_feat_idx)});
                 }
             }
-
         }
 
         if (!local_matches.empty())
@@ -348,8 +347,8 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
             const auto &m = id_to_measurement[id];
             const auto &img = graph.getNode(m.node_id)->payload;
             const auto &pixel = img.features[m.feat_idx].location;
-            measurements.push_back({image_to_3d(pixel, *img.model, img.position, img.orientation), pixel, img.model.get(),
-                                    &img.position, &img.orientation});
+            measurements.push_back({image_to_3d(pixel, *img.model, img.position, img.orientation), pixel,
+                                    img.model.get(), &img.position, &img.orientation});
         }
 
         rays.clear();

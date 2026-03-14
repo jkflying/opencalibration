@@ -154,8 +154,7 @@ Pipeline::Transition Pipeline::runCurrentState(PipelineState currentState)
         return t;
     case State::DENSE_MESH_RELAX:
         local = std::min(1.f, float(stateRunCount() + 1) / float(MESH_REFINEMENT_MAX_ITERATIONS));
-        _emit_progress("Dense mesh relaxation (iter " + std::to_string(stateRunCount() + 1) + ")",
-                       local, true);
+        _emit_progress("Dense mesh relaxation (iter " + std::to_string(stateRunCount() + 1) + ")", local, true);
         return t;
     default:
         break;
@@ -592,7 +591,8 @@ Pipeline::Transition Pipeline::dense_mesh_relax()
         meanArcPerPixel /= camCount;
         meanImageSize /= camCount;
         gsd = std::max(0.001, std::abs(meanCameraZ - meanSurfaceZ) * meanArcPerPixel);
-        reducedGsd = std::sqrt(static_cast<double>(maxPointsPerTriangle) / 8.0) * baseGridFraction * meanImageSize * gsd;
+        reducedGsd =
+            std::sqrt(static_cast<double>(maxPointsPerTriangle) / 8.0) * baseGridFraction * meanImageSize * gsd;
     }
     const double minDistanceStddev = varianceGsdMultiplier * gsd;
     const double minDistanceVariance = minDistanceStddev * minDistanceStddev;

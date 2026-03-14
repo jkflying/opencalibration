@@ -116,9 +116,9 @@ ceres::CostFunction *newAutoDiffAdjacentTriangleNormalCost(const Eigen::Vector2d
                                                            double weight)
 {
     using Functor = AdjacentTriangleNormalCost;
-    using CostFunction = ceres::AutoDiffCostFunction<Functor, Functor::NUM_RESIDUALS, Functor::NUM_PARAMETERS_1,
-                                                     Functor::NUM_PARAMETERS_2, Functor::NUM_PARAMETERS_3,
-                                                     Functor::NUM_PARAMETERS_4>;
+    using CostFunction =
+        ceres::AutoDiffCostFunction<Functor, Functor::NUM_RESIDUALS, Functor::NUM_PARAMETERS_1,
+                                    Functor::NUM_PARAMETERS_2, Functor::NUM_PARAMETERS_3, Functor::NUM_PARAMETERS_4>;
     return new CostFunction(new Functor(xyA, xyB, xyC, xyD, weight));
 }
 } // namespace opencalibration

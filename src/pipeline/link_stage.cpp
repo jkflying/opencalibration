@@ -77,9 +77,8 @@ std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph
                 const double coarse_spacing_pixels = 40.0;
                 std::vector<size_t> coarse_indices_1 =
                     spatially_subsample_feature_indices(img.features, coarse_spacing_pixels, img.num_sparse_features);
-                std::vector<size_t> coarse_indices_2 =
-                    spatially_subsample_feature_indices(near_image.features, coarse_spacing_pixels,
-                                                       near_image.num_sparse_features);
+                std::vector<size_t> coarse_indices_2 = spatially_subsample_feature_indices(
+                    near_image.features, coarse_spacing_pixels, near_image.num_sparse_features);
 
                 std::vector<feature_match> coarse_matches =
                     match_features_subset(img.features, near_image.features, coarse_indices_1, coarse_indices_2);
