@@ -709,23 +709,22 @@ void RelaxProblem::addMultiRayTrackCosts(const MeasurementGraph &graph, const Re
                 plane3.corner[i] = *triangle[i];
             auto pno = cornerPlane2normOffsetPlane(plane3);
 
-            Eigen::Vector3d centroid = Eigen::Vector3d::Zero();
             std::vector<Eigen::Vector3d> intersections(rays.size());
             bool all_valid = true;
+            double avg_dist = 0;
             for (size_t i = 0; i < rays.size(); i++)
             {
                 ray_d world_ray{rays[i].orientation * rays[i].camera_ray, rays[i].camera_loc};
                 all_valid &= rayPlaneIntersection(world_ray, pno, intersections[i]);
-                centroid += intersections[i];
+                avg_dist += (intersections[i] - rays[i].camera_loc).norm();
             }
             if (!all_valid)
                 continue;
-            centroid /= static_cast<double>(rays.size());
-
-            double avg_dist = 0;
-            for (size_t i = 0; i < rays.size(); i++)
-                avg_dist += (intersections[i] - rays[i].camera_loc).norm();
             avg_dist /= static_cast<double>(rays.size());
+
+            int n = std::min(static_cast<int>(intersections.size()), ROBUST_CENTROID_MAX_POINTS);
+            double huber_threshold = avg_dist * 0.01;
+            Eigen::Vector3d centroid = robustCentroid(intersections.data(), n, huber_threshold);
 
             for (size_t i = 0; i < rays.size(); i++)
             {

@@ -548,10 +548,8 @@ template <int N> struct MultiRayPlaneIntersectionAngleCost_FocalRadial
         }
         avg_dist /= T(N);
 
-        Vector3T centroid = Vector3T::Zero();
-        for (int i = 0; i < N; i++)
-            centroid += intersection[i];
-        centroid /= T(N);
+        T huber_threshold = avg_dist * T(0.01);
+        Vector3T centroid = robustCentroid(intersection, N, huber_threshold);
 
         for (int i = 0; i < N; i++)
         {
@@ -641,10 +639,8 @@ template <int N> struct MultiRayPlaneIntersectionAngleCost
         }
         avg_dist /= T(N);
 
-        Vector3T centroid = Vector3T::Zero();
-        for (int i = 0; i < N; i++)
-            centroid += intersection[i];
-        centroid /= T(N);
+        T huber_threshold = avg_dist * T(0.01);
+        Vector3T centroid = robustCentroid(intersection, N, huber_threshold);
 
         for (int i = 0; i < N; i++)
         {
