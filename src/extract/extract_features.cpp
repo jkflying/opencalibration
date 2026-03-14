@@ -32,7 +32,7 @@ extracted_features extract_features(const cv::Mat &image)
 
     std::vector<cv::KeyPoint> keypoints;
 
-    auto akaze = cv::AKAZE::create(cv::AKAZE::DESCRIPTOR_MLDB, feature_2d::DESCRIPTOR_BITS, 3, 0.0001f);
+    auto akaze = cv::AKAZE::create(cv::AKAZE::DESCRIPTOR_MLDB, feature_2d::DESCRIPTOR_BITS, 3, 0.00005f);
     akaze->detectAndCompute(image_scaled, cv::noArray(), keypoints, descriptors);
 
     std::vector<feature_2d> oc_keypoints;

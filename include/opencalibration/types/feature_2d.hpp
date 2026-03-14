@@ -8,7 +8,7 @@ namespace opencalibration
 
 struct feature_2d
 {
-    static constexpr int DESCRIPTOR_BITS = 256;
+    static constexpr int DESCRIPTOR_BITS = 486;
 
     Eigen::Vector2d location = {NAN, NAN};
     float strength = 0;
