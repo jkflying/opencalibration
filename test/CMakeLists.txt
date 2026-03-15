@@ -7,6 +7,7 @@ endif()
 add_executable(functional_tests gtest_main.cpp
                                 test_camera_database.cpp
                                 test_checkpoint.cpp
+                                test_cv_raster_conversion.cpp
                                 test_dense.cpp
                                 test_extract_features.cpp
                                 test_extract_metadata.cpp
@@ -37,6 +38,7 @@ add_executable(unit_tests gtest_main.cpp
                           test_blending.cpp
                           test_color_balance.cpp
                           test_combinatorics.cpp
+                          test_cost_functions.cpp
                           test_distort.cpp
                           test_geo_coord.cpp
                           test_geometry.cpp
@@ -44,7 +46,9 @@ add_executable(unit_tests gtest_main.cpp
                           test_meshgraph.cpp
                           test_ortho.cpp
                           test_ransac_unit.cpp
+                          test_raster.cpp
                           test_relax.cpp
+                          test_relax_options.cpp
                           test_tree.cpp)
 
 target_link_libraries(unit_tests PUBLIC gtest pthread oc_geo_coord

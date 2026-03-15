@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 
 #include <filesystem>
+#include <fstream>
 
 using namespace opencalibration;
 
@@ -153,4 +154,83 @@ TEST_F(CheckpointTest, resume_from_state)
     // Should be able to resume from the same or earlier state
     EXPECT_TRUE(p2.resumeFromState(PipelineState::INITIAL_PROCESSING));
     EXPECT_EQ(PipelineState::INITIAL_PROCESSING, p2.getState());
+}
+
+TEST_F(CheckpointTest, resume_from_later_state_fails)
+{
+    Pipeline p(1);
+    p.set_generate_thumbnails(false);
+
+    ASSERT_TRUE(p.saveCheckpoint(test_checkpoint_dir));
+
+    Pipeline p2(1);
+    ASSERT_TRUE(p2.loadCheckpoint(test_checkpoint_dir));
+
+    EXPECT_FALSE(p2.resumeFromState(PipelineState::COMPLETE));
+}
+
+TEST_F(CheckpointTest, load_malformed_metadata)
+{
+    std::filesystem::create_directories(test_checkpoint_dir);
+    {
+        std::ofstream out(test_checkpoint_dir + "/metadata.json");
+        out << "not valid json{{{";
+    }
+    {
+        std::ofstream out(test_checkpoint_dir + "/graph.json");
+        out << "{}";
+    }
+
+    CheckpointData data;
+    EXPECT_FALSE(loadCheckpoint(test_checkpoint_dir, data));
+}
+
+TEST_F(CheckpointTest, load_wrong_version)
+{
+    std::filesystem::create_directories(test_checkpoint_dir);
+    {
+        std::ofstream out(test_checkpoint_dir + "/metadata.json");
+        out << R"({"version": 999})";
+    }
+    {
+        std::ofstream out(test_checkpoint_dir + "/graph.json");
+        out << "{}";
+    }
+
+    CheckpointData data;
+    EXPECT_FALSE(loadCheckpoint(test_checkpoint_dir, data));
+}
+
+TEST_F(CheckpointTest, load_missing_graph)
+{
+    std::filesystem::create_directories(test_checkpoint_dir);
+    {
+        std::ofstream out(test_checkpoint_dir + "/metadata.json");
+        out << R"({"version": 1, "state": "INITIAL_PROCESSING", "state_run_count": 0, "origin_latitude": 0, "origin_longitude": 0, "surface_count": 0})";
+    }
+
+    CheckpointData data;
+    EXPECT_FALSE(loadCheckpoint(test_checkpoint_dir, data));
+}
+
+TEST_F(CheckpointTest, validate_missing_metadata)
+{
+    std::filesystem::create_directories(test_checkpoint_dir);
+    {
+        std::ofstream out(test_checkpoint_dir + "/graph.json");
+        out << "{}";
+    }
+
+    EXPECT_FALSE(validateCheckpoint(test_checkpoint_dir));
+}
+
+TEST_F(CheckpointTest, validate_missing_graph)
+{
+    std::filesystem::create_directories(test_checkpoint_dir);
+    {
+        std::ofstream out(test_checkpoint_dir + "/metadata.json");
+        out << R"({"version": 1})";
+    }
+
+    EXPECT_FALSE(validateCheckpoint(test_checkpoint_dir));
 }

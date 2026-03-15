@@ -2,7 +2,7 @@
 
 #include <opencalibration/distort/distort_keypoints.hpp>
 #include <opencalibration/geometry/intersection.hpp>
-
+#include <opencalibration/types/camera_relations.hpp>
 #include <opencalibration/types/plane.hpp>
 
 #include <ceres/jet.h>

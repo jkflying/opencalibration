@@ -52,3 +52,36 @@ TEST(geo_coord, works)
     // AND: the WKT should match (formatting might change on GDAL versions?)
     EXPECT_STREQ(g.getWKT().c_str(), WKT.c_str());
 }
+
+TEST(geo_coord, uninitialized_toLocalCS_returns_nan)
+{
+    GeoCoord g;
+    EXPECT_FALSE(g.isInitialized());
+    Eigen::Vector3d result = g.toLocalCS(0, 0, 0);
+    EXPECT_TRUE(std::isnan(result.x()));
+    EXPECT_TRUE(std::isnan(result.y()));
+    EXPECT_TRUE(std::isnan(result.z()));
+}
+
+TEST(geo_coord, uninitialized_toWGS84_returns_nan)
+{
+    GeoCoord g;
+    Eigen::Vector3d result = g.toWGS84(Eigen::Vector3d(0, 0, 0));
+    EXPECT_TRUE(std::isnan(result.x()));
+    EXPECT_TRUE(std::isnan(result.y()));
+    EXPECT_TRUE(std::isnan(result.z()));
+}
+
+TEST(geo_coord, uninitialized_getWKT_returns_unknown)
+{
+    GeoCoord g;
+    EXPECT_EQ("UNKNOWN", g.getWKT());
+}
+
+TEST(geo_coord, getOriginLatitude_and_longitude)
+{
+    GeoCoord g;
+    g.setOrigin(47.5, -122.3);
+    EXPECT_DOUBLE_EQ(47.5, g.getOriginLatitude());
+    EXPECT_DOUBLE_EQ(-122.3, g.getOriginLongitude());
+}
