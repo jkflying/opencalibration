@@ -38,7 +38,7 @@ TEST(ransac, homography_filter_correspondences)
     double score = ransac(correspondences, model, inliers);
 
     // THEN: there should be roughly the right number
-    EXPECT_GT(score, 0.30);
+    EXPECT_GT(score, 0.20);
 
     std::array<decomposed_pose, 4> poses;
     EXPECT_EQ(model.decompose(correspondences, inliers, poses), true);

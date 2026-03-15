@@ -5,6 +5,7 @@
 
 #include <cmath>
 #include <iostream>
+#include <limits>
 
 namespace
 {
@@ -87,24 +88,38 @@ void essential_matrix_model::fitInliers(const std::vector<correspondence> &corrs
     calculateEssentialMatrix(A, essential_matrix);
 }
 
-size_t essential_matrix_model::evaluate(const std::vector<correspondence> &corrs, std::vector<bool> &inliers)
+double essential_matrix_model::evaluate(const std::vector<correspondence> &corrs, std::vector<bool> &inliers)
 {
     inliers.resize(corrs.size());
-    size_t count = 0;
+    double total_score = 0;
     for (size_t i = 0; i < corrs.size(); i++)
     {
-        bool in = std::abs(error(corrs[i])) < inlier_threshold;
-        inliers[i] = in;
-        if (in)
-            count++;
+        double e = error(corrs[i]);
+        if (e < inlier_threshold)
+        {
+            inliers[i] = true;
+            double ratio = e / inlier_threshold;
+            total_score += 1.0 - ratio * ratio;
+        }
+        else
+        {
+            inliers[i] = false;
+        }
     }
-    return count;
+    return total_score;
 }
 
 double essential_matrix_model::error(const correspondence &cor)
 {
-    return cor.measurement1.hnormalized().homogeneous().transpose() * essential_matrix *
-           cor.measurement2.hnormalized().homogeneous();
+    Eigen::Vector3d x1 = cor.measurement1 / cor.measurement1.z();
+    Eigen::Vector3d x2 = cor.measurement2 / cor.measurement2.z();
+    double x2tEx1 = x2.transpose() * essential_matrix * x1;
+    Eigen::Vector3d Ex1 = essential_matrix * x1;
+    Eigen::Vector3d Etx2 = essential_matrix.transpose() * x2;
+    double denom = Ex1[0] * Ex1[0] + Ex1[1] * Ex1[1] + Etx2[0] * Etx2[0] + Etx2[1] * Etx2[1];
+    if (denom < 1e-20)
+        return std::numeric_limits<double>::max();
+    return std::sqrt((x2tEx1 * x2tEx1) / denom);
 }
 
 bool essential_matrix_model::decompose(const std::vector<correspondence> & /*corrs*/,

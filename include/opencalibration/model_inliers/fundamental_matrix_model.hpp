@@ -21,11 +21,12 @@ struct fundamental_matrix_model
     void fit(const std::vector<correspondence> &corrs, const std::array<size_t, MINIMUM_POINTS> &initial_indices);
     void fitInliers(const std::vector<correspondence> &corrs, const std::vector<bool> &inliers);
 
-    size_t evaluate(const std::vector<correspondence> &corrs, std::vector<bool> &inliers);
+    double evaluate(const std::vector<correspondence> &corrs, std::vector<bool> &inliers);
 
     double error(const correspondence &cor);
+    void checkDegeneracy(const std::vector<correspondence> &corrs, std::vector<bool> &inliers);
 
-    double inlier_threshold = 0.001;
+    double inlier_threshold = 0.01;
     Eigen::Matrix3d fundamental_matrix;
 };
 

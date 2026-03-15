@@ -58,6 +58,7 @@ std::vector<correspondence> distort_keypoints(const std::vector<feature_2d> &fea
         correspondence cor;
         cor.measurement1 = image_to_3d(features1[m.feature_index_1].location, model1);
         cor.measurement2 = image_to_3d(features2[m.feature_index_2].location, model2);
+        cor.quality = m.distance;
         distorted.push_back(cor);
     }
 

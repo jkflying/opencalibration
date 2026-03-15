@@ -20,13 +20,17 @@ struct homography_model
     void fit(const std::vector<correspondence> &corrs, const std::array<size_t, MINIMUM_POINTS> &initial_indices);
     void fitInliers(const std::vector<correspondence> &corrs, const std::vector<bool> &inliers);
 
-    size_t evaluate(const std::vector<correspondence> &corrs, std::vector<bool> &inliers);
+    double evaluate(const std::vector<correspondence> &corrs, std::vector<bool> &inliers);
     bool decompose(const std::vector<correspondence> &corrs, const std::vector<bool> &inliers,
                    std::array<decomposed_pose, 4> &poses);
     double error(const correspondence &cor);
 
+    static bool checkSampleDegeneracy(const std::vector<correspondence> &corrs,
+                                      const std::array<size_t, MINIMUM_POINTS> &indices);
+
     double inlier_threshold = 0.005;
     Eigen::Matrix3d homography;
+    Eigen::Matrix3d homography_inverse;
 };
 
 } // namespace opencalibration
