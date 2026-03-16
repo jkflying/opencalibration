@@ -100,7 +100,7 @@ struct Pipeline::Impl : public usm::StateMachine<PipelineState, PipelineTransiti
     size_t mesh_refinement_level_triangles = 0;
 
     bool skip_mesh_refinement = false;
-    bool skip_initial_global_relax = false;
+    bool skip_initial_global_relax = true;
     bool skip_camera_param_relax = false;
     bool skip_final_global_relax = true;
     bool generate_dense_mesh = false;

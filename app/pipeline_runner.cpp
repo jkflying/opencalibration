@@ -48,7 +48,7 @@ int main(int argc, char *argv[])
     std::string resume_from = "";
     bool update_camera_db = false;
     bool skip_mesh_refinement = false;
-    bool skip_initial_global_relax = false;
+    bool initial_global_relax = false;
     bool skip_camera_intrinsics = false;
     bool skip_final_global_relax = false;
     bool dense_mesh = false;
@@ -81,8 +81,8 @@ int main(int argc, char *argv[])
                      "GENERATE_THUMBNAIL, GENERATE_LAYERS, COLOR_BALANCE, BLEND_LAYERS)");
     args.addArgument({"--skip-mesh-refinement"}, &skip_mesh_refinement,
                      "Skip the mesh refinement stage (uses grid mesh instead of adaptive refinement)");
-    args.addArgument({"--skip-initial-global-relax"}, &skip_initial_global_relax,
-                     "Skip the initial global relaxation stage");
+    args.addArgument({"--initial-global-relax"}, &initial_global_relax,
+                     "Enable the initial global relaxation stage (disabled by default, mesh refinement handles this)");
     args.addArgument({"--skip-camera-intrinsics"}, &skip_camera_intrinsics,
                      "Skip camera intrinsics optimization (focal length, distortion, principal point)");
     args.addArgument({"--skip-final-global-relax"}, &skip_final_global_relax, "Skip the final global relaxation stage");
@@ -177,7 +177,7 @@ int main(int argc, char *argv[])
     p.set_textured_mesh_filename(textured_mesh_file);
     p.set_orthomosaic_max_megapixels(ortho_max_megapixels);
     p.set_skip_mesh_refinement(skip_mesh_refinement);
-    p.set_skip_initial_global_relax(skip_initial_global_relax);
+    p.set_skip_initial_global_relax(!initial_global_relax);
     p.set_skip_camera_param_relax(skip_camera_intrinsics);
     p.set_skip_final_global_relax(skip_final_global_relax);
     p.set_generate_dense_mesh(dense_mesh);
