@@ -2,7 +2,6 @@
 
 #include <opencalibration/distort/distort_keypoints.hpp>
 #include <opencalibration/match/match_features.hpp>
-#include <opencalibration/model_inliers/fundamental_matrix_model.hpp>
 #include <opencalibration/model_inliers/ransac.hpp>
 #include <opencalibration/performance/performance.hpp>
 
@@ -50,7 +49,7 @@ std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph
     }
 
     funcs.reserve(funcs_required);
-    _all_inlier_measurements.reserve(10 * _links.size());
+    _all_inlier_measurements.reserve(funcs_required);
     for (size_t i = 0; i < _links.size(); i++)
     {
         const auto &node_nearest = _links[i];
@@ -58,9 +57,12 @@ std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph
         const auto &img = graph.getNode(node_id)->payload;
         const auto &nearest = node_nearest.link_ids;
 
-        // match & distort
         auto &mtx = _measurement_mutex;
         auto &meas = _all_inlier_measurements;
+
+        const double coarse_spacing_pixels = 40.0;
+        std::vector<size_t> coarse_indices_1 =
+            spatially_subsample_feature_indices(img.features, coarse_spacing_pixels, img.num_sparse_features);
 
         for (size_t match_node_id : nearest)
         {
@@ -70,13 +72,11 @@ std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph
                 continue;
             }
             const image &near_image = node->payload;
-            auto run_func = [i, node_id, near_image, match_node_id, &img, &mtx, &meas]() {
+            auto run_func = [coarse_indices_1, coarse_spacing_pixels, i, node_id, &near_image, match_node_id, &img,
+                             &mtx, &meas]() {
                 PerformanceMeasure p("Link runner coarse match");
                 camera_relations relations;
 
-                const double coarse_spacing_pixels = 40.0;
-                std::vector<size_t> coarse_indices_1 =
-                    spatially_subsample_feature_indices(img.features, coarse_spacing_pixels, img.num_sparse_features);
                 std::vector<size_t> coarse_indices_2 = spatially_subsample_feature_indices(
                     near_image.features, coarse_spacing_pixels, near_image.num_sparse_features);
 
@@ -103,58 +103,9 @@ std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph
 
                 if (can_decompose && num_coarse_inliers > h.MINIMUM_POINTS * 1.5)
                 {
-                    p.reset("Link runner fine match");
-
-                    // Compute pixel-space fundamental matrix from coarse inliers for epipolar filtering
-                    std::vector<correspondence> pixel_correspondences(coarse_matches.size());
-                    for (size_t k = 0; k < coarse_matches.size(); k++)
-                    {
-                        const auto &loc1 = img.features[coarse_matches[k].feature_index_1].location;
-                        const auto &loc2 = near_image.features[coarse_matches[k].feature_index_2].location;
-                        pixel_correspondences[k].measurement1 = loc1.homogeneous();
-                        pixel_correspondences[k].measurement2 = loc2.homogeneous();
-                    }
-
-                    fundamental_matrix_model fm;
-                    fm.inlier_threshold = 15.0;
-                    std::vector<bool> fm_inliers;
-                    ransac(pixel_correspondences, fm, fm_inliers);
-                    fm.fitInliers(pixel_correspondences, fm_inliers);
-
-                    const double search_radius_pixels = 150.0;
-                    const double epipolar_threshold_pixels = 12.0;
-                    std::vector<feature_match> fine_matches = match_features_local_guided(
-                        img.features, near_image.features, h.homography, search_radius_pixels, &fm.fundamental_matrix,
-                        epipolar_threshold_pixels, img.num_sparse_features, near_image.num_sparse_features);
-
-                    std::vector<feature_match> all_matches = coarse_matches;
-                    all_matches.insert(all_matches.end(), fine_matches.begin(), fine_matches.end());
-
-                    p.reset("Link runner fine undistort");
-                    std::vector<correspondence> all_correspondences = distort_keypoints(
-                        img.features, near_image.features, all_matches, *img.model, *near_image.model);
-
-                    p.reset("Link runner fine ransac");
-                    std::vector<bool> all_inliers;
-                    ransac(all_correspondences, h, all_inliers);
-
-                    relations.ransac_relation = h.homography;
-                    size_t num_all_inliers = std::count(all_inliers.begin(), all_inliers.end(), true);
-
-                    spdlog::trace("All matches: {}  inliers: {}", all_matches.size(), num_all_inliers);
-
-                    if (num_all_inliers > h.MINIMUM_POINTS * 1.5)
-                    {
-                        relations.matches = all_matches;
-                        assembleInliers(relations.matches, all_inliers, img.features, near_image.features,
-                                        relations.inlier_matches);
-                    }
-                    else
-                    {
-                        relations.matches = coarse_matches;
-                        assembleInliers(relations.matches, coarse_inliers, img.features, near_image.features,
-                                        relations.inlier_matches);
-                    }
+                    relations.matches = coarse_matches;
+                    assembleInliers(relations.matches, coarse_inliers, img.features, near_image.features,
+                                    relations.inlier_matches);
                 }
                 std::lock_guard<std::mutex> lock(mtx);
                 meas.emplace_back(edge_payload{i, node_id, match_node_id, std::move(relations)});

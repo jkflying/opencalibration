@@ -3,7 +3,6 @@
 
 #include <gtest/gtest.h>
 
-#include <eigen3/Eigen/Geometry>
 #include <opencv2/opencv.hpp>
 
 using namespace opencalibration;
@@ -40,70 +39,6 @@ TEST(match, subset_matches_use_original_indices)
 
         EXPECT_TRUE(index1_in_subset) << "Match index1=" << m.feature_index_1 << " not in subset indices";
         EXPECT_TRUE(index2_in_subset) << "Match index2=" << m.feature_index_2 << " not in subset indices";
-    }
-}
-
-TEST(match, local_guided_respects_homography)
-{
-    std::string path1 = TEST_DATA_DIR "P2540254.JPG";
-    std::string path2 = TEST_DATA_DIR "P2530253.JPG";
-
-    auto extracted1 = extract_features(cv::imread(path1));
-    auto extracted2 = extract_features(cv::imread(path2));
-    extracted1.features.resize(extracted1.num_sparse_features);
-    extracted2.features.resize(extracted2.num_sparse_features);
-    auto &feat1 = extracted1.features;
-    auto &feat2 = extracted2.features;
-
-    Eigen::Matrix3d identity_homography = Eigen::Matrix3d::Identity();
-    const double search_radius = 50.0;
-
-    std::vector<feature_match> guided_matches =
-        match_features_local_guided(feat1, feat2, identity_homography, search_radius);
-
-    EXPECT_GT(guided_matches.size(), 10);
-
-    for (const auto &m : guided_matches)
-    {
-        Eigen::Vector2d predicted =
-            (identity_homography * feat1[m.feature_index_1].location.homogeneous()).hnormalized();
-        Eigen::Vector2d actual = feat2[m.feature_index_2].location;
-        double distance = (predicted - actual).norm();
-
-        EXPECT_LT(distance, search_radius)
-            << "Match at distance " << distance << " exceeds search radius " << search_radius;
-    }
-}
-
-TEST(match, local_guided_with_translation)
-{
-    std::string path1 = TEST_DATA_DIR "P2540254.JPG";
-    std::string path2 = TEST_DATA_DIR "P2530253.JPG";
-
-    auto extracted1 = extract_features(cv::imread(path1));
-    auto extracted2 = extract_features(cv::imread(path2));
-    extracted1.features.resize(extracted1.num_sparse_features);
-    extracted2.features.resize(extracted2.num_sparse_features);
-    auto &feat1 = extracted1.features;
-    auto &feat2 = extracted2.features;
-
-    Eigen::Matrix3d translation_homography = Eigen::Matrix3d::Identity();
-    translation_homography(0, 2) = 100.0;
-    translation_homography(1, 2) = 50.0;
-
-    const double search_radius = 30.0;
-
-    std::vector<feature_match> guided_matches =
-        match_features_local_guided(feat1, feat2, translation_homography, search_radius);
-
-    for (const auto &m : guided_matches)
-    {
-        Eigen::Vector2d predicted =
-            (translation_homography * feat1[m.feature_index_1].location.homogeneous()).hnormalized();
-        Eigen::Vector2d actual = feat2[m.feature_index_2].location;
-        double distance = (predicted - actual).norm();
-
-        EXPECT_LT(distance, search_radius);
     }
 }
 

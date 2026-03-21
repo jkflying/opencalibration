@@ -60,7 +60,8 @@ int main(int argc, char *argv[])
     CommandLine args("Run the opencalibration pipeline from the command line");
 
     args.addArgument({"-i", "--input"}, &input_dir, "Input directory of images");
-    args.addArgument({"-d", "--debug"}, &debug_level, "Log verbosity: 0=off, 1=critical, 2=error, 3=warn, 4=info, 5=debug");
+    args.addArgument({"-d", "--debug"}, &debug_level,
+                     "Log verbosity: 0=off, 1=critical, 2=error, 3=warn, 4=info, 5=debug");
     args.addArgument({"--log-file"}, &log_file, "Output logging file, appends to existing files");
     args.addArgument({"--batch-size"}, &batch_size, "Processing batch size");
     args.addArgument({"-h", "--help"}, &print_help, "Show this help message");
@@ -71,7 +72,8 @@ int main(int argc, char *argv[])
     args.addArgument({"-m", "--mesh-file"}, &mesh_file, "Output mesh PLY file");
     args.addArgument({"-o", "--geotiff-file"}, &geotiff_file, "Output georeferenced GeoTIFF orthomosaic");
     args.addArgument({"--dsm-file"}, &dsm_file, "Output Digital Surface Model (DSM) GeoTIFF");
-    args.addArgument({"-x", "--textured-mesh-file"}, &textured_mesh_file, "Output textured OBJ mesh (generates .obj, .mtl, .jpg)");
+    args.addArgument({"-x", "--textured-mesh-file"}, &textured_mesh_file,
+                     "Output textured OBJ mesh (generates .obj, .mtl, .jpg)");
     args.addArgument({"-t", "--thumbnail-file"}, &thumbnail_file, "Output thumbnail image file");
     args.addArgument({"--source-file"}, &source_file, "Output source index image file");
     args.addArgument({"--overlap-file"}, &overlap_file, "Output overlap count image file");
@@ -87,8 +89,10 @@ int main(int argc, char *argv[])
     args.addArgument({"--final-relax"}, &final_relax, "Final global relaxation (default: on)");
     args.addArgument({"--dense-mesh"}, &dense_mesh, "Dense mesh via multi-view feature matching (default: on)");
 
-    args.addArgument({"-c", "--checkpoint-save"}, &checkpoint_save, "Save checkpoint to directory on state transitions and completion");
-    args.addArgument({"-r", "--checkpoint-restore"}, &checkpoint_restore, "Restore and resume from checkpoint directory");
+    args.addArgument({"-c", "--checkpoint-save"}, &checkpoint_save,
+                     "Save checkpoint to directory on state transitions and completion");
+    args.addArgument({"-r", "--checkpoint-restore"}, &checkpoint_restore,
+                     "Restore and resume from checkpoint directory");
     args.addArgument({"--resume-from"}, &resume_from,
                      "Resume from specific stage (INITIAL_PROCESSING, INITIAL_GLOBAL_RELAX, CAMERA_PARAMETER_RELAX, "
                      "FINAL_GLOBAL_RELAX, MESH_REFINEMENT, GENERATE_THUMBNAIL, DENSIFY_MESH, DENSE_MESH_RELAX, "
