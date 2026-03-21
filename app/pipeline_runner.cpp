@@ -10,8 +10,6 @@
 
 #include "CommandLine.hpp"
 
-#include <omp.h>
-
 #include <iomanip>
 
 #include <filesystem>
@@ -27,67 +25,79 @@ int main(int argc, char *argv[])
 {
 
     EnablePerformanceCounters(true);
+
     std::string input_dir = "";
     uint32_t debug_level = 2;
-    std::string output_file = "";
+    std::string log_file = "";
+    int batch_size = std::thread::hardware_concurrency();
+    bool print_help = false;
+
+    std::string geojson_file = "";
     std::string serialized_graph_file = "";
     std::string pointcloud_file = "";
     std::string mesh_file = "";
-    std::string log_file = "";
-    int batch_size = omp_get_max_threads();
-    bool generate_thumbnails = true;
-    std::string thumbnail_file = "";
-    std::string source_file = "";
-    std::string overlap_file = "";
     std::string geotiff_file = "";
     std::string dsm_file = "";
     std::string textured_mesh_file = "";
+    std::string thumbnail_file = "";
+    std::string source_file = "";
+    std::string overlap_file = "";
+
+    bool generate_thumbnails = true;
     double ortho_max_megapixels = 0.0;
+
+    bool mesh_refinement = true;
+    bool initial_relax = false;
+    bool camera_param_relax = true;
+    bool final_relax = true;
+    bool dense_mesh = true;
+
     std::string checkpoint_save = "";
-    std::string checkpoint_load = "";
+    std::string checkpoint_restore = "";
     std::string resume_from = "";
     bool update_camera_db = false;
-    bool skip_mesh_refinement = false;
-    bool initial_global_relax = false;
-    bool skip_camera_intrinsics = false;
-    bool skip_final_global_relax = false;
-    bool dense_mesh = false;
-    bool printHelp = false;
 
     CommandLine args("Run the opencalibration pipeline from the command line");
+
     args.addArgument({"-i", "--input"}, &input_dir, "Input directory of images");
-    args.addArgument({"-d", "--debug"}, &debug_level, "none=0, critical=1, error=2, warn=3, info=4, debug=5");
-    args.addArgument({"-l", "--log-file"}, &log_file, "Output logging file, overwrites existing files");
-    args.addArgument({"-g", "--geojson"}, &output_file, "Output geojson file");
-    args.addArgument({"-p", "--pointcloud-file"}, &pointcloud_file, "Output pointcloud file");
+    args.addArgument({"-d", "--debug"}, &debug_level, "Log verbosity: 0=off, 1=critical, 2=error, 3=warn, 4=info, 5=debug");
+    args.addArgument({"--log-file"}, &log_file, "Output logging file, appends to existing files");
+    args.addArgument({"--batch-size"}, &batch_size, "Processing batch size");
+    args.addArgument({"-h", "--help"}, &print_help, "Show this help message");
+
+    args.addArgument({"-g", "--geojson-file"}, &geojson_file, "Output GeoJSON camera graph file");
+    args.addArgument({"--graph-file"}, &serialized_graph_file, "Output serialized camera graph file");
+    args.addArgument({"-p", "--pointcloud-file"}, &pointcloud_file, "Output pointcloud XYZ CSV file");
     args.addArgument({"-m", "--mesh-file"}, &mesh_file, "Output mesh PLY file");
-    args.addArgument({"-s", "--serialize"}, &serialized_graph_file, "Output serialized camera graph file");
-    args.addArgument({"-b", "--batch-size"}, &batch_size, "Processing batch size");
-    args.addArgument({"-t", "--thumbnails"}, &generate_thumbnails, "Generate thumbnails (default: true)");
-    args.addArgument({"--thumbnail-file"}, &thumbnail_file, "Output thumbnail image file");
+    args.addArgument({"-o", "--geotiff-file"}, &geotiff_file, "Output georeferenced GeoTIFF orthomosaic");
+    args.addArgument({"--dsm-file"}, &dsm_file, "Output Digital Surface Model (DSM) GeoTIFF");
+    args.addArgument({"-x", "--textured-mesh-file"}, &textured_mesh_file, "Output textured OBJ mesh (generates .obj, .mtl, .jpg)");
+    args.addArgument({"-t", "--thumbnail-file"}, &thumbnail_file, "Output thumbnail image file");
     args.addArgument({"--source-file"}, &source_file, "Output source index image file");
     args.addArgument({"--overlap-file"}, &overlap_file, "Output overlap count image file");
-    args.addArgument({"--ortho-geotiff"}, &geotiff_file, "Output full-resolution georeferenced GeoTIFF orthomosaic");
-    args.addArgument({"--dsm-geotiff"}, &dsm_file, "Output Digital Surface Model (DSM) GeoTIFF");
-    args.addArgument({"--textured-mesh"}, &textured_mesh_file, "Output textured OBJ mesh (generates .obj, .mtl, .jpg)");
+
+    args.addArgument({"--thumbnails"}, &generate_thumbnails, "Generate thumbnails (default: on)");
     args.addArgument({"--ortho-max-megapixels"}, &ortho_max_megapixels,
                      "Maximum orthomosaic output size in megapixels (0 = unlimited)");
-    args.addArgument({"-cs", "--checkpoint-save"}, &checkpoint_save, "Save checkpoint to directory after processing");
-    args.addArgument({"-cl", "--checkpoint-load"}, &checkpoint_load, "Load and resume from checkpoint directory");
-    args.addArgument({"--update-camera-db"}, &update_camera_db,
-                     "Update data/camera_database.json with optimized parameters after pipeline completes");
+
+    args.addArgument({"--mesh-refinement"}, &mesh_refinement, "Mesh refinement (default: on)");
+    args.addArgument({"--initial-relax"}, &initial_relax, "Initial global relaxation (default: off)");
+    args.addArgument({"--camera-param-relax"}, &camera_param_relax,
+                     "Camera parameter optimization: focal length, distortion, principal point (default: on)");
+    args.addArgument({"--final-relax"}, &final_relax, "Final global relaxation (default: on)");
+    args.addArgument({"--dense-mesh"}, &dense_mesh, "Dense mesh via multi-view feature matching (default: on)");
+
+    args.addArgument({"-c", "--checkpoint-save"}, &checkpoint_save, "Save checkpoint to directory on state transitions and completion");
+    args.addArgument({"-r", "--checkpoint-restore"}, &checkpoint_restore, "Restore and resume from checkpoint directory");
     args.addArgument({"--resume-from"}, &resume_from,
-                     "Resume from specific stage (INITIAL_GLOBAL_RELAX, CAMERA_PARAMETER_RELAX, FINAL_GLOBAL_RELAX, "
-                     "GENERATE_THUMBNAIL, GENERATE_LAYERS, COLOR_BALANCE, BLEND_LAYERS)");
-    args.addArgument({"--skip-mesh-refinement"}, &skip_mesh_refinement,
-                     "Skip the mesh refinement stage (uses grid mesh instead of adaptive refinement)");
-    args.addArgument({"--initial-global-relax"}, &initial_global_relax,
-                     "Enable the initial global relaxation stage (disabled by default, mesh refinement handles this)");
-    args.addArgument({"--skip-camera-intrinsics"}, &skip_camera_intrinsics,
-                     "Skip camera intrinsics optimization (focal length, distortion, principal point)");
-    args.addArgument({"--skip-final-global-relax"}, &skip_final_global_relax, "Skip the final global relaxation stage");
-    args.addArgument({"--dense-mesh"}, &dense_mesh, "Enable dense mesh via SGM stereo (slow but more accurate edges)");
-    args.addArgument({"-h", "--help"}, &printHelp, "You must specify at least an input file");
+                     "Resume from specific stage (INITIAL_PROCESSING, INITIAL_GLOBAL_RELAX, CAMERA_PARAMETER_RELAX, "
+                     "FINAL_GLOBAL_RELAX, MESH_REFINEMENT, GENERATE_THUMBNAIL, DENSIFY_MESH, DENSE_MESH_RELAX, "
+                     "GENERATE_LAYERS, COLOR_BALANCE, BLEND_LAYERS)");
+    args.addArgument({"--update-camera-db"}, &update_camera_db,
+                     "Update camera database with optimized parameters after pipeline completes");
+
+    if (args.handleCompletions(argc, argv))
+        return 0;
 
     try
     {
@@ -99,10 +109,17 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    if (printHelp)
+    if (print_help)
     {
         args.printHelp();
         return 0;
+    }
+
+    if (checkpoint_restore.empty() && input_dir.empty())
+    {
+        std::cerr << "Error: --input is required (or use --checkpoint-restore to resume)" << std::endl;
+        args.printHelp();
+        return -1;
     }
 
     if (ortho_max_megapixels < 0.0)
@@ -113,7 +130,7 @@ int main(int argc, char *argv[])
 
     if (!textured_mesh_file.empty() && geotiff_file.empty())
     {
-        std::cerr << "--textured-mesh requires --ortho-geotiff to be set" << std::endl;
+        std::cerr << "--textured-mesh-file requires --geotiff-file to be set" << std::endl;
         return -1;
     }
 
@@ -162,8 +179,9 @@ int main(int argc, char *argv[])
 
     if (!resume_from.empty() && !Pipeline::fromString(resume_from))
     {
-        spdlog::error("Unrecognized --resume-from state: '{}'. Valid states: INITIAL_GLOBAL_RELAX, "
-                      "CAMERA_PARAMETER_RELAX, FINAL_GLOBAL_RELAX, GENERATE_THUMBNAIL, GENERATE_LAYERS, "
+        spdlog::error("Unrecognized --resume-from state: '{}'. Valid states: INITIAL_PROCESSING, "
+                      "INITIAL_GLOBAL_RELAX, CAMERA_PARAMETER_RELAX, FINAL_GLOBAL_RELAX, MESH_REFINEMENT, "
+                      "GENERATE_THUMBNAIL, DENSIFY_MESH, DENSE_MESH_RELAX, GENERATE_LAYERS, "
                       "COLOR_BALANCE, BLEND_LAYERS",
                       resume_from);
         return -1;
@@ -176,18 +194,18 @@ int main(int argc, char *argv[])
     p.set_dsm_filename(dsm_file);
     p.set_textured_mesh_filename(textured_mesh_file);
     p.set_orthomosaic_max_megapixels(ortho_max_megapixels);
-    p.set_skip_mesh_refinement(skip_mesh_refinement);
-    p.set_skip_initial_global_relax(!initial_global_relax);
-    p.set_skip_camera_param_relax(skip_camera_intrinsics);
-    p.set_skip_final_global_relax(skip_final_global_relax);
+    p.set_skip_mesh_refinement(!mesh_refinement);
+    p.set_skip_initial_global_relax(!initial_relax);
+    p.set_skip_camera_param_relax(!camera_param_relax);
+    p.set_skip_final_global_relax(!final_relax);
     p.set_generate_dense_mesh(dense_mesh);
 
-    if (!checkpoint_load.empty())
+    if (!checkpoint_restore.empty())
     {
-        spdlog::info("Loading checkpoint from {}", checkpoint_load);
-        if (!p.loadCheckpoint(checkpoint_load))
+        spdlog::info("Loading checkpoint from {}", checkpoint_restore);
+        if (!p.loadCheckpoint(checkpoint_restore))
         {
-            spdlog::error("Failed to load checkpoint from {}", checkpoint_load);
+            spdlog::error("Failed to load checkpoint from {}", checkpoint_restore);
             return -1;
         }
         spdlog::info("Loaded checkpoint, current state: {}", Pipeline::toString(p.getState()));
@@ -264,7 +282,7 @@ int main(int argc, char *argv[])
         }
     });
 
-    if (checkpoint_load.empty())
+    if (checkpoint_restore.empty())
     {
         std::vector<std::string> files;
         if (input_dir.size() > 0)
@@ -322,12 +340,12 @@ int main(int argc, char *argv[])
         }
     }
 
-    if (output_file.size() > 0)
+    if (geojson_file.size() > 0)
     {
         auto to_wgs84 = [&p](const Eigen::Vector3d &local) { return p.getCoord().toWGS84(local); };
 
         std::ofstream output;
-        output.open(output_file, std::ios::binary);
+        output.open(geojson_file, std::ios::binary);
         toVisualizedGeoJson(p.getGraph(), to_wgs84, output);
         output.close();
     }

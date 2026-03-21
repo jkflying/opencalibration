@@ -11,16 +11,16 @@ using namespace opencalibration;
 
 int main(int argc, char *argv[])
 {
-    std::string checkpoint_load;
+    std::string checkpoint_restore;
     std::string database_path = CameraDatabase::defaultPath();
     std::string notes;
-    bool printHelp = false;
+    bool print_help = false;
 
     CommandLine args("Extract camera model parameters from a checkpoint into camera_database.json");
-    args.addArgument({"-cl", "--checkpoint-load"}, &checkpoint_load, "Checkpoint directory to load (required)");
-    args.addArgument({"-db", "--database"}, &database_path, "Path to camera_database.json");
+    args.addArgument({"-r", "--checkpoint-restore"}, &checkpoint_restore, "Checkpoint directory to restore (required)");
+    args.addArgument({"--database"}, &database_path, "Path to camera_database.json");
     args.addArgument({"-n", "--notes"}, &notes, "Notes to attach to extracted entries");
-    args.addArgument({"-h", "--help"}, &printHelp, "Show help");
+    args.addArgument({"-h", "--help"}, &print_help, "Show help");
 
     try
     {
@@ -32,15 +32,15 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    if (printHelp)
+    if (print_help)
     {
         args.printHelp();
         return 0;
     }
 
-    if (checkpoint_load.empty())
+    if (checkpoint_restore.empty())
     {
-        std::cerr << "Error: --checkpoint-load is required" << std::endl;
+        std::cerr << "Error: --checkpoint-restore is required" << std::endl;
         args.printHelp();
         return -1;
     }
@@ -48,9 +48,9 @@ int main(int argc, char *argv[])
     spdlog::set_level(spdlog::level::info);
 
     CheckpointData data;
-    if (!loadCheckpoint(checkpoint_load, data))
+    if (!loadCheckpoint(checkpoint_restore, data))
     {
-        spdlog::error("Failed to load checkpoint from {}", checkpoint_load);
+        spdlog::error("Failed to load checkpoint from {}", checkpoint_restore);
         return -1;
     }
     spdlog::info("Loaded checkpoint with {} nodes", data.graph.size_nodes());

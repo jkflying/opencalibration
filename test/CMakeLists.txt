@@ -66,7 +66,18 @@ add_custom_target(test
                   USES_TERMINAL
                   COMMAND ${CMAKE_BINARY_DIR}/test/unit_tests
                   COMMAND ${CMAKE_BINARY_DIR}/test/functional_tests
-                  COMMAND ${CMAKE_BINARY_DIR}/app/pipeline_runner -i "${CMAKE_CURRENT_SOURCE_DIR}/test_data/" -g test_data.geojson -d 4 -s test_data.json -p test_data.xyz --ortho-geotiff test_data_ortho.tif --ortho-max-megapixels 0.1
+                  COMMAND ${CMAKE_BINARY_DIR}/app/pipeline_runner -i "${CMAKE_CURRENT_SOURCE_DIR}/test_data/"
+                    -d 4 --ortho-max-megapixels 0.1
+                    -g test_data.geojson --graph-file test_data.json
+                    -p test_data.xyz -m test_data.ply
+                    -o test_data_ortho.tif --dsm-file test_data_dsm.tif
+                    -x test_data_textured.obj
+                    -t test_data_thumb.png --source-file test_data_source.png --overlap-file test_data_overlap.png
+                    --mesh-refinement on --initial-relax on --camera-param-relax on --final-relax on --dense-mesh on
+                    -c test_checkpoint
+                  COMMAND ${CMAKE_COMMAND}
+                    -DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_pipeline_outputs.cmake
                   DEPENDS functional_tests unit_tests pipeline_runner)
 
 if ("${CMAKE_BUILD_TYPE}" STREQUAL "Coverage")

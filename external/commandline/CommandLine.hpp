@@ -2,6 +2,7 @@
 #define COMMAND_LINE_HPP
 
 #include <algorithm>
+#include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <string>
@@ -164,11 +165,11 @@ class CommandLine
                     // to be the next argument.
                     if (std::holds_alternative<bool *>(argument.mValue))
                     {
-                        if (!value.empty() && value != "true" && value != "false")
+                        if (!value.empty() && value != "true" && value != "false" && value != "on" && value != "off")
                         {
                             valueIsSeparate = false;
                         }
-                        *std::get<bool *>(argument.mValue) = (value != "false");
+                        *std::get<bool *>(argument.mValue) = (value != "false" && value != "off");
                     }
                     // In all other cases there must be a value.
                     else if (value.empty())
@@ -198,24 +199,116 @@ class CommandLine
                 }
             }
 
-            // Print a warning if there was an unknown argument.
             if (!foundArgument)
             {
-                std::cerr << "Ignoring unknown command line argument \"" << flag << "\"." << std::endl;
+                throw std::runtime_error("Unknown command line argument \"" + flag + "\"");
             }
 
             // Advance to the next flag.
             ++i;
 
             // If the value was separated, we have to advance our index once more.
-            if (foundArgument && valueIsSeparate)
+            if (valueIsSeparate)
             {
                 ++i;
             }
         }
     }
 
+    // Checks argv for --completions and prints a shell completion script
+    // if found. Returns true if completions were handled (caller should exit).
+    // Program name is derived from argv[0].
+    bool handleCompletions(int argc, char *argv[]) const
+    {
+        if (argc < 2 || std::string(argv[1]) != "--completions")
+            return false;
+
+        std::string shell = argc >= 3 ? argv[2] : "bash";
+        std::string programName = std::filesystem::path(argv[0]).filename().string();
+        printCompletions(shell, programName);
+        return true;
+    }
+
+    // Generates a shell completion script for the registered arguments.
+    // Supported shells: "bash", "zsh".
+    void printCompletions(std::string const &shell, std::string const &programName, std::ostream &os = std::cout) const
+    {
+        if (shell == "bash")
+        {
+            os << "_" << programName << "() {\n";
+            os << "    local cur=\"${COMP_WORDS[COMP_CWORD]}\"\n";
+            os << "    local flags=\"";
+            for (auto const &argument : mArguments)
+            {
+                for (auto const &flag : argument.mFlags)
+                {
+                    os << flag << " ";
+                }
+            }
+            os << "\"\n";
+            os << "    COMPREPLY=($(compgen -W \"$flags\" -- \"$cur\"))\n";
+            os << "}\n";
+            os << "complete -o default -F _" << programName << " " << programName << "\n";
+        }
+        else if (shell == "zsh")
+        {
+            os << "#compdef " << programName << "\n";
+            os << "_" << programName << "() {\n";
+            os << "    _arguments \\\n";
+            for (size_t i = 0; i < mArguments.size(); i++)
+            {
+                auto const &argument = mArguments[i];
+                std::string escaped = escapeZshDescription(argument.mHelp);
+                bool isBool = std::holds_alternative<bool *>(argument.mValue);
+                std::string action = isBool ? "" : ": :";
+
+                for (size_t j = 0; j < argument.mFlags.size(); j++)
+                {
+                    bool isLast = (i == mArguments.size() - 1 && j == argument.mFlags.size() - 1);
+                    os << "        '" << argument.mFlags[j] << "[" << escaped << "]" << action << "'";
+                    os << (isLast ? "\n" : " \\\n");
+                }
+            }
+            os << "}\n";
+            os << "_" << programName << "\n";
+        }
+        else
+        {
+            os << "Unknown shell \"" << shell << "\". Supported: bash, zsh" << std::endl;
+        }
+    }
+
   private:
+    static std::string escapeZshDescription(std::string const &input)
+    {
+        std::string result;
+        result.reserve(input.size());
+        for (char c : input)
+        {
+            switch (c)
+            {
+            case ':':
+                result += "\\:";
+                break;
+            case '[':
+                result += "\\[";
+                break;
+            case ']':
+                result += "\\]";
+                break;
+            case '\\':
+                result += "\\\\";
+                break;
+            case '\'':
+                result += " ";
+                break;
+            default:
+                result += c;
+            }
+        }
+        return result;
+    }
+
     struct Argument
     {
         std::vector<std::string> mFlags;
