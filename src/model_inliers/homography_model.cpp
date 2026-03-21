@@ -90,15 +90,12 @@ double homography_model::error(const correspondence &corr)
 {
     Eigen::Vector3d m1 = corr.measurement1 / corr.measurement1.z();
     Eigen::Vector3d m2 = corr.measurement2 / corr.measurement2.z();
-    Eigen::Vector2d m1_2d = m1.head<2>();
-    Eigen::Vector2d m2_2d = m2.head<2>();
 
-    Eigen::Vector2d fwd_projected = (homography * m1).hnormalized();
-    Eigen::Vector2d bwd_projected = (homography_inverse * m2).hnormalized();
-    double fwd = (fwd_projected - m2_2d).squaredNorm();
-    double bwd = (bwd_projected - m1_2d).squaredNorm();
+    double fwd = ((homography * m1).hnormalized() - m2.head<2>()).squaredNorm();
+    double bwd = ((homography_inverse * m2).hnormalized() - m1.head<2>()).squaredNorm();
     return std::sqrt((fwd + bwd) / 2.0);
 }
+
 double homography_model::evaluate(const std::vector<correspondence> &corrs, std::vector<bool> &inliers)
 {
     inliers.resize(corrs.size());
@@ -127,7 +124,6 @@ bool homography_model::checkSampleDegeneracy(const std::vector<correspondence> &
     for (size_t i = 0; i < 4; i++)
         pts[i] = corrs[indices[i]].measurement1.hnormalized();
 
-    // Check collinearity of every triple
     for (int i = 0; i < 4; i++)
         for (int j = i + 1; j < 4; j++)
             for (int k = j + 1; k < 4; k++)

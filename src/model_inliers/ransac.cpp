@@ -5,8 +5,6 @@
 #include <random>
 #include <type_traits>
 
-#include <iostream>
-
 namespace opencalibration
 {
 
@@ -71,7 +69,6 @@ double ransac(const std::vector<correspondence> &matches, Model &model, std::vec
         return 0; // need at least this much score increase
     }
 
-    // Check if quality data is available for PROSAC
     bool has_quality = false;
     for (const auto &m : matches)
     {
@@ -82,8 +79,7 @@ double ransac(const std::vector<correspondence> &matches, Model &model, std::vec
         }
     }
 
-    // Build sorted index for PROSAC (sort by quality, ascending = best first)
-    // Only allocate and sort when quality data is available; otherwise sample directly by index
+    // PROSAC: sort by match quality so early iterations sample better correspondences
     std::vector<size_t> sorted_idx;
     if (has_quality)
     {
@@ -93,7 +89,6 @@ double ransac(const std::vector<correspondence> &matches, Model &model, std::vec
                   [&matches](size_t a, size_t b) { return matches[a].quality < matches[b].quality; });
     }
 
-    // Pre-shuffle point evaluation order for SPRT
     std::vector<size_t> eval_order(matches.size());
     std::iota(eval_order.begin(), eval_order.end(), 0);
 
@@ -102,35 +97,20 @@ double ransac(const std::vector<correspondence> &matches, Model &model, std::vec
 
     std::default_random_engine generator(42);
 
-    // PROSAC pool size: starts at MINIMUM_POINTS, grows to full size
     size_t prosac_n = has_quality ? Model::MINIMUM_POINTS : matches.size();
-    size_t prosac_n_max = matches.size();
 
-    // Reusable distribution object, updated when pool size changes
-    std::uniform_int_distribution<size_t> distribution(0, matches.size() - 1);
-    size_t current_dist_max = matches.size() - 1;
-
-    auto update_distribution = [&distribution, &current_dist_max](size_t new_max) {
-        if (new_max != current_dist_max)
-        {
-            distribution = std::uniform_int_distribution<size_t>(0, new_max);
-            current_dist_max = new_max;
-        }
-    };
-
-    // Map index through sorted_idx when PROSAC is active, otherwise use directly
     auto map_idx = [&sorted_idx, has_quality](size_t i) -> size_t { return has_quality ? sorted_idx[i] : i; };
 
-    auto random_k_from_n = [&generator, &distribution, &update_distribution, &map_idx](size_t prosac_pool) {
+    auto random_k_from_n = [&generator, &map_idx](size_t pool) {
         std::array<size_t, Model::MINIMUM_POINTS> indices;
-        update_distribution(prosac_pool - 1);
+        std::uniform_int_distribution<size_t> dist(0, pool - 1);
         for (size_t j = 0; j < Model::MINIMUM_POINTS; j++)
         {
             size_t candidate;
             bool unique;
             do
             {
-                candidate = distribution(generator);
+                candidate = dist(generator);
                 unique = true;
                 for (size_t k = 0; k < j; k++)
                 {
@@ -146,20 +126,18 @@ double ransac(const std::vector<correspondence> &matches, Model &model, std::vec
         return indices;
     };
 
-    // PROSAC: sample with growth point
-    auto prosac_sample = [&generator, &distribution, &update_distribution, &sorted_idx](size_t prosac_pool) {
+    // PROSAC growth-point sampling: always includes the newest point in the pool
+    auto prosac_sample = [&generator, &sorted_idx](size_t pool) {
         std::array<size_t, Model::MINIMUM_POINTS> indices;
-        // Always include the growth point (index prosac_pool - 1)
-        indices[0] = sorted_idx[prosac_pool - 1];
-        // Sample remaining from [0, prosac_pool - 2]
-        update_distribution(prosac_pool - 2);
+        indices[0] = sorted_idx[pool - 1];
+        std::uniform_int_distribution<size_t> dist(0, pool - 2);
         for (size_t j = 1; j < Model::MINIMUM_POINTS; j++)
         {
             size_t candidate;
             bool unique;
             do
             {
-                candidate = distribution(generator);
+                candidate = dist(generator);
                 unique = true;
                 for (size_t k = 0; k < j; k++)
                 {
@@ -177,27 +155,20 @@ double ransac(const std::vector<correspondence> &matches, Model &model, std::vec
 
     size_t probability_iterations = MAX_ITERATIONS;
 
-    // Shuffle eval_order once for SPRT
     std::shuffle(eval_order.begin(), eval_order.end(), generator);
 
-    // Pre-allocate candidate_inliers outside the loop; reset each iteration instead of reallocating
     std::vector<bool> candidate_inliers(matches.size(), false);
 
     for (size_t i = 0; i < probability_iterations; i++)
     {
-        // PROSAC: grow the sampling pool by 1 every 10 iterations
-        if (has_quality && prosac_n < prosac_n_max && i > 0 && i % 10 == 0)
+        if (has_quality && prosac_n < matches.size() && i > 0 && i % 10 == 0)
             prosac_n++;
 
         std::array<size_t, Model::MINIMUM_POINTS> initial_indices;
-        if (has_quality && prosac_n < prosac_n_max && prosac_n > Model::MINIMUM_POINTS)
-        {
+        if (has_quality && prosac_n < matches.size() && prosac_n > Model::MINIMUM_POINTS)
             initial_indices = prosac_sample(prosac_n);
-        }
         else
-        {
             initial_indices = random_k_from_n(has_quality ? prosac_n : matches.size());
-        }
 
         if constexpr (has_check_sample_degeneracy<Model>::value)
         {
@@ -207,8 +178,8 @@ double ransac(const std::vector<correspondence> &matches, Model &model, std::vec
 
         model.fit(matches, initial_indices);
 
-        // SPRT: evaluate points in shuffled order, reject early if clearly bad
-        // NOTE: scoring formula (MSAC: 1 - (e/threshold)^2) must match Model::evaluate()
+        // SPRT: evaluate in shuffled order, reject early if clearly worse than best
+        // MSAC scoring (1 - (e/t)^2) must match Model::evaluate()
         double score = 0;
         size_t checked = 0;
         bool rejected = false;
@@ -223,7 +194,6 @@ double ransac(const std::vector<correspondence> &matches, Model &model, std::vec
                 score += 1.0 - ratio * ratio;
             }
             checked++;
-            // SPRT early rejection: after checking enough points, reject if score is too low
             if (checked > 20 && best_score > 0 &&
                 score < best_score * static_cast<double>(checked) / matches.size() * 0.6)
             {
@@ -240,7 +210,6 @@ double ransac(const std::vector<correspondence> &matches, Model &model, std::vec
             best_score = score;
             inliers = candidate_inliers;
 
-            // DEGENSAC: check for degeneracy after finding a new best model
             if constexpr (has_check_degeneracy<Model>::value)
             {
                 model.checkDegeneracy(matches, inliers);
@@ -252,8 +221,6 @@ double ransac(const std::vector<correspondence> &matches, Model &model, std::vec
                 }
             }
 
-            // Inner refinement: first iteration reuses the SPRT inliers directly,
-            // subsequent iterations re-evaluate after refitting
             model.fitInliers(matches, inliers);
             double inlier_score = model.evaluate(matches, inliers);
             if (inlier_score > best_score)
