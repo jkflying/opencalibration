@@ -4,6 +4,7 @@
 
 #include <opencalibration/ortho/blending.hpp>
 #include <opencalibration/ortho/color_balance.hpp>
+#include <opencalibration/tile_ordering/tile_ordering.hpp>
 
 #include <ceres/jet.h>
 #include <cpl_string.h>
@@ -30,58 +31,6 @@
 
 namespace
 {
-
-// Convert (x,y) to Hilbert curve distance for a square of side 2^order
-uint32_t xy2d(int order, int x, int y)
-{
-    uint32_t d = 0;
-    for (int s = order / 2; s > 0; s /= 2)
-    {
-        int rx = (x & s) > 0 ? 1 : 0;
-        int ry = (y & s) > 0 ? 1 : 0;
-        d += s * s * ((3 * rx) ^ ry);
-        // Rotate quadrant
-        if (ry == 0)
-        {
-            if (rx == 1)
-            {
-                x = s - 1 - x;
-                y = s - 1 - y;
-            }
-            std::swap(x, y);
-        }
-    }
-    return d;
-}
-
-// Generate tile indices sorted by Hilbert curve distance for better spatial locality
-std::vector<std::pair<int, int>> hilbertTileOrder(int num_tiles_x, int num_tiles_y)
-{
-    // Find the smallest power of 2 that covers both dimensions
-    int max_dim = std::max(num_tiles_x, num_tiles_y);
-    int order = 1;
-    while (order < max_dim)
-        order *= 2;
-
-    std::vector<std::pair<uint32_t, std::pair<int, int>>> tiles;
-    tiles.reserve(num_tiles_x * num_tiles_y);
-    for (int ty = 0; ty < num_tiles_y; ty++)
-    {
-        for (int tx = 0; tx < num_tiles_x; tx++)
-        {
-            tiles.push_back({xy2d(order, tx, ty), {tx, ty}});
-        }
-    }
-    std::sort(tiles.begin(), tiles.end());
-
-    std::vector<std::pair<int, int>> result;
-    result.reserve(tiles.size());
-    for (auto &t : tiles)
-    {
-        result.push_back(t.second);
-    }
-    return result;
-}
 
 Eigen::Vector2i size(const opencalibration::GenericRaster &raster)
 {
@@ -1551,14 +1500,22 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
 
     FullResolutionImageCache image_cache(config.num_layers * 10);
 
-    auto tile_order = hilbertTileOrder(num_tiles_x, num_tiles_y);
+    TileCameraMap tile_camera_map;
+    for (int ty = 0; ty < num_tiles_y; ty++)
+        for (int tx = 0; tx < num_tiles_x; tx++)
+        {
+            size_t tile_idx = static_cast<size_t>(ty) * num_tiles_x + tx;
+            tile_camera_map[tile_idx] =
+                findTileCameras(tx, ty, tile_size, bounds, gsd, width, height, context.imageGPSLocations);
+        }
 
-    // Prefetch images for the first tile synchronously
+    auto tile_order = computeCacheAwareTileOrder(
+        tile_camera_map, {num_tiles_x, num_tiles_y, static_cast<size_t>(config.num_layers * 10)});
+
     if (!tile_order.empty())
     {
-        auto first_cams = findTileCameras(tile_order[0].first, tile_order[0].second, tile_size, bounds, gsd, width,
-                                          height, context.imageGPSLocations);
-        prefetchImages(first_cams, graph, image_cache);
+        size_t idx = static_cast<size_t>(tile_order[0].second) * num_tiles_x + tile_order[0].first;
+        prefetchImages(tile_camera_map.at(idx), graph, image_cache);
     }
 
     std::future<void> write_future;
@@ -1573,13 +1530,11 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
         {
             if (prefetch_future.valid())
                 prefetch_future.wait();
-            const auto &next_tile = tile_order[i + 1];
-            const auto next_tx = next_tile.first;
-            const auto next_ty = next_tile.second;
+            const auto next_tx = tile_order[i + 1].first;
+            const auto next_ty = tile_order[i + 1].second;
             prefetch_future = std::async(std::launch::async, [&, next_tx, next_ty] {
-                auto cams =
-                    findTileCameras(next_tx, next_ty, tile_size, bounds, gsd, width, height, context.imageGPSLocations);
-                prefetchImages(cams, graph, image_cache);
+                size_t idx = static_cast<size_t>(next_ty) * num_tiles_x + next_tx;
+                prefetchImages(tile_camera_map.at(idx), graph, image_cache);
             });
         }
 

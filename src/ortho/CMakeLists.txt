@@ -4,6 +4,7 @@ target_include_directories(oc_ortho PUBLIC
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 target_link_libraries(oc_ortho PUBLIC spdlog::spdlog
                                       oc_performance
+                                      oc_tile_ordering
                                       OpenMP::OpenMP_CXX
                                       ${GDAL_LIBRARIES}
                                       ${OpenCV_LIBS}

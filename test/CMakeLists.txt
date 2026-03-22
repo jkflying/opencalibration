@@ -50,6 +50,7 @@ add_executable(unit_tests gtest_main.cpp
                           test_raster.cpp
                           test_relax.cpp
                           test_relax_options.cpp
+                          test_tile_ordering.cpp
                           test_tree.cpp)
 
 target_link_libraries(unit_tests PUBLIC gtest pthread oc_geo_coord
@@ -58,6 +59,7 @@ target_link_libraries(unit_tests PUBLIC gtest pthread oc_geo_coord
                                                       oc_ortho
                                                       oc_relax
                                                       oc_surface
+                                                      oc_tile_ordering
                                                       mimalloc)
 
 set_target_properties(functional_tests unit_tests PROPERTIES CXX_CLANG_TIDY "")

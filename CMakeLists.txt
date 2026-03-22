@@ -113,7 +113,7 @@ add_subdirectory(src)
 set(OPENCALIBRATION_LIBRARIES
     oc_dense oc_distort oc_extract oc_geo_coord oc_geometry
     oc_io oc_match oc_model_inliers oc_ortho oc_performance
-    oc_pipeline oc_relax oc_surface)
+    oc_pipeline oc_relax oc_surface oc_tile_ordering)
 
 # Namespace aliases for add_subdirectory() consumers
 foreach(_target IN LISTS OPENCALIBRATION_LIBRARIES)

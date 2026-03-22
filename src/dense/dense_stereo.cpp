@@ -5,6 +5,7 @@
 #include <opencalibration/surface/intersect.hpp>
 #include <opencalibration/surface/refine_mesh.hpp>
 #include <opencalibration/types/feature_2d.hpp>
+#include <opencalibration/types/hilbert.hpp>
 #include <opencalibration/types/union_find.hpp>
 
 #include <jk/KDTree.h>
@@ -18,28 +19,6 @@
 
 namespace
 {
-
-// Hilbert curve distance for spatial locality when walking the mesh
-uint32_t xy2d(int order, int x, int y)
-{
-    uint32_t d = 0;
-    for (int s = order / 2; s > 0; s /= 2)
-    {
-        int rx = (x & s) > 0 ? 1 : 0;
-        int ry = (y & s) > 0 ? 1 : 0;
-        d += s * s * ((3 * rx) ^ ry);
-        if (ry == 0)
-        {
-            if (rx == 1)
-            {
-                x = s - 1 - x;
-                y = s - 1 - y;
-            }
-            std::swap(x, y);
-        }
-    }
-    return d;
-}
 
 std::vector<size_t> hilbertFeatureOrder(const std::vector<opencalibration::feature_2d> &features, int image_width,
                                         int image_height)
@@ -55,7 +34,7 @@ std::vector<size_t> hilbertFeatureOrder(const std::vector<opencalibration::featu
     {
         int x = std::clamp(static_cast<int>(features[i].location.x()), 0, image_width - 1);
         int y = std::clamp(static_cast<int>(features[i].location.y()), 0, image_height - 1);
-        indexed.push_back({xy2d(order, x, y), i});
+        indexed.push_back({opencalibration::xy2d(order, x, y), i});
     }
     std::sort(indexed.begin(), indexed.end());
 
