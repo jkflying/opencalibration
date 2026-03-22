@@ -103,6 +103,16 @@ int main(int argc, char *argv[])
     if (args.handleCompletions(argc, argv))
         return 0;
 
+    for (int i = 1; i < argc; i++)
+    {
+        std::string arg(argv[i]);
+        if (arg == "-h" || arg == "--help")
+        {
+            args.printHelp();
+            return 0;
+        }
+    }
+
     try
     {
         args.parse(argc, argv);
@@ -111,12 +121,6 @@ int main(int argc, char *argv[])
     {
         std::cout << e.what() << std::endl;
         return -1;
-    }
-
-    if (print_help)
-    {
-        args.printHelp();
-        return 0;
     }
 
     if (checkpoint_restore.empty() && input_dir.empty())
