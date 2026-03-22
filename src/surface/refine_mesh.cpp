@@ -353,86 +353,94 @@ BisectionResult bisectEdge(MeshGraph &mesh, size_t edgeId)
 
 size_t refineTriangle(MeshGraph &mesh, const TriangleId &tri, int maxDepth)
 {
-    if (maxDepth <= 0)
-    {
-        spdlog::warn("refineTriangle: max depth reached, stopping refinement");
-        return 0;
-    }
-
-    auto vertices = getTriangleVertices(mesh, tri);
-    if (vertices[0] == 0 && vertices[1] == 0 && vertices[2] == 0)
-    {
-        spdlog::debug("refineTriangle: triangle (edge={}, side={}) has invalid vertices", tri.edgeId, tri.side);
-        return 0;
-    }
-
-    size_t longestEdgeId = findLongestEdge(mesh, tri);
-    if (longestEdgeId == 0)
-    {
-        spdlog::debug("refineTriangle: could not find longest edge for triangle (edge={}, side={})", tri.edgeId,
-                      tri.side);
-        return 0;
-    }
-
-    const auto *longestEdge = mesh.getEdge(longestEdgeId);
-    if (!longestEdge)
-        return 0;
-
-    // conforming refinement: bisect at the longest edge, refining the neighbor first if needed
     size_t trianglesCreated = 0;
+    TriangleId currentTri = tri;
 
-    if (!longestEdge->payload.border)
+    // Loop handles retries after neighbor refinement invalidates our triangle.
+    // Depth is only consumed by neighbor propagation, not by retries.
+    for (;;)
     {
-        int ourSide = -1;
-        for (int v = 0; v < 3; v++)
+        if (maxDepth <= 0)
         {
-            int side = findTriangleSide(mesh, longestEdgeId, vertices[v]);
-            if (side >= 0)
+            spdlog::warn("refineTriangle: max depth reached, stopping refinement");
+            return trianglesCreated;
+        }
+
+        auto vertices = getTriangleVertices(mesh, currentTri);
+        if (vertices[0] == 0 && vertices[1] == 0 && vertices[2] == 0)
+        {
+            spdlog::debug("refineTriangle: triangle (edge={}, side={}) has invalid vertices", currentTri.edgeId,
+                          currentTri.side);
+            return trianglesCreated;
+        }
+
+        size_t longestEdgeId = findLongestEdge(mesh, currentTri);
+        if (longestEdgeId == 0)
+        {
+            spdlog::debug("refineTriangle: could not find longest edge for triangle (edge={}, side={})",
+                          currentTri.edgeId, currentTri.side);
+            return trianglesCreated;
+        }
+
+        const auto *longestEdge = mesh.getEdge(longestEdgeId);
+        if (!longestEdge)
+            return trianglesCreated;
+
+        // conforming refinement: bisect at the longest edge, refining the neighbor first if needed
+        if (!longestEdge->payload.border)
+        {
+            int ourSide = -1;
+            for (int v = 0; v < 3; v++)
             {
-                ourSide = side;
-                break;
+                int side = findTriangleSide(mesh, longestEdgeId, vertices[v]);
+                if (side >= 0)
+                {
+                    ourSide = side;
+                    break;
+                }
+            }
+
+            if (ourSide >= 0)
+            {
+                TriangleId neighbor = {longestEdgeId, 1 - ourSide};
+
+                size_t neighborLongest = findLongestEdge(mesh, neighbor);
+                if (neighborLongest != 0 && neighborLongest != longestEdgeId)
+                {
+                    trianglesCreated += refineTriangle(mesh, neighbor, maxDepth - 1);
+
+                    // The recursive refinement may have bisected our longest edge,
+                    // invalidating this triangle — re-locate via original vertices
+                    Eigen::Vector3d center = Eigen::Vector3d::Zero();
+                    for (int i = 0; i < 3; i++)
+                    {
+                        const auto *n = mesh.getNode(vertices[i]);
+                        if (n)
+                            center += n->payload.location;
+                    }
+                    center /= 3.0;
+
+                    TriangleId newTri = findTriangleNearVertices(mesh, vertices, center.x(), center.y());
+                    if (newTri.edgeId == 0)
+                        return trianglesCreated;
+
+                    // Retry with the re-located triangle without consuming depth
+                    currentTri = newTri;
+                    continue;
+                }
             }
         }
 
-        if (ourSide >= 0)
+        bool wasBorder = longestEdge->payload.border;
+        auto result = bisectEdge(mesh, longestEdgeId);
+        if (result.newVertexId != 0)
         {
-            TriangleId neighbor = {longestEdgeId, 1 - ourSide};
-
-            size_t neighborLongest = findLongestEdge(mesh, neighbor);
-            if (neighborLongest != 0 && neighborLongest != longestEdgeId)
-            {
-                trianglesCreated += refineTriangle(mesh, neighbor, maxDepth - 1);
-
-                // The recursive refinement may have bisected our longest edge,
-                // invalidating this triangle — re-locate via original vertices
-                Eigen::Vector3d center = Eigen::Vector3d::Zero();
-                for (int i = 0; i < 3; i++)
-                {
-                    const auto *n = mesh.getNode(vertices[i]);
-                    if (n)
-                        center += n->payload.location;
-                }
-                center /= 3.0;
-
-                TriangleId newTri = findTriangleNearVertices(mesh, vertices, center.x(), center.y());
-                if (newTri.edgeId != 0)
-                {
-                    return trianglesCreated + refineTriangle(mesh, newTri, maxDepth - 1);
-                }
-                return trianglesCreated;
-            }
+            // We created 2 new triangles on each side (4 total, or 2 if border)
+            trianglesCreated += wasBorder ? 2 : 4;
         }
-    }
 
-    bool wasBorder = longestEdge->payload.border;
-    auto result = bisectEdge(mesh, longestEdgeId);
-    if (result.newVertexId != 0)
-    {
-        // We created 2 new triangles on each side (4 total, or 2 if border)
-        trianglesCreated += wasBorder ? 2 : 4;
+        return trianglesCreated;
     }
-
-    return trianglesCreated;
 }
 
 size_t refineAtPoint(MeshGraph &mesh, double x, double y, int levels)
