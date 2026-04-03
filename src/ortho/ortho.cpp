@@ -1610,6 +1610,9 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
             thumbnail.layers[0].pixels.setZero();
             thumbnail.layers[1].pixels.setZero();
             thumbnail.layers[2].pixels.setZero();
+            Eigen::Matrix<uint8_t, Eigen::Dynamic, Eigen::Dynamic> alpha(thumb_h, thumb_w);
+            constexpr uint8_t kBackgroundAlpha = 255 * 20 / 100;
+            alpha.setConstant(kBackgroundAlpha);
 
             for (int ty = 0; ty < thumb_h; ty++)
             {
@@ -1633,6 +1636,7 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
                         thumbnail.layers[0].pixels(ty, tx) = best_color[0];
                         thumbnail.layers[1].pixels(ty, tx) = best_color[1];
                         thumbnail.layers[2].pixels(ty, tx) = best_color[2];
+                        alpha(ty, tx) = 255;
                     }
                 }
             }
@@ -1646,8 +1650,11 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
             tu.total_output_height = height;
             tu.tile_index = completed_tiles + 1;
             tu.total_tiles = total_tiles;
-            tu.thumbnail_jpeg_base64 = encodeThumbnailToBase64JPEG(
-                thumbnail.layers[0].pixels, thumbnail.layers[1].pixels, thumbnail.layers[2].pixels);
+            tu.thumbnail.png_base64 = encodeThumbnailToBase64PNG(
+                thumbnail.layers[0].pixels, thumbnail.layers[1].pixels, thumbnail.layers[2].pixels, alpha);
+            tu.thumbnail.bounds_min_x = bounds.min_x;
+            tu.thumbnail.bounds_max_y = bounds.max_y;
+            tu.thumbnail.meters_per_pixel = gsd;
             tile_progress(tu);
         }
 
@@ -2010,6 +2017,8 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
                         thumbnail.layers[0].pixels.setZero();
                         thumbnail.layers[1].pixels.setZero();
                         thumbnail.layers[2].pixels.setZero();
+                        Eigen::Matrix<uint8_t, Eigen::Dynamic, Eigen::Dynamic> alpha(thumb_h, thumb_w);
+                        alpha.setZero();
 
                         for (int ty = 0; ty < thumb_h; ty++)
                         {
@@ -2024,6 +2033,7 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
                                         rgba_buffer[static_cast<size_t>(src) * 4 + 1]; // G
                                     thumbnail.layers[2].pixels(ty, tx) =
                                         rgba_buffer[static_cast<size_t>(src) * 4 + 0]; // R
+                                    alpha(ty, tx) = 255;
                                 }
                             }
                         }
@@ -2037,8 +2047,11 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
                         tu.total_output_height = height;
                         tu.tile_index = done;
                         tu.total_tiles = total_tiles;
-                        tu.thumbnail_jpeg_base64 = encodeThumbnailToBase64JPEG(
-                            thumbnail.layers[0].pixels, thumbnail.layers[1].pixels, thumbnail.layers[2].pixels);
+                        tu.thumbnail.png_base64 = encodeThumbnailToBase64PNG(
+                            thumbnail.layers[0].pixels, thumbnail.layers[1].pixels, thumbnail.layers[2].pixels, alpha);
+                        tu.thumbnail.bounds_min_x = min_x;
+                        tu.thumbnail.bounds_max_y = max_y;
+                        tu.thumbnail.meters_per_pixel = gsd;
                         tile_progress(tu);
                     }
                 }

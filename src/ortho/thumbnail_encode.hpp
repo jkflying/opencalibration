@@ -33,22 +33,23 @@ inline std::string base64_encode(const uint8_t *data, size_t len)
 }
 } // namespace detail
 
-inline std::string encodeThumbnailToBase64JPEG(const Eigen::Matrix<uint8_t, Eigen::Dynamic, Eigen::Dynamic> &b,
-                                               const Eigen::Matrix<uint8_t, Eigen::Dynamic, Eigen::Dynamic> &g,
-                                               const Eigen::Matrix<uint8_t, Eigen::Dynamic, Eigen::Dynamic> &r)
+inline std::string encodeThumbnailToBase64PNG(const Eigen::Matrix<uint8_t, Eigen::Dynamic, Eigen::Dynamic> &b,
+                                              const Eigen::Matrix<uint8_t, Eigen::Dynamic, Eigen::Dynamic> &g,
+                                              const Eigen::Matrix<uint8_t, Eigen::Dynamic, Eigen::Dynamic> &r,
+                                              const Eigen::Matrix<uint8_t, Eigen::Dynamic, Eigen::Dynamic> &a)
 {
     int rows = static_cast<int>(b.rows());
     int cols = static_cast<int>(b.cols());
-    cv::Mat bgr(rows, cols, CV_8UC3);
+    cv::Mat bgra(rows, cols, CV_8UC4);
     for (int y = 0; y < rows; y++)
     {
         for (int x = 0; x < cols; x++)
         {
-            bgr.at<cv::Vec3b>(y, x) = {b(y, x), g(y, x), r(y, x)};
+            bgra.at<cv::Vec4b>(y, x) = {b(y, x), g(y, x), r(y, x), a(y, x)};
         }
     }
     std::vector<uint8_t> buf;
-    cv::imencode(".jpg", bgr, buf);
+    cv::imencode(".png", bgra, buf);
     return detail::base64_encode(buf.data(), buf.size());
 }
 

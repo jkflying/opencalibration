@@ -12,6 +12,14 @@
 namespace opencalibration
 {
 
+struct TileThumbnail
+{
+    std::string png_base64;
+    double bounds_min_x = 0;
+    double bounds_max_y = 0;
+    double meters_per_pixel = 0;
+};
+
 struct TileUpdate
 {
     int pixel_x = 0;
@@ -22,7 +30,7 @@ struct TileUpdate
     int total_output_height = 0;
     int tile_index = 0;
     int total_tiles = 1;
-    std::string thumbnail_jpeg_base64; // base64-encoded JPEG, max 128x128 preview (BGR channel order)
+    TileThumbnail thumbnail;
 };
 
 struct StepCompletionInfo
