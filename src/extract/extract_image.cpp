@@ -17,11 +17,6 @@ namespace
 {
 cv::Mat load_image(const std::string &path)
 {
-    if (cv::getNumThreads() != 1)
-    {
-        cv::setNumThreads(1);
-    }
-
     return cv::imread(path); //, cv::IMREAD_IGNORE_ORIENTATION | cv::IMREAD_COLOR);
 }
 } // namespace

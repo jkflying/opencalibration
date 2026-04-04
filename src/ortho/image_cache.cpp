@@ -34,11 +34,6 @@ cv::Mat FullResolutionImageCache::getImage(size_t node_id, const std::string &pa
     cache_misses_++;
     lock.unlock();
 
-    if (cv::getNumThreads() != 1)
-    {
-        cv::setNumThreads(1);
-    }
-
     cv::Mat image = cv::imread(path);
 
     lock.lock();

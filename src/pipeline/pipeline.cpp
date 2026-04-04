@@ -116,6 +116,7 @@ struct Pipeline::Impl : public usm::StateMachine<PipelineState, PipelineTransiti
           link_stage(new LinkStage()), relax_stage(new RelaxStage()), step_callback([](const StepCompletionInfo &) {}),
           batch_size(batch_size_), parallelism(parallelism_ == 0 ? omp_get_num_procs() : parallelism_)
     {
+        cv::setNumThreads(1);
     }
 
     PipelineState chooseNextState(PipelineState currentState, Transition transition) override;
