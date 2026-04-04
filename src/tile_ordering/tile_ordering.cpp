@@ -38,7 +38,7 @@ struct LRUCache
         }
     }
 
-    bool contains(size_t cam) const
+    [[nodiscard]] bool contains(size_t cam) const
     {
         return std::find(entries.begin(), entries.end(), cam) != entries.end();
     }
