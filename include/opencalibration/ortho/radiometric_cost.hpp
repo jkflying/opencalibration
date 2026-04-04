@@ -209,4 +209,23 @@ struct BRDFPrior
     }
 };
 
+struct SlopePrior
+{
+    static constexpr int NUM_RESIDUALS = 2;
+    static constexpr int NUM_PARAMETERS_1 = 2; // slope coeffs
+
+    double _weight;
+
+    explicit SlopePrior(double weight) : _weight(weight)
+    {
+    }
+
+    template <typename T> bool operator()(const T *slope, T *residuals) const
+    {
+        residuals[0] = T(_weight) * slope[0];
+        residuals[1] = T(_weight) * slope[1];
+        return true;
+    }
+};
+
 } // namespace opencalibration::orthomosaic

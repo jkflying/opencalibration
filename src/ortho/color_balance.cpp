@@ -114,6 +114,11 @@ ColorBalanceResult solveColorBalance(const std::vector<ColorCorrespondence> &cor
             new ceres::AutoDiffCostFunction<BRDFPrior, BRDFPrior::NUM_RESIDUALS, BRDFPrior::NUM_PARAMETERS_1>(
                 new BRDFPrior(0.1 * scale));
         problem.AddResidualBlock(brdf_cost, nullptr, &params.brdf_coeff);
+
+        auto *slope_cost =
+            new ceres::AutoDiffCostFunction<SlopePrior, SlopePrior::NUM_RESIDUALS, SlopePrior::NUM_PARAMETERS_1>(
+                new SlopePrior(0.1 * scale));
+        problem.AddResidualBlock(slope_cost, nullptr, params.slope.data());
     }
 
     std::unordered_map<uint32_t, int> model_corr_counts;
