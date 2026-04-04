@@ -1605,8 +1605,8 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
             tu.total_output_height = height;
             tu.tile_index = completed_tiles + 1;
             tu.total_tiles = total_tiles;
-            tu.thumbnail.png_base64 = encodeThumbnailToBase64PNG(
-                thumbnail.layers[0].pixels, thumbnail.layers[1].pixels, thumbnail.layers[2].pixels, alpha);
+            tu.thumbnail.png_base64 = encodeThumbnailToBase64PNG(thumbnail.layers[0].pixels, thumbnail.layers[1].pixels,
+                                                                 thumbnail.layers[2].pixels, alpha);
             tu.thumbnail.bounds_min_x = bounds.min_x;
             tu.thumbnail.bounds_max_y = bounds.max_y;
             tu.thumbnail.meters_per_pixel = gsd;

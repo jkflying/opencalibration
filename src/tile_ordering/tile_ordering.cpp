@@ -69,8 +69,7 @@ std::pair<std::vector<std::pair<int, int>>, size_t> cacheAwareSearch(const TileC
         std::vector<std::pair<int, int>> result;
         result.reserve(uncovered_tiles.size());
         for (size_t idx : uncovered_tiles)
-            result.push_back({static_cast<int>(idx % params.num_tiles_x),
-                              static_cast<int>(idx / params.num_tiles_x)});
+            result.push_back({static_cast<int>(idx % params.num_tiles_x), static_cast<int>(idx / params.num_tiles_x)});
         return {std::move(result), 0};
     }
 
@@ -192,11 +191,11 @@ std::pair<std::vector<std::pair<int, int>>, size_t> cacheAwareSearch(const TileC
     std::vector<std::pair<int, int>> result;
     result.reserve(total);
     for (size_t tile_idx : best_order)
-        result.push_back({static_cast<int>(tile_idx % params.num_tiles_x),
-                          static_cast<int>(tile_idx / params.num_tiles_x)});
+        result.push_back(
+            {static_cast<int>(tile_idx % params.num_tiles_x), static_cast<int>(tile_idx / params.num_tiles_x)});
     for (size_t tile_idx : uncovered_tiles)
-        result.push_back({static_cast<int>(tile_idx % params.num_tiles_x),
-                          static_cast<int>(tile_idx / params.num_tiles_x)});
+        result.push_back(
+            {static_cast<int>(tile_idx % params.num_tiles_x), static_cast<int>(tile_idx / params.num_tiles_x)});
 
     return {std::move(result), best_misses};
 }
