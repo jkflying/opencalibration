@@ -714,51 +714,88 @@ ankerl::unordered_dense::map<TriangleId, TrianglePointStats, TriangleIdHash> cou
         double sumDistSq = 0;
     };
 
-    ankerl::unordered_dense::map<TriangleId, Accumulator, TriangleIdHash> accumulators;
-
     struct TrianglePlane
     {
         Eigen::Vector3d normal;
         Eigen::Vector3d origin;
     };
-    ankerl::unordered_dense::map<TriangleId, TrianglePlane, TriangleIdHash> planeCache;
 
     spdlog::debug("countPointsPerTriangle: mesh has {} nodes, {} edges", mesh.size_nodes(), mesh.size_edges());
 
     TriangleLocator locator(mesh);
 
-    for (const auto &cloud : points)
+    ankerl::unordered_dense::map<TriangleId, TrianglePlane, TriangleIdHash> planeCache;
+    for (auto it = mesh.cedgebegin(); it != mesh.cedgeend(); ++it)
     {
-        for (const auto &p : cloud)
+        for (int side = 0; side < 2; side++)
         {
+            if (side == 1 && it->second.payload.border)
+                continue;
+
+            TriangleId tri{it->first, side};
+            auto verts = getTriangleVertices(mesh, tri);
+            if (verts[0] == 0 && verts[1] == 0 && verts[2] == 0)
+                continue;
+
+            const auto *n0 = mesh.getNode(verts[0]);
+            const auto *n1 = mesh.getNode(verts[1]);
+            const auto *n2 = mesh.getNode(verts[2]);
+            if (n0 && n1 && n2)
+            {
+                Eigen::Vector3d normal = (n1->payload.location - n0->payload.location)
+                                             .cross(n2->payload.location - n0->payload.location)
+                                             .normalized();
+                planeCache[tri] = {normal, n0->payload.location};
+            }
+        }
+    }
+
+    std::vector<const Eigen::Vector3d *> allPoints;
+    {
+        size_t totalPts = 0;
+        for (const auto &cloud : points)
+            totalPts += cloud.size();
+        allPoints.reserve(totalPts);
+    }
+    for (const auto &cloud : points)
+        for (const auto &p : cloud)
+            allPoints.push_back(&p);
+
+    ankerl::unordered_dense::map<TriangleId, Accumulator, TriangleIdHash> accumulators;
+
+    const int num_points = static_cast<int>(allPoints.size());
+#pragma omp parallel
+    {
+        ankerl::unordered_dense::map<TriangleId, Accumulator, TriangleIdHash> localAcc;
+
+#pragma omp for schedule(dynamic, 256) // NOLINT(modernize-loop-convert)
+        for (int pi = 0; pi < num_points; pi++)
+        {
+            const auto &p = *allPoints[pi];
             TriangleId tri = locator.find(p.x(), p.y());
             if (tri.edgeId == 0)
                 continue;
 
-            auto &acc = accumulators[tri];
+            auto &acc = localAcc[tri];
             acc.count++;
 
             auto planeIt = planeCache.find(tri);
-            if (planeIt == planeCache.end())
-            {
-                auto verts = getTriangleVertices(mesh, tri);
-                const auto *n0 = mesh.getNode(verts[0]);
-                const auto *n1 = mesh.getNode(verts[1]);
-                const auto *n2 = mesh.getNode(verts[2]);
-                if (n0 && n1 && n2)
-                {
-                    Eigen::Vector3d normal = (n1->payload.location - n0->payload.location)
-                                                 .cross(n2->payload.location - n0->payload.location)
-                                                 .normalized();
-                    planeIt = planeCache.emplace(tri, TrianglePlane{normal, n0->payload.location}).first;
-                }
-            }
-
             if (planeIt != planeCache.end())
             {
                 double dist = (p - planeIt->second.origin).dot(planeIt->second.normal);
                 acc.sumDist += dist;
                 acc.sumDistSq += dist * dist;
+            }
+        }
+
+#pragma omp critical(merge_point_accumulators)
+        {
+            for (const auto &[tri, lacc] : localAcc)
+            {
+                auto &acc = accumulators[tri];
+                acc.count += lacc.count;
+                acc.sumDist += lacc.sumDist;
+                acc.sumDistSq += lacc.sumDistSq;
             }
         }
     }

@@ -35,6 +35,11 @@ class UnionFind
             _rank[a]++;
     }
 
+    [[nodiscard]] bool is_singleton(size_t x) const
+    {
+        return _parent[x] == x && _rank[x] == 0;
+    }
+
   private:
     std::vector<size_t> _parent;
     std::vector<size_t> _rank;

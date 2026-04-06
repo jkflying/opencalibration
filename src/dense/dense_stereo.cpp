@@ -20,8 +20,8 @@
 namespace
 {
 
-std::vector<size_t> hilbertFeatureOrder(const std::vector<opencalibration::feature_2d> &features, int image_width,
-                                        int image_height)
+std::vector<size_t> hilbertFeatureOrder(const std::vector<opencalibration::feature_2d> &features, size_t start_index,
+                                        int image_width, int image_height)
 {
     int max_dim = std::max(image_width, image_height);
     int order = 1;
@@ -29,12 +29,12 @@ std::vector<size_t> hilbertFeatureOrder(const std::vector<opencalibration::featu
         order *= 2;
 
     std::vector<std::pair<uint32_t, size_t>> indexed;
-    indexed.reserve(features.size());
-    for (size_t i = 0; i < features.size(); i++)
+    indexed.reserve(features.size() - start_index);
+    for (size_t i = start_index; i < features.size(); i++)
     {
         int x = std::clamp(static_cast<int>(features[i].location.x()), 0, image_width - 1);
         int y = std::clamp(static_cast<int>(features[i].location.y()), 0, image_height - 1);
-        indexed.push_back({opencalibration::xy2d(order, x, y), i});
+        indexed.push_back({opencalibration::xy2d(order, x, y), i - start_index});
     }
     std::sort(indexed.begin(), indexed.end());
 
@@ -110,11 +110,19 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
         jk::tree::KDTree<size_t, 2, 8> tree;
     };
 
-    std::unordered_map<size_t, ImageFeatureTree> feature_trees;
+    ankerl::unordered_dense::map<size_t, ImageFeatureTree> feature_trees;
     for (size_t nid : node_ids)
     {
+        feature_trees[nid];
+    }
+
+    const int num_nodes_ft = static_cast<int>(node_ids.size());
+#pragma omp parallel for schedule(dynamic) // NOLINT(modernize-loop-convert)
+    for (int ni = 0; ni < num_nodes_ft; ni++)
+    {
+        const size_t nid = node_ids[ni];
         const auto &img = graph.getNode(nid)->payload;
-        auto &ft = feature_trees[nid];
+        auto &ft = feature_trees.at(nid);
         for (size_t i = img.num_sparse_features; i < img.features.size(); i++)
         {
             const auto &loc = img.features[i].location;
@@ -155,7 +163,7 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
     }
 
     auto measurementId = [&](size_t nid, size_t feat_idx) -> size_t {
-        return node_id_to_offset[nid] + feat_idx - graph.getNode(nid)->payload.num_sparse_features;
+        return node_id_to_offset.at(nid) + feat_idx - graph.getNode(nid)->payload.num_sparse_features;
     };
 
     std::atomic<size_t> images_done{0};
@@ -180,10 +188,9 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
             continue;
         }
 
-        std::vector<feature_2d> src_dense_features(src_img.features.begin() + src_img.num_sparse_features,
-                                                   src_img.features.end());
-        auto order = hilbertFeatureOrder(src_dense_features, static_cast<int>(src_model.pixels_cols),
-                                         static_cast<int>(src_model.pixels_rows));
+        auto order =
+            hilbertFeatureOrder(src_img.features, src_img.num_sparse_features, static_cast<int>(src_model.pixels_cols),
+                                static_cast<int>(src_model.pixels_rows));
 
         struct LocalMatch
         {
@@ -293,12 +300,11 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
 
     for (size_t i = 0; i < id_to_measurement.size(); i++)
     {
+        if (uf.is_singleton(i))
+            continue;
         size_t root = uf.find(i);
         track_ids[root].push_back(i);
     }
-
-    point_cloud merged_points;
-    merged_points.reserve(track_ids.size());
 
     const double max_reproj_err_sq = MAX_REPROJECTION_ERROR_PIXELS * MAX_REPROJECTION_ERROR_PIXELS;
 
@@ -311,16 +317,24 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
         const Eigen::Quaterniond *orientation;
     };
 
-    std::vector<RayMeasurement> measurements;
-    std::vector<ray_d> rays;
-    std::vector<size_t> inlier_indices;
-
-    for (const auto &[root, ids] : track_ids)
+    std::vector<std::vector<size_t>> multi_tracks;
+    multi_tracks.reserve(track_ids.size());
+    for (auto &[root, ids] : track_ids)
     {
-        if (ids.size() < 2)
-            continue;
+        if (ids.size() >= 2)
+            multi_tracks.push_back(std::move(ids));
+    }
 
-        measurements.clear();
+    std::vector<Eigen::Vector3d> track_results(multi_tracks.size());
+    std::vector<char> track_valid(multi_tracks.size(), 0);
+
+    const int num_tracks = static_cast<int>(multi_tracks.size());
+#pragma omp parallel for schedule(dynamic) // NOLINT(modernize-loop-convert)
+    for (int ti = 0; ti < num_tracks; ti++)
+    {
+        const auto &ids = multi_tracks[ti];
+
+        std::vector<RayMeasurement> measurements;
         for (size_t id : ids)
         {
             const auto &m = id_to_measurement[id];
@@ -330,7 +344,7 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
                                     img.model.get(), &img.position, &img.orientation});
         }
 
-        rays.clear();
+        std::vector<ray_d> rays;
         for (const auto &rm : measurements)
             rays.push_back(rm.ray);
 
@@ -338,7 +352,7 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
         if (!triangulated.first.allFinite() || triangulated.second < 0)
             continue;
 
-        inlier_indices.clear();
+        std::vector<size_t> inlier_indices;
         for (size_t i = 0; i < measurements.size(); i++)
         {
             const auto &rm = measurements[i];
@@ -361,7 +375,15 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
                 continue;
         }
 
-        merged_points.push_back(triangulated.first);
+        track_results[ti] = triangulated.first;
+        track_valid[ti] = true;
+    }
+
+    point_cloud merged_points;
+    for (int ti = 0; ti < num_tracks; ti++)
+    {
+        if (track_valid[ti])
+            merged_points.push_back(track_results[ti]);
     }
 
     if (!merged_points.empty())
