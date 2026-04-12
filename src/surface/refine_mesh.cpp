@@ -449,126 +449,6 @@ size_t refineTriangle(MeshGraph &mesh, const TriangleId &tri, int maxDepth)
     }
 }
 
-size_t refineAtPoint(MeshGraph &mesh, double x, double y, int levels)
-{
-    size_t totalCreated = 0;
-
-    for (int level = 0; level < levels; level++)
-    {
-        TriangleId tri = findTriangleContainingPoint(mesh, x, y);
-        if (tri.edgeId == 0)
-        {
-            spdlog::debug("refineAtPoint: no triangle found at ({}, {})", x, y);
-            break;
-        }
-
-        size_t created = refineTriangle(mesh, tri);
-        if (created == 0)
-            break;
-
-        totalCreated += created;
-    }
-
-    return totalCreated;
-}
-
-size_t refineWhere(MeshGraph &mesh, std::function<bool(double x, double y, double z)> shouldRefine, int maxIterations)
-{
-    size_t totalCreated = 0;
-
-    for (int iter = 0; iter < maxIterations; iter++)
-    {
-        ankerl::unordered_dense::set<size_t> visitedEdges;
-        std::vector<TriangleId> toRefine;
-
-        for (auto it = mesh.cedgebegin(); it != mesh.cedgeend(); ++it)
-        {
-            size_t edgeId = it->first;
-            if (visitedEdges.count(edgeId))
-                continue;
-            visitedEdges.insert(edgeId);
-
-            const auto &edge = it->second;
-
-            {
-                TriangleId tri{edgeId, 0};
-                auto verts = getTriangleVertices(mesh, tri);
-                if (verts[0] != 0 || verts[1] != 0 || verts[2] != 0)
-                {
-                    Eigen::Vector3d center = Eigen::Vector3d::Zero();
-                    int validNodes = 0;
-                    for (int i = 0; i < 3; i++)
-                    {
-                        const auto *n = mesh.getNode(verts[i]);
-                        if (n)
-                        {
-                            center += n->payload.location;
-                            validNodes++;
-                        }
-                    }
-                    if (validNodes == 3)
-                    {
-                        center /= 3.0;
-                        if (shouldRefine(center.x(), center.y(), center.z()))
-                        {
-                            toRefine.push_back(tri);
-                        }
-                    }
-                }
-            }
-
-            if (!edge.payload.border)
-            {
-                TriangleId tri{edgeId, 1};
-                auto verts = getTriangleVertices(mesh, tri);
-                if (verts[0] != 0 || verts[1] != 0 || verts[2] != 0)
-                {
-                    Eigen::Vector3d center = Eigen::Vector3d::Zero();
-                    int validNodes = 0;
-                    for (int i = 0; i < 3; i++)
-                    {
-                        const auto *n = mesh.getNode(verts[i]);
-                        if (n)
-                        {
-                            center += n->payload.location;
-                            validNodes++;
-                        }
-                    }
-                    if (validNodes == 3)
-                    {
-                        center /= 3.0;
-                        if (shouldRefine(center.x(), center.y(), center.z()))
-                        {
-                            toRefine.push_back(tri);
-                        }
-                    }
-                }
-            }
-        }
-
-        if (toRefine.empty())
-            break;
-
-        size_t createdThisIter = 0;
-        for (const auto &tri : toRefine)
-        {
-            // Triangle may have been invalidated by previous refinement
-            auto verts = getTriangleVertices(mesh, tri);
-            if (verts[0] == 0 && verts[1] == 0 && verts[2] == 0)
-                continue;
-
-            createdThisIter += refineTriangle(mesh, tri);
-        }
-
-        if (createdThisIter == 0)
-            break;
-
-        totalCreated += createdThisIter;
-    }
-
-    return totalCreated;
-}
-
 TriangleLocator::TriangleLocator(const MeshGraph &m) : _mesh(m)
 {
     for (auto it = _mesh.cedgebegin(); it != _mesh.cedgeend(); ++it)
@@ -906,11 +786,6 @@ size_t refineByPointDensity(MeshGraph &mesh, const std::vector<point_cloud> &poi
     }
 
     return totalCreated;
-}
-
-void refineMesh(const MeasurementGraph & /*measurementGraph*/, MeshGraph & /*meshGraph*/)
-{
-    // Legacy function - use refineByPointDensity directly with the point clouds from surface_model
 }
 
 surface_model mergeSurfaceModels(const std::vector<surface_model> &surfaces)

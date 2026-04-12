@@ -34,7 +34,6 @@ TEST_F(CheckpointTest, save_and_load_empty)
     data.state_run_count = 5;
 
     ASSERT_TRUE(saveCheckpoint(data, test_checkpoint_dir));
-    ASSERT_TRUE(validateCheckpoint(test_checkpoint_dir));
 
     CheckpointData loaded;
     ASSERT_TRUE(loadCheckpoint(test_checkpoint_dir, loaded));
@@ -75,7 +74,6 @@ TEST_F(CheckpointTest, save_and_load_with_surfaces)
     data.surfaces.push_back(surface2);
 
     ASSERT_TRUE(saveCheckpoint(data, test_checkpoint_dir));
-    ASSERT_TRUE(validateCheckpoint(test_checkpoint_dir));
 
     CheckpointData loaded;
     ASSERT_TRUE(loadCheckpoint(test_checkpoint_dir, loaded));
@@ -109,11 +107,6 @@ TEST_F(CheckpointTest, pipeline_save_and_load)
     ASSERT_TRUE(p2.loadCheckpoint(test_checkpoint_dir));
 
     EXPECT_EQ(p1.getState(), p2.getState());
-}
-
-TEST_F(CheckpointTest, validate_nonexistent)
-{
-    EXPECT_FALSE(validateCheckpoint("/nonexistent/path/to/checkpoint"));
 }
 
 TEST_F(CheckpointTest, load_nonexistent)
@@ -211,26 +204,4 @@ TEST_F(CheckpointTest, load_missing_graph)
 
     CheckpointData data;
     EXPECT_FALSE(loadCheckpoint(test_checkpoint_dir, data));
-}
-
-TEST_F(CheckpointTest, validate_missing_metadata)
-{
-    std::filesystem::create_directories(test_checkpoint_dir);
-    {
-        std::ofstream out(test_checkpoint_dir + "/graph.json");
-        out << "{}";
-    }
-
-    EXPECT_FALSE(validateCheckpoint(test_checkpoint_dir));
-}
-
-TEST_F(CheckpointTest, validate_missing_graph)
-{
-    std::filesystem::create_directories(test_checkpoint_dir);
-    {
-        std::ofstream out(test_checkpoint_dir + "/metadata.json");
-        out << R"({"version": 1})";
-    }
-
-    EXPECT_FALSE(validateCheckpoint(test_checkpoint_dir));
 }

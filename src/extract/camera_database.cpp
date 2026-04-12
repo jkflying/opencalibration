@@ -337,12 +337,6 @@ bool CameraDatabase::load(const std::string &path)
     return true;
 }
 
-bool CameraDatabase::isLoaded() const
-{
-    std::lock_guard<std::mutex> lock(_mutex);
-    return _loaded;
-}
-
 std::optional<CameraDBEntry> CameraDatabase::lookup(const image_metadata::camera_info_t &camera_info) const
 {
     std::lock_guard<std::mutex> lock(_mutex);

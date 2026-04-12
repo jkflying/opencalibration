@@ -91,13 +91,6 @@ void PerformanceMeasure::finalize()
     }
 }
 
-void ResetPerformanceCounters()
-{
-    std::lock_guard<std::mutex> lock(_globals_mutex);
-    _time_totals.clear();
-    _time_points.clear();
-}
-
 std::string TotalPerformanceSummary()
 {
     using entry_t = std::pair<int64_t, std::string_view>;

@@ -314,26 +314,4 @@ bool loadCheckpoint(const std::string &checkpoint_dir, CheckpointData &data)
     return true;
 }
 
-bool validateCheckpoint(const std::string &checkpoint_dir)
-{
-    std::filesystem::path dir(checkpoint_dir);
-
-    if (!std::filesystem::exists(dir))
-    {
-        return false;
-    }
-
-    if (!std::filesystem::exists(dir / "metadata.json"))
-    {
-        return false;
-    }
-
-    if (!std::filesystem::exists(dir / "graph.json"))
-    {
-        return false;
-    }
-
-    return true;
-}
-
 } // namespace opencalibration

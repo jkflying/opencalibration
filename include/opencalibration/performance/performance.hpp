@@ -32,7 +32,6 @@ class PerformanceMeasure
 };
 
 void EnablePerformanceCounters(bool enable);
-void ResetPerformanceCounters();
 std::string TotalPerformanceSummary();
 
 } // namespace opencalibration

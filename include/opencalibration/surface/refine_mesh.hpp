@@ -133,32 +133,6 @@ BisectionResult bisectEdge(MeshGraph &mesh, size_t edgeId);
 size_t refineTriangle(MeshGraph &mesh, const TriangleId &tri, int maxDepth = 10);
 
 /**
- * @brief Refine mesh around a specific point
- *
- * Finds the triangle containing the point and refines it.
- *
- * @param mesh The mesh graph to modify
- * @param x X coordinate of the point
- * @param y Y coordinate of the point
- * @param levels Number of refinement levels to apply
- * @return Number of triangles created
- */
-size_t refineAtPoint(MeshGraph &mesh, double x, double y, int levels = 1);
-
-/**
- * @brief Refine mesh in regions matching a predicate
- *
- * Iterates through all triangles and refines those where the predicate returns true.
- *
- * @param mesh The mesh graph to modify
- * @param shouldRefine Predicate taking triangle center (x, y, z) and returning true to refine
- * @param maxIterations Maximum number of refinement passes
- * @return Total number of triangles created
- */
-size_t refineWhere(MeshGraph &mesh, std::function<bool(double x, double y, double z)> shouldRefine,
-                   int maxIterations = 10);
-
-/**
  * @brief Per-triangle statistics from point cloud analysis
  */
 struct TrianglePointStats
@@ -208,10 +182,5 @@ size_t refineByPointDensity(MeshGraph &mesh, const std::vector<point_cloud> &poi
  * @return Merged surface model with weighted vertex positions and combined point clouds
  */
 surface_model mergeSurfaceModels(const std::vector<surface_model> &surfaces);
-
-/**
- * @brief Legacy refineMesh function signature for compatibility
- */
-void refineMesh(const MeasurementGraph &measurementGraph, MeshGraph &meshGraph);
 
 } // namespace opencalibration

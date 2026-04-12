@@ -20,5 +20,4 @@ bool toVisualizedGeoJson(const MeasurementGraph &graph, const std::vector<size_t
                          std::function<Eigen::Vector3d(const Eigen::Vector3d &)> toGlobalCoordinates,
                          std::ostream &out);
 
-std::string toTiff(const GenericRaster &raster);
 } // namespace opencalibration

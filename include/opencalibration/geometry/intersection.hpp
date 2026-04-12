@@ -46,37 +46,4 @@ bool rayPlaneIntersection(const ray<T> &r, const plane_norm_offset<T> &p,
     return true;
 }
 
-template <typename T, typename R = Eigen::Matrix<T, 3, 1>>
-bool onSameSideOfEdge(const R &vertex0, const R &vertex1, const R &reference, const R &test)
-{
-    const auto edgeDir = vertex1 - vertex0;
-    const auto rawDir = reference - vertex0;
-    const auto perpDir = rawDir - edgeDir * (rawDir.dot(edgeDir) / edgeDir.squaredNorm()); // fast but bad numerically
-    const auto testDir = test - vertex0;
-    const T result = testDir.dot(perpDir);
-    return result >= 0;
-}
-
-template <typename T>
-bool pointInsideTriangle(const typename Eigen::Matrix<T, 3, 1> &point, const plane_3_corners<T> &triangle)
-{
-    bool inside = true;
-
-    for (size_t i = 0; i < 3; i++)
-    {
-        inside &=
-            onSameSideOfEdge<T>(triangle.corner[i], triangle.corner[(i + 1) % 3], triangle.corner[(i + 2) % 3], point);
-    }
-
-    return inside;
-}
-
-template <typename T>
-bool rayTriangleIntersection(const ray<T> &ray, const plane_3_corners<T> &triangle,
-                             typename Eigen::Matrix<T, 3, 1> &intersectionPoint)
-{
-    const plane_norm_offset<T> plane = cornerPlane2normOffsetPlane(triangle);
-    const bool intersects = rayPlaneIntersection(ray, plane, intersectionPoint);
-    return intersects && pointInsideTriangle(intersectionPoint, triangle);
-}
 } // namespace opencalibration

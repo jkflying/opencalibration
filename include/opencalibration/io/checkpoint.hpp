@@ -21,6 +21,5 @@ struct CheckpointData
 
 bool saveCheckpoint(const CheckpointData &data, const std::string &checkpoint_dir);
 bool loadCheckpoint(const std::string &checkpoint_dir, CheckpointData &data);
-bool validateCheckpoint(const std::string &checkpoint_dir);
 
 } // namespace opencalibration

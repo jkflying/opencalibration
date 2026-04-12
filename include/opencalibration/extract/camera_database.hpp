@@ -34,7 +34,6 @@ class CameraDatabase
     static const std::string &defaultPath();
 
     bool load(const std::string &path);
-    bool isLoaded() const;
 
     std::optional<CameraDBEntry> lookup(const image_metadata::camera_info_t &camera_info) const;
 

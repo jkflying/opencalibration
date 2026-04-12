@@ -24,7 +24,13 @@ TEST_F(CameraDatabaseTest, loads_bundled_database)
     auto img = extract_image(TEST_DATA_DIR "P2530253.JPG");
     ASSERT_TRUE(img.has_value());
 
-    EXPECT_TRUE(CameraDatabase::instance().isLoaded());
+    // Verify database is loaded by checking a lookup succeeds
+    image_metadata::camera_info_t info;
+    info.make = "Parrot";
+    info.model = "Anafi";
+    info.width_px = 5344;
+    info.height_px = 4016;
+    EXPECT_TRUE(CameraDatabase::instance().lookup(info).has_value());
 }
 
 TEST_F(CameraDatabaseTest, lookup_parrot_anafi)
@@ -91,8 +97,6 @@ TEST_F(CameraDatabaseTest, extract_image_looks_up_database)
 
     // THEN: database should be loaded (distortion may be zero if no factory calibration)
     ASSERT_TRUE(img.has_value());
-    EXPECT_TRUE(CameraDatabase::instance().isLoaded());
-
     // Verify the lookup works
     auto entry = CameraDatabase::instance().lookup(img->metadata.camera_info);
     EXPECT_TRUE(entry.has_value());

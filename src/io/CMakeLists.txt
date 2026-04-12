@@ -7,7 +7,6 @@ target_include_directories(cv_raster_obj PRIVATE $<BUILD_INTERFACE:${PROJECT_SOU
 add_library(oc_io $<TARGET_OBJECTS:cv_raster_obj>
                   serialize_MeasurementGraph.cpp
                   serialize_MeshGraph.cpp
-                  serialise_Raster.cpp
                   deserialize_MeasurementGraph.cpp
                   deserialize_MeshGraph.cpp
                   saveXYZ.cpp
