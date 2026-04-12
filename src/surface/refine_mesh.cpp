@@ -23,7 +23,8 @@ double edgeLengthSquared(const MeshGraph &mesh, size_t edgeId)
     if (!srcNode || !dstNode)
         return 0;
 
-    return (srcNode->payload.location - dstNode->payload.location).squaredNorm();
+    // 2D metric: rest of the pipeline (point-in-triangle, locator, minTriangleSizeMeters) is XY.
+    return (srcNode->payload.location.head<2>() - dstNode->payload.location.head<2>()).squaredNorm();
 }
 
 size_t findEdgeBetween(const MeshGraph &mesh, size_t node1, size_t node2)
@@ -407,7 +408,12 @@ size_t refineTriangle(MeshGraph &mesh, const TriangleId &tri, int maxDepth)
                 size_t neighborLongest = findLongestEdge(mesh, neighbor);
                 if (neighborLongest != 0 && neighborLongest != longestEdgeId)
                 {
-                    trianglesCreated += refineTriangle(mesh, neighbor, maxDepth - 1);
+                    size_t createdByRecursion = refineTriangle(mesh, neighbor, maxDepth - 1);
+                    trianglesCreated += createdByRecursion;
+
+                    // No progress from recursion: retrying would spin on unchanged state.
+                    if (createdByRecursion == 0)
+                        return trianglesCreated;
 
                     // The recursive refinement may have bisected our longest edge,
                     // invalidating this triangle — re-locate via original vertices

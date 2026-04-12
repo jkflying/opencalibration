@@ -6,8 +6,12 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <cmath>
 #include <fstream>
+#include <future>
+#include <memory>
+#include <thread>
 
 using namespace opencalibration;
 
@@ -1312,4 +1316,383 @@ TEST(refine_mesh, triangle_locator_empty_mesh)
 
     TriangleId result = locator.find(5.0, 5.0);
     EXPECT_EQ(result.edgeId, 0);
+}
+
+// Worst 2D aspect ratio over the mesh: longest_edge_sq / (2 * area). Iso-right = 2.
+double maxTriangleAspect2D(const MeshGraph &mesh)
+{
+    // Visit each triangle only from its smallest-id edge to avoid 3x redundant walks.
+    auto edgeIdBetween = [&](size_t a, size_t b) -> size_t {
+        const auto *node = mesh.getNode(a);
+        if (!node)
+            return 0;
+        for (size_t eid : node->getEdges())
+        {
+            const auto *e = mesh.getEdge(eid);
+            if (e && ((e->getSource() == a && e->getDest() == b) || (e->getSource() == b && e->getDest() == a)))
+                return eid;
+        }
+        return 0;
+    };
+
+    double worst = 0.0;
+    for (auto it = mesh.cedgebegin(); it != mesh.cedgeend(); ++it)
+    {
+        const size_t edgeId = it->first;
+        const auto &edge = it->second;
+
+        for (int side = 0; side < 2; side++)
+        {
+            if (side == 1 && edge.payload.border)
+                continue;
+
+            const TriangleId tri{edgeId, side};
+            const auto verts = getTriangleVertices(mesh, tri);
+            if (verts[0] == 0 && verts[1] == 0 && verts[2] == 0)
+                continue;
+
+            const size_t e01 = edgeIdBetween(verts[0], verts[1]);
+            const size_t e12 = edgeIdBetween(verts[1], verts[2]);
+            const size_t e20 = edgeIdBetween(verts[2], verts[0]);
+            if (e01 == 0 || e12 == 0 || e20 == 0)
+                continue;
+            if (edgeId != std::min({e01, e12, e20}))
+                continue;
+
+            const auto *n0 = mesh.getNode(verts[0]);
+            const auto *n1 = mesh.getNode(verts[1]);
+            const auto *n2 = mesh.getNode(verts[2]);
+            if (!n0 || !n1 || !n2)
+                continue;
+
+            const Eigen::Vector2d p0 = n0->payload.location.head<2>();
+            const Eigen::Vector2d p1 = n1->payload.location.head<2>();
+            const Eigen::Vector2d p2 = n2->payload.location.head<2>();
+
+            const double len01 = (p1 - p0).squaredNorm();
+            const double len12 = (p2 - p1).squaredNorm();
+            const double len20 = (p0 - p2).squaredNorm();
+            const double maxEdgeSq = std::max({len01, len12, len20});
+
+            const double twiceArea =
+                std::abs((p1.x() - p0.x()) * (p2.y() - p0.y()) - (p2.x() - p0.x()) * (p1.y() - p0.y()));
+            if (twiceArea <= 0)
+                continue;
+
+            const double aspect = maxEdgeSq / twiceArea;
+            if (aspect > worst)
+                worst = aspect;
+        }
+    }
+    return worst;
+}
+
+namespace
+{
+
+// Rivara LEB caps worst child aspect at 2*parent; iso-right parents are 2.
+constexpr double kIsoRightRefinedAspectBound2D = 5.0;
+constexpr double kRivaraLebAspectSlack = 2.5;
+
+struct ElevatedCornerScenario
+{
+    MeshGraph mesh;
+    point_cloud points;
+};
+
+ElevatedCornerScenario buildElevatedCornerScenario(double elevatedCornerZ)
+{
+    ElevatedCornerScenario s;
+
+    point_cloud cameras{Eigen::Vector3d(0, 0, 50), Eigen::Vector3d(10, 10, 50)};
+    s.mesh = buildMinimalMesh(cameras, {});
+
+    size_t highestXY = 0;
+    double bestSum = -std::numeric_limits<double>::infinity();
+    for (auto it = s.mesh.cnodebegin(); it != s.mesh.cnodeend(); ++it)
+    {
+        double sum = it->second.payload.location.x() + it->second.payload.location.y();
+        if (sum > bestSum)
+        {
+            bestSum = sum;
+            highestXY = it->first;
+        }
+    }
+    if (elevatedCornerZ != 0.0)
+    {
+        auto *node = s.mesh.getNode(highestXY);
+        node->payload.location.z() = elevatedCornerZ;
+    }
+
+    for (int i = 0; i < 40; i++)
+    {
+        for (int j = 0; j < 40; j++)
+        {
+            double x = (i + 0.5) * 10.0 / 40.0;
+            double y = (j + 0.5) * 10.0 / 40.0;
+            s.points.push_back(Eigen::Vector3d(x, y, 0.0));
+        }
+    }
+    return s;
+}
+
+} // namespace
+
+TEST(refine_mesh, adversarial_elevated_corner_stays_isotropic)
+{
+    // GIVEN a minimal mesh with one corner raised 50m, flat dense Z=0 point cloud
+    auto s = buildElevatedCornerScenario(50.0);
+
+    // WHEN refined by point density
+    refineByPointDensity(s.mesh, {s.points}, /*maxPointsPerTriangle=*/5,
+                         /*minDistanceVariance=*/0.1, /*maxIterations=*/8);
+
+    // THEN 2D aspect stays bounded and the mesh is conforming
+    EXPECT_GT(s.mesh.size_nodes(), 4u);
+    EXPECT_LT(maxTriangleAspect2D(s.mesh), kIsoRightRefinedAspectBound2D);
+    EXPECT_EQ(validateMeshNoCrossingEdges(s.mesh), "");
+    EXPECT_EQ(validateMeshNoHangingNodes(s.mesh), "");
+}
+
+TEST(refine_mesh, adversarial_z_scale_invariance)
+{
+    // GIVEN the elevated-corner scenario at varying Z scales
+    std::vector<double> aspects;
+    for (double z : {0.0, 1.0, 100.0})
+    {
+        auto s = buildElevatedCornerScenario(z);
+        // WHEN refined
+        refineByPointDensity(s.mesh, {s.points}, /*maxPointsPerTriangle=*/5,
+                             /*minDistanceVariance=*/0.1, /*maxIterations=*/8);
+        aspects.push_back(maxTriangleAspect2D(s.mesh));
+    }
+
+    // THEN the Z=100 case does not diverge from the flat baseline
+    ASSERT_EQ(aspects.size(), 3u);
+    const double baseline = std::max(aspects[0], 2.0);
+    EXPECT_LT(aspects[2], baseline + 3.0);
+}
+
+TEST(refine_mesh, adversarial_uniform_slope_stays_isotropic)
+{
+    // GIVEN a grid mesh with every vertex raised to Z = alpha*x (uniform ramp)
+    const double alpha = 10.0;
+    point_cloud cameras{Eigen::Vector3d(0, 0, 50), Eigen::Vector3d(10, 10, 50)};
+    MeshGraph mesh = rebuildMesh(cameras, {surface_model{{}, MeshGraph()}});
+    ASSERT_GT(mesh.size_nodes(), 4u);
+
+    for (auto it = mesh.nodebegin(); it != mesh.nodeend(); ++it)
+    {
+        it->second.payload.location.z() = alpha * it->second.payload.location.x();
+    }
+
+    point_cloud cloud;
+    for (int i = 0; i < 60; i++)
+    {
+        for (int j = 0; j < 60; j++)
+        {
+            double x = (i + 0.5) * 10.0 / 60.0;
+            double y = (j + 0.5) * 10.0 / 60.0;
+            double z = alpha * x + 0.5 * std::sin(3.0 * x) * std::cos(3.0 * y);
+            cloud.push_back(Eigen::Vector3d(x, y, z));
+        }
+    }
+
+    // WHEN refined
+    refineByPointDensity(mesh, {cloud}, /*maxPointsPerTriangle=*/10,
+                         /*minDistanceVariance=*/0.01, /*maxIterations=*/6);
+
+    // THEN 2D aspect stays bounded
+    EXPECT_LT(maxTriangleAspect2D(mesh), kIsoRightRefinedAspectBound2D);
+    EXPECT_EQ(validateMeshNoCrossingEdges(mesh), "");
+    EXPECT_EQ(validateMeshNoHangingNodes(mesh), "");
+}
+
+// Regression: T0's longest edge is the shared interior edge, T1's longest is
+// non-shared, so conforming cascade recurses into T1 which bails at maxDepth=0.
+// The retry loop must not respawn the same doomed recursion on unchanged state.
+TEST(refine_mesh, refine_triangle_terminates_when_recursion_hits_max_depth)
+{
+    // GIVEN a 2-triangle mesh whose cascade exceeds maxDepth=1
+    auto mesh = std::make_shared<MeshGraph>();
+    const size_t v0 = mesh->addNode(MeshNode{Eigen::Vector3d(0, 0, 0)});
+    const size_t v1 = mesh->addNode(MeshNode{Eigen::Vector3d(10, 0, 0)});
+    const size_t v2 = mesh->addNode(MeshNode{Eigen::Vector3d(0, 10, 0)});
+    const size_t v3 = mesh->addNode(MeshNode{Eigen::Vector3d(10, 20, 0)});
+
+    const size_t e01 = mesh->addEdge(MeshEdge{true, {0, 0}}, v0, v1);
+    const size_t e02 = mesh->addEdge(MeshEdge{true, {0, 0}}, v0, v2);
+    const size_t e12 = mesh->addEdge(MeshEdge{false, {0, 0}}, v1, v2);
+    const size_t e13 = mesh->addEdge(MeshEdge{true, {0, 0}}, v1, v3);
+    const size_t e23 = mesh->addEdge(MeshEdge{true, {0, 0}}, v2, v3);
+
+    mesh->getEdge(e01)->payload.triangleOppositeNodes = {v2, 0};
+    mesh->getEdge(e02)->payload.triangleOppositeNodes = {v1, 0};
+    mesh->getEdge(e12)->payload.triangleOppositeNodes = {v0, v3};
+    mesh->getEdge(e13)->payload.triangleOppositeNodes = {v2, 0};
+    mesh->getEdge(e23)->payload.triangleOppositeNodes = {v1, 0};
+
+    const TriangleId startTri{e01, 0};
+
+    // WHEN we call refineTriangle with a max depth too small for the cascade
+    //      (the chain is at least 2 hops deep but we allow only 1).
+    std::promise<size_t> prom;
+    auto fut = prom.get_future();
+    std::thread worker(
+        [mesh, startTri](std::promise<size_t> p) {
+            size_t created = refineTriangle(*mesh, startTri, /*maxDepth=*/1);
+            p.set_value(created);
+        },
+        std::move(prom));
+
+    // THEN it returns within a generous budget instead of spinning
+    const auto status = fut.wait_for(std::chrono::seconds(2));
+    if (status != std::future_status::ready)
+    {
+        worker.detach();
+        FAIL() << "refineTriangle did not terminate within 2s (stuck in retry loop)";
+        return;
+    }
+    worker.join();
+
+    EXPECT_EQ(mesh->size_nodes(), 4u);
+    EXPECT_EQ(mesh->size_edges(), 5u);
+    EXPECT_EQ(validateMeshNoCrossingEdges(*mesh), "");
+    EXPECT_EQ(validateMeshNoHangingNodes(*mesh), "");
+}
+
+namespace
+{
+
+// Rectangular LxW 2-triangle mesh at Z=0 with a v0-v3 diagonal.
+MeshGraph buildFlatRectangleMesh(double L, double W)
+{
+    MeshGraph mesh;
+    const size_t v0 = mesh.addNode(MeshNode{Eigen::Vector3d(0, 0, 0)});
+    const size_t v1 = mesh.addNode(MeshNode{Eigen::Vector3d(L, 0, 0)});
+    const size_t v2 = mesh.addNode(MeshNode{Eigen::Vector3d(0, W, 0)});
+    const size_t v3 = mesh.addNode(MeshNode{Eigen::Vector3d(L, W, 0)});
+
+    MeshEdge bot;
+    bot.border = true;
+    bot.triangleOppositeNodes[0] = v3;
+    mesh.addEdge(bot, v0, v1);
+
+    MeshEdge right;
+    right.border = true;
+    right.triangleOppositeNodes[0] = v0;
+    mesh.addEdge(right, v1, v3);
+
+    MeshEdge top;
+    top.border = true;
+    top.triangleOppositeNodes[0] = v0;
+    mesh.addEdge(top, v2, v3);
+
+    MeshEdge left;
+    left.border = true;
+    left.triangleOppositeNodes[0] = v3;
+    mesh.addEdge(left, v0, v2);
+
+    MeshEdge diag;
+    diag.border = false;
+    diag.triangleOppositeNodes[0] = v1;
+    diag.triangleOppositeNodes[1] = v2;
+    mesh.addEdge(diag, v0, v3);
+
+    return mesh;
+}
+
+} // namespace
+
+// Rivara LEB on a rectangular input bounds the worst 2D aspect at ~2*initial.
+TEST(refine_mesh, diagnostic_rectangular_aspect_sweep)
+{
+    struct Case
+    {
+        double L;
+        double W;
+    };
+    const std::vector<Case> cases = {{100, 100}, {200, 100}, {1000, 100}, {2000, 100}, {5000, 100}};
+
+    for (const auto &c : cases)
+    {
+        // GIVEN a rectangular LxW mesh and a dense oscillating point cloud
+        auto mesh = buildFlatRectangleMesh(c.L, c.W);
+        const double initialAspect = maxTriangleAspect2D(mesh);
+
+        point_cloud cloud;
+        const int nx = std::max(20, static_cast<int>(c.L / 25.0));
+        const int ny = std::max(4, static_cast<int>(c.W / 25.0));
+        for (int i = 0; i < nx; i++)
+        {
+            for (int j = 0; j < ny; j++)
+            {
+                const double x = (i + 0.5) * c.L / nx;
+                const double y = (j + 0.5) * c.W / ny;
+                const double z = 0.1 * std::sin(6.0 * x / c.L) * std::cos(6.0 * y / c.W);
+                cloud.push_back(Eigen::Vector3d(x, y, z));
+            }
+        }
+
+        // WHEN refined
+        refineByPointDensity(mesh, {cloud}, /*maxPointsPerTriangle=*/8,
+                             /*minDistanceVariance=*/0.001, /*maxIterations=*/6);
+
+        // THEN final aspect stays within the LEB bound and the mesh is conforming
+        EXPECT_LT(maxTriangleAspect2D(mesh), kRivaraLebAspectSlack * std::max(initialAspect, 2.0))
+            << "L=" << c.L << " W=" << c.W;
+        EXPECT_EQ(validateMeshNoCrossingEdges(mesh), "") << "L=" << c.L << " W=" << c.W;
+        EXPECT_EQ(validateMeshNoHangingNodes(mesh), "") << "L=" << c.L << " W=" << c.W;
+    }
+}
+
+// Grid mesh with one interior vertex raised in Z. If findLongestEdge uses the
+// 3D metric, edges incident to the spike become 3D-longest without being
+// 2D-longest and refinement produces 2D slivers around the spike.
+TEST(refine_mesh, diagnostic_grid_mesh_z_spike_produces_2d_slivers)
+{
+    // GIVEN a regular grid mesh with one central vertex raised to Z=100
+    point_cloud cameras;
+    for (int i = 0; i < 10; i++)
+        for (int j = 0; j < 10; j++)
+            cameras.push_back(Eigen::Vector3d(i * 5.0, j * 5.0, 50.0));
+
+    MeshGraph mesh = rebuildMesh(cameras, {});
+    ASSERT_GT(mesh.size_nodes(), 10u);
+
+    size_t spikeId = 0;
+    double bestDist = std::numeric_limits<double>::infinity();
+    for (auto it = mesh.cnodebegin(); it != mesh.cnodeend(); ++it)
+    {
+        double dx = it->second.payload.location.x() - 22.5;
+        double dy = it->second.payload.location.y() - 22.5;
+        double dist = dx * dx + dy * dy;
+        if (dist < bestDist)
+        {
+            bestDist = dist;
+            spikeId = it->first;
+        }
+    }
+    ASSERT_NE(spikeId, 0u);
+    mesh.getNode(spikeId)->payload.location.z() = 100.0;
+
+    point_cloud cloud;
+    for (int i = 0; i < 120; i++)
+    {
+        for (int j = 0; j < 120; j++)
+        {
+            const double x = -20 + i * 0.8;
+            const double y = -20 + j * 0.8;
+            cloud.push_back(Eigen::Vector3d(x, y, 0.0));
+        }
+    }
+
+    // WHEN refined against a dense flat point cloud
+    refineByPointDensity(mesh, {cloud}, /*maxPointsPerTriangle=*/8,
+                         /*minDistanceVariance=*/0.001, /*maxIterations=*/10);
+
+    // THEN 2D aspect stays bounded and the mesh is conforming
+    EXPECT_LT(maxTriangleAspect2D(mesh), kIsoRightRefinedAspectBound2D);
+    EXPECT_EQ(validateMeshNoCrossingEdges(mesh), "");
+    EXPECT_EQ(validateMeshNoHangingNodes(mesh), "");
 }
