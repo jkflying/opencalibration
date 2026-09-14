@@ -463,6 +463,30 @@ TEST_F(relax_group, measurement_3_images_mesh_radial)
     EXPECT_LT((cam_models[model->id].radial_distortion - expected_distortion).norm(), 0.2);
 }
 
+TEST_F(relax_group, measurement_3_images_plane_focal_two_models)
+{
+    // GIVEN: a graph, 3 images with edges between them all, where the last image uses a second camera model
+    init_cameras();
+    add_point_measurements(generate_planar_points());
+    auto second_model = std::make_shared<CameraModel>(*model);
+    second_model->id = 43;
+    cam_models[second_model->id] = *second_model;
+    graph.getNode(id[2])->payload.model = second_model;
+
+    // AND: the first model has the wrong focal length
+    const double initial_focal_length = 700;
+    cam_models[model->id].focal_length_pixels = initial_focal_length;
+
+    // WHEN: we relax with focal length optimization
+    const RelaxOptionSet options({Option::ORIENTATION, Option::FOCAL_LENGTH, Option::GROUND_PLANE});
+    ankerl::unordered_dense::set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
+    relax(graph, np, cam_models, edges, options, {});
+
+    // THEN: the first model's focal length is moved towards the true value
+    EXPECT_LT(std::abs(cam_models[model->id].focal_length_pixels - model->focal_length_pixels),
+              initial_focal_length - model->focal_length_pixels);
+}
+
 class TestRelaxProblem : public RelaxProblem
 {
   public:

@@ -19,6 +19,8 @@
 
 #include <ankerl/unordered_dense.h>
 
+#include <map>
+
 namespace opencalibration
 {
 
@@ -119,7 +121,7 @@ class RelaxProblem
 
     ankerl::unordered_dense::map<size_t, NodePose *> _nodes_to_optimize;
     ankerl::unordered_dense::map<size_t, CameraModel *> _cam_models_to_optimize;
-    ankerl::unordered_dense::map<size_t, InverseDifferentiableCameraModel<double>> _inverse_cam_model_to_optimize;
+    std::map<size_t, InverseDifferentiableCameraModel<double>> _inverse_cam_model_to_optimize;
     ankerl::unordered_dense::set<size_t> _edges_used;
 
     // Radial distortion monotonicity tracking
