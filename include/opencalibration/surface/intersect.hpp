@@ -21,7 +21,8 @@ class MeshIntersectionSearcher
             INTERSECTION,
             OUTSIDE_BORDER,
             RAY_PARALLEL_TO_PLANE,
-            GRAPH_STRUCTURE_INCONSISTENT
+            GRAPH_STRUCTURE_INCONSISTENT,
+            MAX_STEPS_EXCEEDED
 
         } type = PENDING;
         std::array<size_t, 3> nodeIndexes = {};

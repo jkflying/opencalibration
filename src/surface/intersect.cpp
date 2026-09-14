@@ -70,7 +70,7 @@ const MeshIntersectionSearcher::IntersectionInfo &MeshIntersectionSearcher::tria
     _info.type = IntersectionInfo::PENDING;
     _info.steps = 0;
 
-    constexpr size_t MAX_WALK_STEPS = 100;
+    const size_t maxWalkSteps = 100 + 2 * _meshGraph->size_nodes();
 
     while (true)
     {
@@ -152,9 +152,9 @@ const MeshIntersectionSearcher::IntersectionInfo &MeshIntersectionSearcher::tria
         _info.nodeLocations[replacedNode] = &node->payload.location;
         _info.steps++;
 
-        if (_info.steps > MAX_WALK_STEPS)
+        if (_info.steps > maxWalkSteps)
         {
-            _info.type = IntersectionInfo::INTERSECTION;
+            _info.type = IntersectionInfo::MAX_STEPS_EXCEEDED;
             break;
         }
     }

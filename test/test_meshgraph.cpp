@@ -172,3 +172,32 @@ TEST(meshgraph, doesnt_intersect_outside)
         EXPECT_EQ(intersection.type, MeshIntersectionSearcher::IntersectionInfo::OUTSIDE_BORDER);
     }
 }
+
+TEST(meshgraph, long_walk_finds_containing_triangle)
+{
+    // GIVEN: a long flat mesh, with the searcher starting at the grid corner
+    point_cloud p;
+    for (int i = 0; i < 300; i++)
+    {
+        p.emplace_back(i, 0, 1);
+    }
+    MeshGraph g = rebuildMesh(p, {});
+    MeshIntersectionSearcher s;
+    ASSERT_TRUE(s.init(g));
+
+    // WHEN: we intersect a ray far away from the start, needing more than 100 walk steps
+    const ray_d r{{0, 0, 1}, {250.3, 0.2, 5}};
+    const auto &result = s.triangleIntersect(r);
+
+    // THEN: the result is an intersection on a triangle which contains the point
+    ASSERT_EQ(result.type, MeshIntersectionSearcher::IntersectionInfo::INTERSECTION);
+    EXPECT_GT(result.steps, 100u);
+    Eigen::Vector2d lo = Eigen::Vector2d::Constant(INFINITY), hi = -lo;
+    for (const auto *loc : result.nodeLocations)
+    {
+        lo = lo.cwiseMin(loc->topRows<2>());
+        hi = hi.cwiseMax(loc->topRows<2>());
+    }
+    EXPECT_TRUE((lo.array() <= Eigen::Array2d(250.3, 0.2)).all() && (hi.array() >= Eigen::Array2d(250.3, 0.2)).all())
+        << lo.transpose() << " / " << hi.transpose();
+}
