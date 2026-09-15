@@ -487,6 +487,29 @@ TEST_F(relax_group, measurement_3_images_plane_focal_two_models)
               initial_focal_length - model->focal_length_pixels);
 }
 
+TEST_F(relax_group, group_with_connection_depth_has_unique_nodes)
+{
+    // GIVEN: a graph, 3 images with edges between them all
+    init_cameras();
+    add_edge_measurements();
+    jk::tree::KDTree<size_t, 2> imageGPSLocations;
+    for (size_t i = 0; i < 3; i++)
+    {
+        imageGPSLocations.addPoint({ground_pos[i].x(), ground_pos[i].y()}, id[i]);
+    }
+
+    // WHEN: we create a group from one image, reaching the others over a connection depth of 2
+    RelaxGroup group;
+    group.init(graph, {id[0]}, imageGPSLocations, 2, {Option::ORIENTATION});
+    auto optimized_ids = group.finalize(graph);
+
+    // THEN: each image is in the group exactly once
+    std::sort(optimized_ids.begin(), optimized_ids.end());
+    std::vector<size_t> expected_ids{id[0], id[1], id[2]};
+    std::sort(expected_ids.begin(), expected_ids.end());
+    EXPECT_EQ(optimized_ids, expected_ids);
+}
+
 class TestRelaxProblem : public RelaxProblem
 {
   public:

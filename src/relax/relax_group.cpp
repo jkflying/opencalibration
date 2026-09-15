@@ -50,6 +50,7 @@ void RelaxGroup::init(const MeasurementGraph &graph, const std::vector<size_t> &
         }
 
         _local_poses.reserve(_local_poses.size() + newly_connected.size());
+        _nodes_to_optimize.insert(newly_connected.begin(), newly_connected.end());
 
         // add new nodes that are directly connected
         for (size_t node_id : newly_connected)
