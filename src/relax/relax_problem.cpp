@@ -503,6 +503,7 @@ void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, 
             {
                 _problem->SetParameterBlockConstant(inverse_iter->second.principle_point.data());
             }
+            setRadialDistortionParameterization(inverse_iter->second.radial_distortion.data(), options);
             trackRadialObservation(inverse_iter->second.radial_distortion.data(), source_model.pixels_rows,
                                    source_model.pixels_cols, inverse_iter->second.focal_length_pixels);
             points_added = true;
@@ -528,31 +529,6 @@ void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, 
         if (!pkg.dest.optimize)
         {
             _problem->SetParameterBlockConstant(datas[1]);
-        }
-
-        if (options.hasAny({Option::LENS_DISTORTIONS_RADIAL}))
-        {
-            if (options.hasAll({Option::LENS_DISTORTIONS_RADIAL_BROWN246_PARAMETERIZATION}))
-            {
-                _problem->SetManifold(inverse_iter->second.radial_distortion.data(), &_brown246_parameterization);
-            }
-            else if (options.hasAll({Option::LENS_DISTORTIONS_RADIAL_BROWN24_PARAMETERIZATION}))
-            {
-                _problem->SetManifold(inverse_iter->second.radial_distortion.data(), &_brown24_parameterization);
-            }
-            else if (options.hasAll({Option::LENS_DISTORTIONS_RADIAL_BROWN2_PARAMETERIZATION}))
-            {
-                _problem->SetManifold(inverse_iter->second.radial_distortion.data(), &_brown2_parameterization);
-            }
-            else if (!options.hasAny({Option::LENS_DISTORTIONS_RADIAL}))
-            {
-
-                _problem->SetParameterBlockConstant(inverse_iter->second.radial_distortion.data());
-            }
-            else
-            {
-                spdlog::warn("No parameterization chosen for radial distortion");
-            }
         }
     }
 
@@ -885,20 +861,7 @@ void RelaxProblem::addMultiRayTrackCosts(const MeasurementGraph &graph, const Re
                 _problem->SetParameterBlockConstant(&inv_model_ptr->focal_length_pixels);
             if (!options.hasAny(RelaxOptionSet{Option::PRINCIPAL_POINT}))
                 _problem->SetParameterBlockConstant(inv_model_ptr->principle_point.data());
-
-            if (options.hasAny({Option::LENS_DISTORTIONS_RADIAL}))
-            {
-                if (options.hasAll({Option::LENS_DISTORTIONS_RADIAL_BROWN246_PARAMETERIZATION}))
-                    _problem->SetManifold(inv_model_ptr->radial_distortion.data(), &_brown246_parameterization);
-                else if (options.hasAll({Option::LENS_DISTORTIONS_RADIAL_BROWN24_PARAMETERIZATION}))
-                    _problem->SetManifold(inv_model_ptr->radial_distortion.data(), &_brown24_parameterization);
-                else if (options.hasAll({Option::LENS_DISTORTIONS_RADIAL_BROWN2_PARAMETERIZATION}))
-                    _problem->SetManifold(inv_model_ptr->radial_distortion.data(), &_brown2_parameterization);
-                else if (!options.hasAny({Option::LENS_DISTORTIONS_RADIAL}))
-                    _problem->SetParameterBlockConstant(inv_model_ptr->radial_distortion.data());
-                else
-                    spdlog::warn("No parameterization chosen for radial distortion");
-            }
+            setRadialDistortionParameterization(inv_model_ptr->radial_distortion.data(), options);
 
             const auto *node = graph.getNode(good_rays[0].node_id);
             trackRadialObservation(inv_model_ptr->radial_distortion.data(), node->payload.model->pixels_rows,
@@ -1184,6 +1147,30 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
     }
 
     _edges_used.emplace(edge_id);
+}
+
+void RelaxProblem::setRadialDistortionParameterization(double *radial_distortion, const RelaxOptionSet &options)
+{
+    if (!options.hasAny({Option::LENS_DISTORTIONS_RADIAL}))
+    {
+        _problem->SetParameterBlockConstant(radial_distortion);
+    }
+    else if (options.hasAll({Option::LENS_DISTORTIONS_RADIAL_BROWN246_PARAMETERIZATION}))
+    {
+        _problem->SetManifold(radial_distortion, &_brown246_parameterization);
+    }
+    else if (options.hasAll({Option::LENS_DISTORTIONS_RADIAL_BROWN24_PARAMETERIZATION}))
+    {
+        _problem->SetManifold(radial_distortion, &_brown24_parameterization);
+    }
+    else if (options.hasAll({Option::LENS_DISTORTIONS_RADIAL_BROWN2_PARAMETERIZATION}))
+    {
+        _problem->SetManifold(radial_distortion, &_brown2_parameterization);
+    }
+    else
+    {
+        spdlog::warn("No parameterization chosen for radial distortion");
+    }
 }
 
 void RelaxProblem::initializeGroundPlane()

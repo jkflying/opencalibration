@@ -99,6 +99,7 @@ class RelaxProblem
 
     void trackRadialObservation(double *radial_data, size_t pixels_rows, size_t pixels_cols, double focal_length);
     void addMonotonicityCosts();
+    void setRadialDistortionParameterization(double *radial_distortion, const RelaxOptionSet &options);
 
     ceres::Solver::Options _solver_options;
     ceres::LossFunctionWrapper _loss;

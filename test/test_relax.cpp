@@ -487,6 +487,25 @@ TEST_F(relax_group, measurement_3_images_plane_focal_two_models)
               initial_focal_length - model->focal_length_pixels);
 }
 
+TEST_F(relax_group, measurement_3_images_plane_focal_keeps_radial_constant)
+{
+    // GIVEN: a graph, 3 images with edges between them all, and a camera model with some radial distortion
+    init_cameras();
+    add_point_measurements(generate_planar_points());
+    const Eigen::Vector3d initial_distortion(0.01, -0.01, 0.01);
+    cam_models[model->id].radial_distortion = initial_distortion;
+    cam_models[model->id].focal_length_pixels = 700;
+
+    // WHEN: we relax with only focal length optimization
+    const RelaxOptionSet options({Option::ORIENTATION, Option::FOCAL_LENGTH, Option::GROUND_PLANE});
+    ankerl::unordered_dense::set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
+    relax(graph, np, cam_models, edges, options, {});
+
+    // THEN: the radial distortion is unchanged, within the accuracy of converting to and from the inverse model
+    EXPECT_LT((cam_models[model->id].radial_distortion - initial_distortion).norm(), 1e-3)
+        << cam_models[model->id].radial_distortion.transpose();
+}
+
 TEST_F(relax_group, group_with_connection_depth_has_unique_nodes)
 {
     // GIVEN: a graph, 3 images with edges between them all
