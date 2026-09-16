@@ -53,8 +53,7 @@ TEST(cost_functions, distortion_monotonicity_negative_k1)
 
 TEST(cost_functions, adjacent_triangle_coplanar)
 {
-    // C and D on same side of AB produce coplanar normals
-    Eigen::Vector2d A(0, 0), B(1, 0), C(0.5, 1), D(0.5, 0.5);
+    Eigen::Vector2d A(0, 0), B(1, 0), C(0.5, 1), D(0.5, -1);
     AdjacentTriangleNormalCost cost(A, B, C, D, 1.0);
 
     double zA = 0, zB = 0, zC = 0, zD = 0;

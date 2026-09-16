@@ -141,7 +141,7 @@ struct AdjacentTriangleNormalCost
 
         const Vector3T AB = B - A;
         const Vector3T n1 = AB.cross(C - A).normalized();
-        const Vector3T n2 = AB.cross(D - A).normalized();
+        const Vector3T n2 = (D - A).cross(AB).normalized();
 
         residuals[0] = T(_weight) * angleBetweenUnitVectors<T>(n1, n2);
         return true;
