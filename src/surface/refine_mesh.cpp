@@ -106,6 +106,22 @@ TriangleId findTriangleNearVertices(const MeshGraph &mesh, const std::array<size
     return {0, 0};
 }
 
+TriangleId lowestEdgeTriangleId(const MeshGraph &mesh, const TriangleId &tri)
+{
+    const auto verts = getTriangleVertices(mesh, tri);
+    TriangleId lowest = tri;
+    for (size_t i = 1; i < 3; i++)
+    {
+        const size_t edgeId = findEdgeBetween(mesh, verts[i], verts[(i + 1) % 3]);
+        const int side = findTriangleSide(mesh, edgeId, verts[(i + 2) % 3]);
+        if (edgeId != 0 && side >= 0 && edgeId < lowest.edgeId)
+        {
+            lowest = {edgeId, side};
+        }
+    }
+    return lowest;
+}
+
 } // anonymous namespace
 
 std::array<size_t, 3> getTriangleVertices(const MeshGraph &mesh, const TriangleId &tri)
@@ -661,6 +677,7 @@ ankerl::unordered_dense::map<TriangleId, TrianglePointStats, TriangleIdHash> cou
             TriangleId tri = locator.find(p.x(), p.y());
             if (tri.edgeId == 0)
                 continue;
+            tri = lowestEdgeTriangleId(mesh, tri);
 
             auto &acc = localAcc[tri];
             acc.count++;

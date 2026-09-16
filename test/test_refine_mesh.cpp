@@ -11,6 +11,7 @@
 #include <fstream>
 #include <future>
 #include <memory>
+#include <set>
 #include <thread>
 
 using namespace opencalibration;
@@ -1349,4 +1350,40 @@ TEST(refine_mesh, diagnostic_grid_mesh_z_spike_produces_2d_slivers)
     EXPECT_LT(maxTriangleAspect2D(mesh), kIsoRightRefinedAspectBound2D);
     EXPECT_EQ(validateMeshNoCrossingEdges(mesh), "");
     EXPECT_EQ(validateMeshNoHangingNodes(mesh), "");
+}
+
+TEST(refine_mesh, point_counts_have_one_entry_per_triangle)
+{
+    // GIVEN: a refined mesh and a dense point cloud covering it
+    point_cloud cameras;
+    for (double x = 0; x <= 20; x += 5)
+    {
+        for (double y = 0; y <= 20; y += 5)
+        {
+            cameras.emplace_back(x, y, 10);
+        }
+    }
+    MeshGraph mesh = rebuildMesh(cameras, {});
+    point_cloud testPoints;
+    for (double x = -5; x < 25; x += 0.1)
+    {
+        for (double y = -5; y < 25; y += 0.1)
+        {
+            testPoints.emplace_back(x, y, std::sin(x) * 0.5);
+        }
+    }
+    std::vector<point_cloud> clouds{testPoints};
+    refineByPointDensity(mesh, clouds, 20, 0.01, 3);
+
+    // WHEN: we count the points per triangle
+    auto stats = countPointsPerTriangle(mesh, clouds);
+
+    // THEN: each triangle appears only once
+    std::set<std::array<size_t, 3>> triangles;
+    for (const auto &[tri, s] : stats)
+    {
+        auto verts = getTriangleVertices(mesh, tri);
+        std::sort(verts.begin(), verts.end());
+        EXPECT_TRUE(triangles.insert(verts).second) << "edge " << tri.edgeId << " side " << tri.side;
+    }
 }
