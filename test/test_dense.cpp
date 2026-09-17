@@ -529,3 +529,49 @@ TEST_F(DenseStereoTest, heavy_descriptor_noise_rejects)
 
     EXPECT_EQ(result.total_points, 0) << "Heavy descriptor noise should prevent matches";
 }
+
+TEST_F(DenseStereoTest, track_with_two_features_from_one_image_rejected)
+{
+    // GIVEN: two cameras seeing a ground point, where the first image has a second, offset feature with the same
+    // descriptor so that both of its features match the same feature in the second image
+    Eigen::Vector3d cam1_pos(0, 0, 100);
+    Eigen::Vector3d cam2_pos(10, 0, 100);
+    const Eigen::Vector3d ground_point(5, 0, 0);
+
+    auto model_ptr = std::make_shared<CameraModel>(cam_model);
+    image img1;
+    img1.path = "cam1";
+    img1.model = model_ptr;
+    img1.position = cam1_pos;
+    img1.orientation = cam_ori;
+    image img2 = img1;
+    img2.path = "cam2";
+    img2.position = cam2_pos;
+
+    const Eigen::Vector2d px1 = projectPoint(ground_point, cam_model, cam1_pos, cam_ori);
+    const Eigen::Vector2d px2 = projectPoint(ground_point, cam_model, cam2_pos, cam_ori);
+    addDenseFeatures(img1, {makeFeature(px1, 7), makeFeature(px1 + Eigen::Vector2d(10, 0), 7)});
+    addDenseFeatures(img2, {makeFeature(px2, 7)});
+
+    MeasurementGraph graph;
+    graph.addNode(std::move(img1));
+    graph.addNode(std::move(img2));
+
+    std::vector<surface_model> surfaces(1);
+    surfaces[0].mesh = buildFlatMesh();
+
+    // WHEN: we densify
+    densifyMesh(graph, surfaces);
+
+    // THEN: no point is produced from the ambiguous track
+    size_t total_points = 0;
+    for (const auto &cloud : surfaces[0].cloud)
+    {
+        total_points += cloud.size();
+        for (const auto &pt : cloud)
+        {
+            ADD_FAILURE() << "Unexpected point " << pt.transpose();
+        }
+    }
+    EXPECT_EQ(total_points, 0u);
+}

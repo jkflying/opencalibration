@@ -335,3 +335,30 @@ TEST(spectral, disconnected_subgraph_spectralize)
         EXPECT_TRUE(all_a || all_b) << "cluster contains nodes from both components";
     }
 }
+
+TEST(geometry, ray_intersection_multiple_rays_uses_all_rays)
+{
+    // GIVEN: two rays crossing above the origin, and two rays crossing the same distance below it
+    std::vector<ray_d> rays{ray_d{{1, 0, 0}, {-10, 0, 1}}, ray_d{{0, 1, 0}, {0, -10, 1}},
+                            ray_d{{1, 0, 0}, {-10, 0, -1}}, ray_d{{0, 1, 0}, {0, -10, -1}}};
+
+    // WHEN: we intersect all of them
+    auto res = rayIntersection(rays);
+
+    // THEN: the result is the least squares intersection, at the origin
+    EXPECT_LT(res.first.norm(), 1e-9) << res.first.transpose();
+    EXPECT_GT(res.second, 0);
+}
+
+TEST(geometry, ray_intersection_multiple_rays_behind_camera_is_negative)
+{
+    // GIVEN: three rays passing near the origin, where the last one points away from it
+    std::vector<ray_d> rays{ray_d{{1, 0, 0}, {-10, 0, 0}}, ray_d{{0, 1, 0}, {0, -10, 0}},
+                            ray_d{{0, 0, 1}, {0.1, 0, 10}}};
+
+    // WHEN: we intersect all of them
+    auto res = rayIntersection(rays);
+
+    // THEN: the error is flagged as negative
+    EXPECT_LT(res.second, 0);
+}

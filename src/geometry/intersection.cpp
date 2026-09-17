@@ -2,6 +2,7 @@
 
 #include <opencalibration/distort/distort_keypoints.hpp>
 
+#include <Eigen/Eigenvalues>
 #include <Eigen/Geometry>
 #include <ceres/jet.h>
 #include <ceres/tiny_solver.h>
@@ -147,13 +148,40 @@ std::pair<Eigen::Vector3d, double> rayIntersection(const std::vector<ray_d> &ray
     Eigen::Vector3d res{NAN, NAN, NAN};
     double error = NAN;
 
-    if (rays.size() > 1)
+    if (rays.size() < 2)
     {
-        auto init = rayIntersection(rays[0], rays[1]);
-        res = init.first;
-        error = init.second;
+        return std::make_pair(res, error);
+    }
 
-        // TODO: better optimization taking into account multiple rays and a robust cost function
+    Eigen::Matrix3d normalEquations = Eigen::Matrix3d::Zero();
+    Eigen::Vector3d rhs = Eigen::Vector3d::Zero();
+    for (const auto &r : rays)
+    {
+        const Eigen::Vector3d dir = r.dir.normalized();
+        const Eigen::Matrix3d perpendicularProjection = Eigen::Matrix3d::Identity() - dir * dir.transpose();
+        normalEquations += perpendicularProjection;
+        rhs += perpendicularProjection * r.offset;
+    }
+
+    if (normalEquations.selfadjointView<Eigen::Lower>().eigenvalues().minCoeff() < 1e-9)
+    {
+        return std::make_pair(res, error);
+    }
+    res = normalEquations.ldlt().solve(rhs);
+
+    error = 0;
+    bool allInFront = true;
+    for (const auto &r : rays)
+    {
+        const Eigen::Vector3d dir = r.dir.normalized();
+        const Eigen::Vector3d toPoint = res - r.offset;
+        const double along = toPoint.dot(dir);
+        error += (toPoint - along * dir).squaredNorm();
+        allInFront &= along >= 0;
+    }
+    if (!allInFront)
+    {
+        error = -error;
     }
 
     return std::make_pair(res, error);

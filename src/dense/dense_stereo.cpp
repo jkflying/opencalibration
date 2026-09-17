@@ -317,11 +317,21 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
         const Eigen::Quaterniond *orientation;
     };
 
+    auto hasMultipleFeaturesFromOneImage = [&id_to_measurement](const std::vector<size_t> &ids) {
+        ankerl::unordered_dense::set<size_t> track_nodes;
+        for (size_t id : ids)
+        {
+            if (!track_nodes.insert(id_to_measurement[id].node_id).second)
+                return true;
+        }
+        return false;
+    };
+
     std::vector<std::vector<size_t>> multi_tracks;
     multi_tracks.reserve(track_ids.size());
     for (auto &[root, ids] : track_ids)
     {
-        if (ids.size() >= 2)
+        if (ids.size() >= 2 && !hasMultipleFeaturesFromOneImage(ids))
             multi_tracks.push_back(std::move(ids));
     }
 
