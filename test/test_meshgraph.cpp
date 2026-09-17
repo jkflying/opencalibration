@@ -201,3 +201,26 @@ TEST(meshgraph, long_walk_finds_containing_triangle)
     EXPECT_TRUE((lo.array() <= Eigen::Array2d(250.3, 0.2)).all() && (hi.array() >= Eigen::Array2d(250.3, 0.2)).all())
         << lo.transpose() << " / " << hi.transpose();
 }
+
+TEST(meshgraph, capped_grid_covers_all_cameras)
+{
+    // GIVEN: cameras spread densely over a distance needing more than the maximum grid size
+    point_cloud p;
+    for (double x = 0; x <= 1000; x += 0.5)
+    {
+        p.emplace_back(x, 0, 1);
+    }
+
+    // WHEN: we build the mesh
+    MeshGraph g = rebuildMesh(p, {});
+
+    // THEN: the mesh still covers all of the cameras
+    double minX = INFINITY, maxX = -INFINITY;
+    for (auto it = g.cnodebegin(); it != g.cnodeend(); ++it)
+    {
+        minX = std::min(minX, it->second.payload.location.x());
+        maxX = std::max(maxX, it->second.payload.location.x());
+    }
+    EXPECT_LE(minX, 0);
+    EXPECT_GE(maxX, 1000);
+}

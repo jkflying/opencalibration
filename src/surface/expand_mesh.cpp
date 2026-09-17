@@ -117,20 +117,20 @@ MeshGraph rebuildMesh(const point_cloud &cameraLocations, const std::vector<surf
 
     MeshGraph newGraph;
 
-    size_t rows = static_cast<size_t>(
-                      std::ceil(std::max(0., cameraMax.y() - cameraMin.y() + 2 * minBorderWidth) / gridDistance)) +
-                  1;
-    size_t cols = static_cast<size_t>(
-                      std::ceil(std::max(0., cameraMax.x() - cameraMin.x() + 2 * minBorderWidth) / gridDistance)) +
-                  1;
+    const double spanX = std::max(0., cameraMax.x() - cameraMin.x() + 2 * minBorderWidth);
+    const double spanY = std::max(0., cameraMax.y() - cameraMin.y() + 2 * minBorderWidth);
+    auto gridSize = [&](double span) { return static_cast<size_t>(std::ceil(span / gridDistance)) + 1; };
 
-    if (rows > 1000 || cols > 1000)
+    constexpr size_t MAX_GRID_SIZE = 1000;
+    if (gridSize(spanX) > MAX_GRID_SIZE || gridSize(spanY) > MAX_GRID_SIZE)
     {
-        spdlog::warn("Mesh grid too large: {}x{}, capping to 1000. gridDistance: {}, medianHeight: {}", rows, cols,
-                     gridDistance, medianHeight);
-        rows = std::min<size_t>(rows, 1000);
-        cols = std::min<size_t>(cols, 1000);
+        const double cappedGridDistance = std::max(spanX, spanY) / (MAX_GRID_SIZE - 1);
+        spdlog::warn("Mesh grid too large: {}x{}, capping to {}. gridDistance: {} -> {}, medianHeight: {}",
+                     gridSize(spanY), gridSize(spanX), MAX_GRID_SIZE, gridDistance, cappedGridDistance, medianHeight);
+        gridDistance = cappedGridDistance;
     }
+    const size_t rows = std::min(gridSize(spanY), MAX_GRID_SIZE);
+    const size_t cols = std::min(gridSize(spanX), MAX_GRID_SIZE);
 
     spdlog::debug("Rebuilding mesh with {}x{} grid", rows, cols);
 
