@@ -202,6 +202,31 @@ TEST(meshgraph, long_walk_finds_containing_triangle)
         << lo.transpose() << " / " << hi.transpose();
 }
 
+TEST(meshgraph, reinit_resumes_from_last_intersection)
+{
+    // GIVEN: a long flat mesh, with a searcher which found an intersection far from the grid corner then missed
+    point_cloud p;
+    for (int i = 0; i < 300; i++)
+    {
+        p.emplace_back(i, 0, 1);
+    }
+    MeshGraph g = rebuildMesh(p, {});
+    MeshIntersectionSearcher s;
+    ASSERT_TRUE(s.init(g));
+    ASSERT_EQ(s.triangleIntersect({{0, 0, 1}, {250.3, 0.2, 5}}).type,
+              MeshIntersectionSearcher::IntersectionInfo::INTERSECTION);
+    ASSERT_NE(s.triangleIntersect({{0, 0, 1}, {250.3, 1e6, 5}}).type,
+              MeshIntersectionSearcher::IntersectionInfo::INTERSECTION);
+
+    // WHEN: we reinit and intersect near the last intersection
+    ASSERT_TRUE(s.reinit());
+    const auto &result = s.triangleIntersect({{0, 0, 1}, {251.3, 0.2, 5}});
+
+    // THEN: the walk starts near the last intersection
+    ASSERT_EQ(result.type, MeshIntersectionSearcher::IntersectionInfo::INTERSECTION);
+    EXPECT_LT(result.steps, 10u);
+}
+
 TEST(meshgraph, capped_grid_covers_all_cameras)
 {
     // GIVEN: cameras spread densely over a distance needing more than the maximum grid size

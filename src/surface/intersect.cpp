@@ -9,6 +9,10 @@ namespace opencalibration
 {
 bool MeshIntersectionSearcher::init(const MeshGraph &meshGraph, const IntersectionInfo &info)
 {
+    if (_meshGraph != &meshGraph)
+    {
+        _lastIntersection = {};
+    }
     _meshGraph = &meshGraph;
     _info = info;
 
@@ -50,7 +54,7 @@ bool MeshIntersectionSearcher::init(const MeshGraph &meshGraph, const Intersecti
 
 bool MeshIntersectionSearcher::reinit()
 {
-    return init(*_meshGraph);
+    return init(*_meshGraph, _lastIntersection);
 }
 
 const MeshIntersectionSearcher::IntersectionInfo &MeshIntersectionSearcher::triangleIntersect(const ray_d &r)
@@ -106,6 +110,7 @@ const MeshIntersectionSearcher::IntersectionInfo &MeshIntersectionSearcher::tria
         if (edgeIndex == 3)
         {
             _info.type = IntersectionInfo::INTERSECTION;
+            _lastIntersection = _info;
             break;
         }
 

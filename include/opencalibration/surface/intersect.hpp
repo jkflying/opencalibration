@@ -46,8 +46,9 @@ class MeshIntersectionSearcher
     }
 
   private:
-    const MeshGraph *_meshGraph;
+    const MeshGraph *_meshGraph = nullptr;
     IntersectionInfo _info;
+    IntersectionInfo _lastIntersection;
 
     std::vector<size_t> _keepNodes;
 };
