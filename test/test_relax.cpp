@@ -546,7 +546,30 @@ class TestRelaxProblem : public RelaxProblem
     {
         return _summary;
     }
+
+    size_t test_num_grid_filtered_matches(size_t node_id, size_t edge_id)
+    {
+        return _grid_filter[node_id][edge_id].getBestMeasurementsPerCell().size();
+    }
 };
+
+TEST_F(relax_group, measurement_3_images_plane_with_uninitialized_image)
+{
+    // GIVEN: a graph, 3 images with edges between them all, where the first image has no pose yet
+    init_cameras();
+    add_point_measurements(generate_planar_points());
+    graph.getNode(id[0])->payload.position.fill(NAN);
+    std::vector<NodePose> initialized_poses{np[1], np[2]};
+
+    // WHEN: we set up the problem with the edges in an order starting at the uninitialized image
+    ankerl::unordered_dense::set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
+    TestRelaxProblem rp;
+    rp.setupGroundPlaneProblem(graph, initialized_poses, cam_models, edges, {Option::ORIENTATION});
+
+    // THEN: the edge between the initialized images still has its matches filtered
+    EXPECT_GT(rp.test_num_grid_filtered_matches(id[1], edge_id[1]), 0);
+    EXPECT_GT(rp.test_num_grid_filtered_matches(id[2], edge_id[1]), 0);
+}
 
 TEST_F(relax_group, measurement_3_images_points_internals_point_triangulation_exact)
 {

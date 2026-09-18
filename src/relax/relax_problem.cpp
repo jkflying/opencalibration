@@ -249,7 +249,7 @@ void RelaxProblem::gridFilterMatchesPerImage(const MeasurementGraph &graph,
         pkg.dest = nodeid2poseopt(graph, edge.getDest());
 
         if (pkg.source.loc_ptr == nullptr || pkg.dest.loc_ptr == nullptr)
-            return;
+            continue;
 
         const auto &source_model = *graph.getNode(edge.getSource())->payload.model;
         const auto &dest_model = *graph.getNode(edge.getDest())->payload.model;
