@@ -3,6 +3,7 @@
 #include <opencalibration/geometry/utils.hpp>
 
 #include <iostream>
+#include <limits>
 
 #include <ankerl/unordered_dense.h>
 #include <set>
@@ -102,6 +103,7 @@ template <> class Serializer<MeshGraph>
         std::transform(graph.cnodebegin(), graph.cnodeend(), std::back_inserter(sortedNodes),
                        [](const auto &iter) { return iter.first; });
         std::sort(sortedNodes.begin(), sortedNodes.end());
+        const auto originalPrecision = out.precision(std::numeric_limits<double>::max_digits10);
         for (size_t node_id : sortedNodes)
         {
             const auto &node = *graph.getNode(node_id);
@@ -109,6 +111,7 @@ template <> class Serializer<MeshGraph>
             const auto &loc = node.payload.location;
             out << loc[0] << " " << loc[1] << " " << loc[2] << " " << node_id << newline;
         }
+        out.precision(originalPrecision);
 
         std::vector<std::array<size_t, 3>> sortedFaces(faces.begin(), faces.end());
         std::sort(sortedFaces.begin(), sortedFaces.end());

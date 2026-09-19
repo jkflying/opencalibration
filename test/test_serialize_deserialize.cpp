@@ -94,6 +94,24 @@ TEST(serialize_meshgraph, simple_surface)
     }
 }
 
+TEST(serialize_meshgraph, full_precision_locations)
+{
+    // GIVEN: a mesh with locations needing full double precision
+    MeshGraph g;
+    point_cloud p{Eigen::Vector3d(0, 0, 0), Eigen::Vector3d(1234567.123456789, 1.0 / 3, M_PI)};
+    g = rebuildMesh(p, {surface_model{{}, g}});
+
+    // WHEN: we write it to a string and read it back
+    std::ostringstream osstream;
+    EXPECT_TRUE(serialize(g, osstream));
+    std::istringstream isstream(osstream.str());
+    MeshGraph deserialized;
+    EXPECT_TRUE(deserialize(isstream, deserialized));
+
+    // THEN: the locations should be exactly the same
+    EXPECT_EQ(g, deserialized);
+}
+
 TEST(serialize_meshgraph, complex_uniform_surface)
 {
     MeshGraph g;
