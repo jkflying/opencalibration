@@ -168,6 +168,7 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
 
     std::atomic<size_t> images_done{0};
     std::mutex uf_mutex;
+    std::mutex progress_mutex;
     UnionFind uf(id_to_measurement.size());
 
     const int num_nodes = static_cast<int>(node_ids.size());
@@ -292,6 +293,7 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
         size_t done = ++images_done;
         if (progress_cb && done % 10 == 0)
         {
+            std::lock_guard<std::mutex> lock(progress_mutex);
             progress_cb(static_cast<float>(done) / static_cast<float>(num_nodes));
         }
     }

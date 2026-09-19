@@ -6,7 +6,9 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <random>
+#include <thread>
 
 using namespace opencalibration;
 
@@ -574,4 +576,40 @@ TEST_F(DenseStereoTest, track_with_two_features_from_one_image_rejected)
         }
     }
     EXPECT_EQ(total_points, 0u);
+}
+
+TEST_F(DenseStereoTest, progress_callback_not_called_concurrently)
+{
+    // GIVEN: many images with dense features
+    MeasurementGraph graph;
+    auto model_ptr = std::make_shared<CameraModel>(cam_model);
+    for (int i = 0; i < 200; i++)
+    {
+        image img;
+        img.path = "cam" + std::to_string(i);
+        img.model = model_ptr;
+        img.position = Eigen::Vector3d(i * 1000, 0, 100);
+        img.orientation = cam_ori;
+        feature_2d f;
+        f.location = Eigen::Vector2d(100, 100);
+        img.features.push_back(f);
+        graph.addNode(std::move(img));
+    }
+    std::vector<surface_model> surfaces(1);
+    surfaces[0].mesh = buildFlatMesh();
+
+    // WHEN: we densify with a slow progress callback
+    std::atomic<int> in_callback{0};
+    std::atomic<bool> overlapped{false};
+    densifyMesh(graph, surfaces, [&](float) {
+        if (++in_callback > 1)
+        {
+            overlapped = true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        --in_callback;
+    });
+
+    // THEN: the callback was never running on two threads at once
+    EXPECT_FALSE(overlapped);
 }
