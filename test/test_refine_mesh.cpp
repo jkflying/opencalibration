@@ -586,6 +586,29 @@ TEST(refine_mesh, refine_by_point_density)
               << " edges, " << countTriangles(mesh) << " triangles" << std::endl;
 }
 
+TEST(refine_mesh, refine_by_point_density_skips_triangles_already_split)
+{
+    // GIVEN: a two triangle mesh with enough points in both triangles to need refinement
+    point_cloud cameras{Eigen::Vector3d(0, 0, 10), Eigen::Vector3d(10, 10, 10)};
+    MeshGraph mesh = buildMinimalMesh(cameras, {});
+    ASSERT_EQ(countTriangles(mesh), 2);
+    point_cloud points;
+    for (double x = 0.25; x < 10; x += 0.5)
+    {
+        for (double y = 0.25; y < 10; y += 0.5)
+        {
+            points.emplace_back(x, y, std::sin(x) * std::cos(y));
+        }
+    }
+
+    // WHEN: we refine for a single iteration
+    refineByPointDensity(mesh, {points}, 20, 0.0, 1);
+
+    // THEN: bisecting the shared diagonal splits both triangles once, with no further refinement of the halves
+    EXPECT_EQ(mesh.size_nodes(), 5);
+    EXPECT_EQ(countTriangles(mesh), 4);
+}
+
 TEST(refine_mesh, variance_filters_coplanar_points)
 {
     MeshGraph mesh;

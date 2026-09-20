@@ -730,15 +730,15 @@ size_t refineByPointDensity(MeshGraph &mesh, const std::vector<point_cloud> &poi
     {
         auto stats = countPointsPerTriangle(mesh, points);
 
-        std::vector<TriangleId> toRefine;
+        std::vector<std::pair<TriangleId, std::array<size_t, 3>>> toRefine;
         size_t skippedSmall = 0;
         for (const auto &[tri, s] : stats)
         {
             if (s.count > maxPointsPerTriangle && s.distanceVariance > minDistanceVariance)
             {
+                const auto verts = getTriangleVertices(mesh, tri);
                 if (minTriangleSizeMeters > 0.0)
                 {
-                    auto verts = getTriangleVertices(mesh, tri);
                     const auto *n0 = mesh.getNode(verts[0]);
                     const auto *n1 = mesh.getNode(verts[1]);
                     const auto *n2 = mesh.getNode(verts[2]);
@@ -758,7 +758,7 @@ size_t refineByPointDensity(MeshGraph &mesh, const std::vector<point_cloud> &poi
                         }
                     }
                 }
-                toRefine.push_back(tri);
+                toRefine.emplace_back(tri, verts);
                 spdlog::debug("refineByPointDensity: triangle (edge={}, side={}) has {} points, variance {}",
                               tri.edgeId, tri.side, s.count, s.distanceVariance);
             }
@@ -776,13 +776,11 @@ size_t refineByPointDensity(MeshGraph &mesh, const std::vector<point_cloud> &poi
                      toRefine.size(), maxPointsPerTriangle);
 
         size_t createdThisIter = 0;
-        for (const auto &tri : toRefine)
+        for (const auto &[tri, queuedVerts] : toRefine)
         {
-            // Triangle may have been invalidated by previous refinement
-            auto verts = getTriangleVertices(mesh, tri);
-            if (verts[0] == 0 && verts[1] == 0 && verts[2] == 0)
+            if (getTriangleVertices(mesh, tri) != queuedVerts)
             {
-                spdlog::debug("refineByPointDensity: skipping invalidated triangle (edge={}, side={})", tri.edgeId,
+                spdlog::debug("refineByPointDensity: skipping triangle already split (edge={}, side={})", tri.edgeId,
                               tri.side);
                 continue;
             }
