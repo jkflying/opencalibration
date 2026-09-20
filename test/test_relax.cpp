@@ -571,6 +571,22 @@ TEST_F(relax_group, measurement_3_images_plane_with_uninitialized_image)
     EXPECT_GT(rp.test_num_grid_filtered_matches(id[2], edge_id[1]), 0);
 }
 
+TEST_F(relax_group, measurement_3_images_points_without_orientation)
+{
+    // GIVEN: a graph, 3 images with edges between them all
+    init_cameras();
+    add_point_measurements(generate_3d_points());
+
+    // WHEN: we set up a 3D point problem without optimizing orientation
+    ankerl::unordered_dense::set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
+    TestRelaxProblem rp;
+    rp.setup3dPointProblem(graph, np, cam_models, edges, {Option::POINTS_3D});
+
+    // THEN: the matches were available, but no point measurements were added
+    EXPECT_GT(rp.test_num_grid_filtered_matches(id[0], edge_id[0]), 0);
+    EXPECT_TRUE(rp.test_get_tracks().empty());
+}
+
 TEST_F(relax_group, measurement_3_images_points_internals_point_triangulation_exact)
 {
     // GIVEN: a graph, 3 images with edges between them all, with zero noise

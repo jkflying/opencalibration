@@ -949,6 +949,12 @@ void RelaxProblem::relaxObservedModelOnly()
 void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_t edge_id,
                                             const MeasurementGraph::Edge &edge, const RelaxOptionSet &options)
 {
+    if (!options.hasAll({Option::ORIENTATION, Option::POINTS_3D}))
+    {
+        spdlog::critical("No viable bundle options found");
+        return;
+    }
+
     auto &points = _edge_tracks[edge_id];
     points.reserve(edge.payload.inlier_matches.size());
 
@@ -1037,7 +1043,7 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
                 args[i] = {orientation_ptrs[i], points.back().point.data(), focals[i], principals[i]};
             }
         }
-        else if (options.hasAll({Option::ORIENTATION, Option::POINTS_3D}))
+        else
         {
             func[0].reset(newAutoDiffPixelErrorCost_Orientation(*pkg.source.loc_ptr, source_model, inlier.pixel_1));
             func[1].reset(newAutoDiffPixelErrorCost_Orientation(*pkg.dest.loc_ptr, dest_model, inlier.pixel_2));
@@ -1046,10 +1052,6 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
             {
                 args[i] = {orientation_ptrs[i], points.back().point.data()};
             }
-        }
-        else
-        {
-            spdlog::critical("No viable bundle options found");
         }
 
         bool all_finite = true;
