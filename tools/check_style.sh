@@ -20,7 +20,7 @@ NEEDS_FORMAT=0
 for file in $FILES; do
     if [ -n "$file" ]; then
         # --dry-run -Werror returns non-zero if the file would be changed
-        if ! clang-format-14 -style='{BasedOnStyle: Microsoft}' --dry-run -Werror "$file" 2>/dev/null; then
+        if ! clang-format-18 -style='{BasedOnStyle: Microsoft}' --dry-run -Werror "$file" 2>/dev/null; then
             echo "Needs formatting: $file"
             NEEDS_FORMAT=1
         fi
