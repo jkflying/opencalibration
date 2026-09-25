@@ -14,11 +14,13 @@
 #include <ceres/loss_function.h>
 #include <ceres/manifold.h>
 #include <ceres/problem.h>
+#include <ceres/product_manifold.h>
 #include <ceres/solver.h>
 #include <spdlog/spdlog.h>
 
 #include <ankerl/unordered_dense.h>
 
+#include <array>
 #include <map>
 
 namespace opencalibration
@@ -32,6 +34,7 @@ struct OptimizationPackage
     {
         Eigen::Vector3d *loc_ptr = nullptr;
         Eigen::Quaterniond *rot_ptr = nullptr;
+        double *pose_ptr = nullptr;
         CameraModel *model_ptr = nullptr;
         bool optimize = true;
         size_t node_id = 0;
@@ -73,6 +76,9 @@ class RelaxProblem
     OptimizationPackage::PoseOpt nodeid2poseopt(const MeasurementGraph &graph, size_t node_id,
                                                 bool load_cam_model = true);
 
+    double *poseBlock(size_t node_id, const Eigen::Quaterniond &orientation, const Eigen::Vector3d &position);
+    void setPoseParameterization(double *pose, bool optimize, const RelaxOptionSet &options);
+
     void addRelationCost(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge);
 
     void gridFilterMatchesPerImage(const MeasurementGraph &graph,
@@ -93,7 +99,8 @@ class RelaxProblem
     void initializeGroundPlane();
     void initializeGroundMesh(const std::vector<surface_model> &previousSurfaces, bool useMinimalMesh = false);
 
-    void addDownwardsPrior();
+    void addDownwardsPrior(const RelaxOptionSet &options);
+    void addGPSPositionPrior(const MeasurementGraph &graph, const RelaxOptionSet &options, bool pixel_residuals);
     void addMeshFlatPrior();
     void addMeshSmoothPrior();
 
@@ -105,7 +112,9 @@ class RelaxProblem
     ceres::LossFunctionWrapper _loss;
 
     ceres::Problem::Options _problemOptions;
-    ceres::EigenQuaternionManifold _quat_parameterization;
+    ceres::ProductManifold<ceres::EigenQuaternionManifold, ceres::EuclideanManifold<3>> _pose_parameterization;
+    ceres::ProductManifold<ceres::EigenQuaternionManifold, ceres::SubsetManifold>
+        _pose_fixed_position_parameterization;
 
     ceres::SubsetManifold _brown2_parameterization;
     ceres::SubsetManifold _brown24_parameterization;
@@ -121,6 +130,7 @@ class RelaxProblem
     ceres::Solver _solver;
 
     ankerl::unordered_dense::map<size_t, NodePose *> _nodes_to_optimize;
+    std::map<size_t, std::array<double, 7>> _pose_blocks;
     ankerl::unordered_dense::map<size_t, CameraModel *> _cam_models_to_optimize;
     std::map<size_t, InverseDifferentiableCameraModel<double>> _inverse_cam_model_to_optimize;
     ankerl::unordered_dense::set<size_t> _edges_used;

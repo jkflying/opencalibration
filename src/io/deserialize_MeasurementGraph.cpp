@@ -64,6 +64,15 @@ template <> class Deserializer<MeasurementGraph>
                         img.position[i] = position[i].GetDouble();
                     }
 
+                    if (node_member.value.GetObject().HasMember("gps_position"))
+                    {
+                        const auto &gps_position = node_member.value.GetObject()["gps_position"].GetArray();
+                        for (int i = 0; i < 3; i++)
+                        {
+                            img.gps_position[i] = gps_position[i].GetDouble();
+                        }
+                    }
+
                     const auto &orientation = node_member.value.GetObject()["orientation"].GetArray();
                     for (int i = 0; i < 4; i++)
                     {

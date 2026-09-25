@@ -249,6 +249,14 @@ template <> class Serializer<MeasurementGraph>
                 }
                 writer.EndArray();
 
+                writer.Key("gps_position");
+                writer.StartArray();
+                for (int i = 0; i < 3; i++)
+                {
+                    writer.Double(node.payload.gps_position[i]);
+                }
+                writer.EndArray();
+
                 writer.Key("orientation");
                 writer.StartArray();
                 for (int i = 0; i < 4; i++)

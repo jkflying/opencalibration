@@ -24,6 +24,7 @@ struct image
     std::vector<feature_2d> features;
     size_t num_sparse_features = 0;
     RGBRaster thumbnail;
+    Eigen::Vector3d gps_position{NAN, NAN, NAN};
 
     // Things to discover and optimize
     std::shared_ptr<CameraModel> model;
@@ -40,10 +41,12 @@ struct image
         bool mod = (model == other.model) || (model != nullptr && other.model != nullptr && *model == *other.model);
         bool pos =
             (position.array().isNaN().all() && other.position.array().isNaN().all()) || position == other.position;
+        bool gps = (gps_position.array().isNaN().all() && other.gps_position.array().isNaN().all()) ||
+                   gps_position == other.gps_position;
         bool ori = (orientation.coeffs().array().isNaN().all() && other.orientation.coeffs().array().isNaN().all()) ||
                    orientation.coeffs() == other.orientation.coeffs();
 
-        return pat && met && thu && feat && nsfeat && mod && pos && ori;
+        return pat && met && thu && feat && nsfeat && mod && pos && gps && ori;
     }
 };
 } // namespace opencalibration

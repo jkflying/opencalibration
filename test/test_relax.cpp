@@ -52,6 +52,7 @@ struct relax_group : public ::testing::Test
             image img;
             img.orientation = ground_ori[i];
             img.position = ground_pos[i];
+            img.gps_position = ground_pos[i];
             img.model = model;
             id[i] = graph.addNode(std::move(img));
             np.emplace_back(NodePose{id[i], ground_ori[i], ground_pos[i]});
@@ -166,6 +167,14 @@ struct relax_group : public ::testing::Test
     }
 };
 
+static std::array<double, 7> packPose(const Eigen::Quaterniond &q, const Eigen::Vector3d &p)
+{
+    std::array<double, 7> pose;
+    Eigen::Map<Eigen::Quaterniond>(pose.data()) = q;
+    Eigen::Map<Eigen::Vector3d>(pose.data() + 4) = p;
+    return pose;
+}
+
 TEST_F(relax_group, downwards_prior_cost_function)
 {
     // GIVEN: a starting angle
@@ -174,14 +183,14 @@ TEST_F(relax_group, downwards_prior_cost_function)
     // WHEN: we get the cost of the downwards prior
     PointsDownwardsPrior p(1e-3);
     double r = NAN;
-    EXPECT_TRUE(p(q.coeffs().data(), &r));
+    EXPECT_TRUE(p(packPose(q, Eigen::Vector3d::Zero()).data(), &r));
 
     // THEN: it should be the amount away from vertical
     EXPECT_NEAR(r, 0, 1e-8);
 
     // WHEN: we shift it 0.3 rad away from vertical
     q = q * Eigen::AngleAxisd(0.3, Eigen::Vector3d::UnitX());
-    EXPECT_TRUE(p(q.coeffs().data(), &r));
+    EXPECT_TRUE(p(packPose(q, Eigen::Vector3d::Zero()).data(), &r));
 
     // THEN: it should have a residual of 0.3 * weight
     EXPECT_NEAR(r, 0.3 * 1e-3, 1e-9);
@@ -253,13 +262,13 @@ TEST_F(relax_group, rel_rot_cost_function)
     init_cameras();
     Eigen::Quaterniond rel_rot = ground_ori[1] * ground_ori[0].inverse();
     Eigen::Vector3d rel_pos = ground_ori[0].inverse() * (ground_pos[1] - ground_pos[0]);
-    DecomposedRotationCost cost(rel_rot, rel_pos, &ground_pos[0], &ground_pos[1], 8);
+    DecomposedRotationCost cost(rel_rot, rel_pos, 8);
 
     {
         // WHEN: we get the relative orientation cost with a perfect guess
         Eigen::Quaterniond q[2]{ground_ori[0], ground_ori[1]};
         double r[3]{NAN, NAN, NAN};
-        bool success = cost(q[0].coeffs().data(), q[1].coeffs().data(), r);
+        bool success = cost(packPose(q[0], ground_pos[0]).data(), packPose(q[1], ground_pos[1]).data(), r);
 
         // THEN: they should have residuals of 0
         EXPECT_TRUE(success);
@@ -272,7 +281,7 @@ TEST_F(relax_group, rel_rot_cost_function)
         // WHEN: we get a relative orientation cost with a fixed offset guess
         Eigen::Quaterniond q[2]{ground_ori[0] * Eigen::AngleAxisd(0.3, Eigen::Vector3d::UnitZ()), ground_ori[1]};
         double r[3]{NAN, NAN, NAN};
-        bool success = cost(q[0].coeffs().data(), q[1].coeffs().data(), r);
+        bool success = cost(packPose(q[0], ground_pos[0]).data(), packPose(q[1], ground_pos[1]).data(), r);
 
         // THEN: we should get that fixed offset as the residuals
         EXPECT_TRUE(success);
@@ -285,7 +294,7 @@ TEST_F(relax_group, rel_rot_cost_function)
         // WHEN: we get a relative orientation cost with a fixed offset guess
         Eigen::Quaterniond q[2]{ground_ori[0], ground_ori[1] * Eigen::AngleAxisd(-0.3, Eigen::Vector3d::UnitZ())};
         double r[3]{NAN, NAN, NAN};
-        bool success = cost(q[0].coeffs().data(), q[1].coeffs().data(), r);
+        bool success = cost(packPose(q[0], ground_pos[0]).data(), packPose(q[1], ground_pos[1]).data(), r);
 
         // THEN: we should get that fixed offset as the residuals
         EXPECT_TRUE(success);
@@ -293,6 +302,78 @@ TEST_F(relax_group, rel_rot_cost_function)
         EXPECT_NEAR(r[1], 0.3, 1e-12);
         EXPECT_NEAR(r[2], 0.3, 1e-12);
     }
+
+    {
+        // WHEN: we double the baseline along its direction
+        const Eigen::Vector3d far_pos = ground_pos[0] + 2 * (ground_pos[1] - ground_pos[0]);
+        double r[3]{NAN, NAN, NAN};
+        bool success = cost(packPose(ground_ori[0], ground_pos[0]).data(), packPose(ground_ori[1], far_pos).data(), r);
+
+        // THEN: the residuals should be unchanged, only the translation direction matters
+        EXPECT_TRUE(success);
+        EXPECT_NEAR(r[0], 0., 1e-5);
+        EXPECT_NEAR(r[1], 0., 1e-5);
+        EXPECT_NEAR(r[2], 0., 1e-12);
+    }
+
+    {
+        // WHEN: we move the second camera perpendicular to the baseline
+        const Eigen::Vector3d side_pos = ground_pos[1] + Eigen::Vector3d(0, 2, 0);
+        double r[3]{NAN, NAN, NAN};
+        bool success =
+            cost(packPose(ground_ori[0], ground_pos[0]).data(), packPose(ground_ori[1], side_pos).data(), r);
+
+        // THEN: the translation direction residuals should pick it up
+        EXPECT_TRUE(success);
+        EXPECT_GT(std::abs(r[0]) + std::abs(r[1]), 0.1);
+    }
+}
+
+TEST_F(relax_group, pixel_error_cost_function)
+{
+    // GIVEN: a camera and a pixel measurement of a known 3D point
+    init_cameras();
+    const Eigen::Vector3d point(10, 10, -10);
+    const Eigen::Vector2d pixel = image_from_3d(point, *model, ground_pos[0], ground_ori[0]);
+    PixelErrorCost_Orientation cost(*model, pixel);
+
+    {
+        // WHEN: we evaluate at the true pose
+        double r[2]{NAN, NAN};
+        EXPECT_TRUE(cost(packPose(ground_ori[0], ground_pos[0]).data(), point.data(), r));
+
+        // THEN: the residuals should be zero
+        EXPECT_NEAR(r[0], 0., 1e-9);
+        EXPECT_NEAR(r[1], 0., 1e-9);
+    }
+
+    {
+        // WHEN: we move the camera position in the pose block
+        const Eigen::Vector3d moved = ground_pos[0] + Eigen::Vector3d(0.5, -0.3, 0.2);
+        double r[2]{NAN, NAN};
+        EXPECT_TRUE(cost(packPose(ground_ori[0], moved).data(), point.data(), r));
+
+        // THEN: the residuals should be the reprojection from the moved camera
+        const Eigen::Vector2d expected = image_from_3d(point, *model, moved, ground_ori[0]) - pixel;
+        EXPECT_GT(expected.norm(), 1);
+        EXPECT_NEAR(r[0], expected.x(), 1e-9);
+        EXPECT_NEAR(r[1], expected.y(), 1e-9);
+    }
+}
+
+TEST_F(relax_group, gps_position_prior_cost_function)
+{
+    // GIVEN: a GPS prior with 2m horizontal and 4m vertical sigma
+    GPSPositionPrior prior(Eigen::Vector3d(10, 20, 30), 1 / 2., 1 / 4.);
+
+    // WHEN: the camera sits 1m east, 2m north and 4m above the GPS position
+    double r[3]{NAN, NAN, NAN};
+    EXPECT_TRUE(prior(packPose(Eigen::Quaterniond::Identity(), Eigen::Vector3d(11, 22, 34)).data(), r));
+
+    // THEN: the residuals should be weighted per axis
+    EXPECT_NEAR(r[0], 0.5, 1e-12);
+    EXPECT_NEAR(r[1], 1.0, 1e-12);
+    EXPECT_NEAR(r[2], 1.0, 1e-12);
 }
 
 TEST_F(relax_group, no_images)
@@ -431,6 +512,46 @@ TEST_F(relax_group, measurement_3_images_plane)
         EXPECT_LT(Eigen::AngleAxisd(np[i].orientation.inverse() * ground_ori[i]).angle(), 1e-3)
             << i << ": " << np[i].orientation.coeffs().transpose() << std::endl
             << "g: " << ground_ori[i].coeffs().transpose();
+
+    // AND: the positions should not move, since they aren't being optimized
+    for (int i = 0; i < 3; i++)
+        EXPECT_EQ(np[i].position, ground_pos[i]) << i;
+}
+
+TEST_F(relax_group, measurement_3_images_plane_position)
+{
+    // GIVEN: a graph, 3 images with edges between them all, then with their rotation and one position disturbed
+    init_cameras();
+    add_point_measurements(generate_planar_points());
+    add_ori_noise({-0.1, 0.1, 0.1});
+    np[1].position += Eigen::Vector3d(0.3, -0.2, 0.5);
+
+    // WHEN: we relax them with position enabled, anchored by the GPS prior
+    ankerl::unordered_dense::set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
+    relax(graph, np, cam_models, edges, {Option::ORIENTATION, Option::POSITION, Option::GROUND_PLANE}, {});
+    // and again to re-init the inliers
+    relax(graph, np, cam_models, edges, {Option::ORIENTATION, Option::POSITION, Option::GROUND_PLANE}, {});
+
+    // THEN: the relative poses should be recovered
+    for (int i = 1; i < 3; i++)
+    {
+        const Eigen::Quaterniond rel_ori = np[0].orientation.inverse() * np[i].orientation;
+        const Eigen::Quaterniond ground_rel_ori = ground_ori[0].inverse() * ground_ori[i];
+        EXPECT_LT(Eigen::AngleAxisd(rel_ori.inverse() * ground_rel_ori).angle(), 1e-3) << i;
+
+        const Eigen::Vector3d rel_dir = (np[0].orientation.inverse() * (np[i].position - np[0].position)).normalized();
+        const Eigen::Vector3d ground_rel_dir =
+            (ground_ori[0].inverse() * (ground_pos[i] - ground_pos[0])).normalized();
+        EXPECT_LT((rel_dir - ground_rel_dir).norm(), 1e-3)
+            << i << ": " << rel_dir.transpose() << std::endl
+            << "g: " << ground_rel_dir.transpose();
+    }
+
+    // AND: the positions should stay within the GPS uncertainty
+    for (int i = 0; i < 3; i++)
+        EXPECT_LT((np[i].position - ground_pos[i]).norm(), 0.5)
+            << i << ": " << np[i].position.transpose() << std::endl
+            << "g: " << ground_pos[i].transpose();
 }
 
 TEST_F(relax_group, measurement_3_images_mesh_radial)

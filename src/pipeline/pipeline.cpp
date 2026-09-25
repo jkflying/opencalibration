@@ -644,6 +644,7 @@ Pipeline::Impl::Transition Pipeline::Impl::camera_parameter_relax()
                    Option::LENS_DISTORTIONS_RADIAL_BROWN246_PARAMETERIZATION};
         break;
     }
+    options.set(Option::POSITION, true);
 
     relax_stage->init(graph, {}, imageGPSLocations, true, false, options);
     relax_stage->trim_groups(1);
@@ -667,7 +668,8 @@ Pipeline::Impl::Transition Pipeline::Impl::final_global_relax()
 
     const bool lastIteration = stateRunCount() >= FINAL_RELAX_MAX_ITERATIONS;
 
-    relax_stage->init(graph, {}, imageGPSLocations, true, lastIteration, {Option::ORIENTATION, Option::GROUND_MESH});
+    relax_stage->init(graph, {}, imageGPSLocations, true, lastIteration,
+                      {Option::ORIENTATION, Option::POSITION, Option::GROUND_MESH});
 
     fvec relax_funcs = relax_stage->get_runners(graph);
     run_parallel(relax_funcs, parallelism);

@@ -18,22 +18,24 @@ template <typename T> T angleBetweenUnitVectors(const Eigen::Matrix<T, 3, 1> &n1
     return acos(std::clamp<T>(n1.dot(n2), T(-1 + 1e-12), T(1 - 1e-12)));
 }
 
+static constexpr int POSE_PARAMETERS = 7;
+
 struct PointsDownwardsPrior
 {
     static const int NUM_RESIDUALS = 1;
-    static const int NUM_PARAMETERS_1 = 4;
+    static const int NUM_PARAMETERS_1 = POSE_PARAMETERS;
 
     PointsDownwardsPrior(double weight) : _weight(weight)
     {
     }
 
-    template <typename T> bool operator()(const T *rotation1, T *residuals) const
+    template <typename T> bool operator()(const T *pose1, T *residuals) const
     {
         using QuaterionT = Eigen::Quaternion<T>;
         using Vector3T = Eigen::Matrix<T, 3, 1>;
         using QuaterionTCM = Eigen::Map<const QuaterionT>;
 
-        const QuaterionTCM rotation_em(rotation1);
+        const QuaterionTCM rotation_em(pose1);
 
         const Vector3T cam_center = Eigen::Vector3d(0, 0, 1).cast<T>();
         const Vector3T down = Eigen::Vector3d(0, 0, -1).cast<T>();
@@ -66,6 +68,34 @@ struct DifferenceCost
 
   private:
     const double _weight;
+};
+
+struct GPSPositionPrior
+{
+    static const int NUM_RESIDUALS = 3;
+    static const int NUM_PARAMETERS_1 = POSE_PARAMETERS;
+
+    GPSPositionPrior(const Eigen::Vector3d &gps_position, double horizontal_weight, double vertical_weight)
+        : _gps_position(gps_position), _weights(horizontal_weight, horizontal_weight, vertical_weight)
+    {
+    }
+
+    template <typename T> bool operator()(const T *pose, T *residuals) const
+    {
+        using Vector3T = Eigen::Matrix<T, 3, 1>;
+        using Vector3TCM = Eigen::Map<const Vector3T>;
+        using Vector3TM = Eigen::Map<Vector3T>;
+
+        const Vector3TCM position_em(pose + 4);
+
+        Vector3TM residuals_m(residuals);
+        residuals_m = _weights.cast<T>().cwiseProduct(position_em - _gps_position.cast<T>());
+        return true;
+    }
+
+  private:
+    const Eigen::Vector3d _gps_position;
+    const Eigen::Vector3d _weights;
 };
 
 constexpr int ROBUST_CENTROID_MAX_POINTS = 5;
@@ -188,41 +218,41 @@ struct DistortionMonotonicityCost
 struct DecomposedRotationCost
 {
     static const int NUM_RESIDUALS = 3;
-    static const int NUM_PARAMETERS_1 = 4;
-    static const int NUM_PARAMETERS_2 = 4;
+    static const int NUM_PARAMETERS_1 = POSE_PARAMETERS;
+    static const int NUM_PARAMETERS_2 = POSE_PARAMETERS;
 
     DecomposedRotationCost(const Eigen::Quaterniond &relative_rotation, const Eigen::Vector3d &relative_translation,
-                           const Eigen::Vector3d *translation1, const Eigen::Vector3d *translation2, int score)
-        :
-
-          _has_translation((*translation2 - *translation1).squaredNorm() > 1e-9 &&
-                           relative_translation.squaredNorm() > 1e-9),
+                           int score)
+        : _has_relative_translation(relative_translation.squaredNorm() > 1e-9),
           _relative_rotation(relative_rotation.normalized()),
-          _translation_direction((*translation2 - *translation1).normalized()),
           _relative_translation_direction(relative_translation.normalized()), _weight(std::sqrt(score / 8.))
     {
     }
 
-    template <typename T> bool operator()(const T *rotation1, const T *rotation2, T *residuals) const
+    template <typename T> bool operator()(const T *pose1, const T *pose2, T *residuals) const
     {
         using QuaterionT = Eigen::Quaternion<T>;
         using Vector3T = Eigen::Matrix<T, 3, 1>;
         using QuaterionTCM = Eigen::Map<const QuaterionT>;
+        using Vector3TCM = Eigen::Map<const Vector3T>;
 
-        const QuaterionTCM rotation1_em(rotation1);
-        const QuaterionTCM rotation2_em(rotation2);
+        const QuaterionTCM rotation1_em(pose1);
+        const QuaterionTCM rotation2_em(pose2);
+        const Vector3T translation = Vector3TCM(pose2 + 4) - Vector3TCM(pose1 + 4);
 
         T res[3];
 
-        if (_has_translation)
+        if (_has_relative_translation && translation.squaredNorm() > T(1e-9))
         {
+            const Vector3T translation_direction = translation.normalized();
+
             // angle from camera1 -> camera2
-            const Vector3T rotated_translation2_1 = rotation1_em.inverse() * _translation_direction.cast<T>();
+            const Vector3T rotated_translation2_1 = rotation1_em.inverse() * translation_direction;
             res[0] = angleBetweenUnitVectors<T>(rotated_translation2_1, _relative_translation_direction.cast<T>());
 
             // angle from camera2 -> camera1
             const Vector3T rotated_translation1_2 =
-                rotation2_em.inverse() * (_relative_rotation * -_translation_direction).cast<T>();
+                rotation2_em.inverse() * (_relative_rotation.cast<T>() * -translation_direction);
             res[1] = angleBetweenUnitVectors<T>(rotated_translation1_2, -_relative_translation_direction.cast<T>());
         }
         else
@@ -245,9 +275,9 @@ struct DecomposedRotationCost
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
   private:
-    const bool _has_translation;
+    const bool _has_relative_translation;
     const Eigen::Quaterniond _relative_rotation;
-    const Eigen::Vector3d _translation_direction, _relative_translation_direction;
+    const Eigen::Vector3d _relative_translation_direction;
     const double _weight;
 };
 
@@ -256,11 +286,10 @@ struct DecomposedRotationCost
 struct MultiDecomposedRotationCost
 {
     static const int NUM_RESIDUALS = DecomposedRotationCost::NUM_RESIDUALS;
-    static const int NUM_PARAMETERS_1 = 4;
-    static const int NUM_PARAMETERS_2 = 4;
+    static const int NUM_PARAMETERS_1 = POSE_PARAMETERS;
+    static const int NUM_PARAMETERS_2 = POSE_PARAMETERS;
 
-    MultiDecomposedRotationCost(const camera_relations &relations, const Eigen::Vector3d *translation1,
-                                const Eigen::Vector3d *translation2)
+    MultiDecomposedRotationCost(const camera_relations &relations)
     {
         decompose.reserve(relations.relative_poses.size());
         int max_score = 0;
@@ -274,12 +303,12 @@ struct MultiDecomposedRotationCost
         {
             if (pose.score > 0.25 * max_score)
             {
-                decompose.emplace_back(pose.orientation, pose.position, translation1, translation2, pose.score);
+                decompose.emplace_back(pose.orientation, pose.position, pose.score);
             }
         }
     }
 
-    template <typename T> bool operator()(const T *rotation1, const T *rotation2, T *residuals) const
+    template <typename T> bool operator()(const T *pose1, const T *pose2, T *residuals) const
     {
         using VectorRT = Eigen::Matrix<T, NUM_RESIDUALS, 1>;
         using VectorRTM = Eigen::Map<VectorRT>;
@@ -290,7 +319,7 @@ struct MultiDecomposedRotationCost
         for (const auto &d : decompose)
         {
             VectorRT res;
-            if (d(rotation1, rotation2, res.data()) && res.allFinite() && res.squaredNorm() < lowest_res_norm)
+            if (d(pose1, pose2, res.data()) && res.allFinite() && res.squaredNorm() < lowest_res_norm)
             {
                 lowest_res_norm = res.squaredNorm();
                 lowest_res = res;
@@ -309,16 +338,15 @@ struct MultiDecomposedRotationCost
 struct PixelErrorCost_Orientation
 {
     static const int NUM_RESIDUALS = 2;
-    static const int NUM_PARAMETERS_1 = 4;
+    static const int NUM_PARAMETERS_1 = POSE_PARAMETERS;
     static const int NUM_PARAMETERS_2 = 3;
 
-    PixelErrorCost_Orientation(const Eigen::Vector3d &camera_loc, const CameraModel &camera_model,
-                               const Eigen::Vector2d &camera_pixel)
-        : loc(camera_loc), model(camera_model), pixel(camera_pixel)
+    PixelErrorCost_Orientation(const CameraModel &camera_model, const Eigen::Vector2d &camera_pixel)
+        : model(camera_model), pixel(camera_pixel)
     {
     }
 
-    template <typename T> bool operator()(const T *rotation, const T *point, T *residuals) const
+    template <typename T> bool operator()(const T *pose, const T *point, T *residuals) const
     {
         using QuaterionT = Eigen::Quaternion<T>;
         using Vector3T = Eigen::Matrix<T, 3, 1>;
@@ -327,10 +355,11 @@ struct PixelErrorCost_Orientation
         using Vector3TCM = Eigen::Map<const Vector3T>;
         using Vector2TM = Eigen::Map<Vector2T>;
 
-        const QuaterionTCM rotation_em(rotation);
+        const QuaterionTCM rotation_em(pose);
+        const Vector3TCM loc_em(pose + 4);
         const Vector3TCM point_em(point);
 
-        const Vector2T projected_pixel = image_from_3d<T>(point_em, model.cast<T>(), loc.cast<T>(), rotation_em);
+        const Vector2T projected_pixel = image_from_3d<T>(point_em, model.cast<T>(), Vector3T(loc_em), rotation_em);
 
         Vector2TM residuals_m(residuals);
         residuals_m = projected_pixel - pixel.cast<T>();
@@ -339,7 +368,6 @@ struct PixelErrorCost_Orientation
     }
 
   private:
-    const Eigen::Vector3d &loc;
     const CameraModel &model;
     const Eigen::Vector2d pixel; // unique to this measurement, keep a local copy to avoid cache thrashing
 };
@@ -347,19 +375,18 @@ struct PixelErrorCost_Orientation
 struct PixelErrorCost_OrientationFocal
 {
     static const int NUM_RESIDUALS = 2;
-    static const int NUM_PARAMETERS_1 = 4;
+    static const int NUM_PARAMETERS_1 = POSE_PARAMETERS;
     static const int NUM_PARAMETERS_2 = 3;
     static const int NUM_PARAMETERS_3 = 1;
     static const int NUM_PARAMETERS_4 = 2;
 
-    PixelErrorCost_OrientationFocal(const Eigen::Vector3d &camera_loc, const CameraModel &camera_model,
-                                    const Eigen::Vector2d &camera_pixel)
-        : loc(camera_loc), model(camera_model), pixel(camera_pixel)
+    PixelErrorCost_OrientationFocal(const CameraModel &camera_model, const Eigen::Vector2d &camera_pixel)
+        : model(camera_model), pixel(camera_pixel)
     {
     }
 
     template <typename T>
-    bool operator()(const T *rotation, const T *point, const T *focal, const T *principal, T *residuals) const
+    bool operator()(const T *pose, const T *point, const T *focal, const T *principal, T *residuals) const
     {
         using QuaterionT = Eigen::Quaternion<T>;
         using Vector3T = Eigen::Matrix<T, 3, 1>;
@@ -369,10 +396,11 @@ struct PixelErrorCost_OrientationFocal
         using Vector2TCM = Eigen::Map<const Vector2T>;
         using Vector2TM = Eigen::Map<Vector2T>;
 
-        const QuaterionTCM rotation_em(rotation);
+        const QuaterionTCM rotation_em(pose);
+        const Vector3TCM loc_em(pose + 4);
         const Vector3TCM point_em(point);
 
-        Vector3T ray = rotation_em.inverse() * (point_em - loc.cast<T>());
+        Vector3T ray = rotation_em.inverse() * (point_em - loc_em);
 
         DifferentiableCameraModel<T> model_t = model.cast<T>();
         model_t.focal_length_pixels = *focal;
@@ -387,7 +415,6 @@ struct PixelErrorCost_OrientationFocal
     }
 
   private:
-    const Eigen::Vector3d &loc;
     const CameraModel &model;
     const Eigen::Vector2d pixel; // unique to this measurement, keep a local copy to avoid cache thrashing
 };
@@ -395,20 +422,19 @@ struct PixelErrorCost_OrientationFocal
 struct PixelErrorCost_OrientationFocalRadial
 {
     static const int NUM_RESIDUALS = 2;
-    static const int NUM_PARAMETERS_1 = 4;
+    static const int NUM_PARAMETERS_1 = POSE_PARAMETERS;
     static const int NUM_PARAMETERS_2 = 3;
     static const int NUM_PARAMETERS_3 = 1;
     static const int NUM_PARAMETERS_4 = 2;
     static const int NUM_PARAMETERS_5 = 3;
 
-    PixelErrorCost_OrientationFocalRadial(const Eigen::Vector3d &camera_loc, const CameraModel &camera_model,
-                                          const Eigen::Vector2d &camera_pixel)
-        : loc(camera_loc), model(camera_model), pixel(camera_pixel)
+    PixelErrorCost_OrientationFocalRadial(const CameraModel &camera_model, const Eigen::Vector2d &camera_pixel)
+        : model(camera_model), pixel(camera_pixel)
     {
     }
 
     template <typename T>
-    bool operator()(const T *rotation, const T *point, const T *focal, const T *principal, const T *radial,
+    bool operator()(const T *pose, const T *point, const T *focal, const T *principal, const T *radial,
                     T *residuals) const
     {
         using QuaterionT = Eigen::Quaternion<T>;
@@ -420,10 +446,11 @@ struct PixelErrorCost_OrientationFocalRadial
         using Vector2TCM = Eigen::Map<const Vector2T>;
         using Vector2TM = Eigen::Map<Vector2T>;
 
-        const QuaterionTCM rotation_em(rotation);
+        const QuaterionTCM rotation_em(pose);
+        const Vector3TCM loc_em(pose + 4);
         const Vector3TCM point_em(point);
 
-        Vector3T ray = rotation_em.inverse() * (point_em - loc.cast<T>());
+        Vector3T ray = rotation_em.inverse() * (point_em - loc_em);
 
         DifferentiableCameraModel<T> model_t = model.cast<T>();
         model_t.focal_length_pixels = *focal;
@@ -439,7 +466,6 @@ struct PixelErrorCost_OrientationFocalRadial
     }
 
   private:
-    const Eigen::Vector3d &loc;
     const CameraModel &model;
     const Eigen::Vector2d pixel; // unique to this measurement, keep a local copy to avoid cache thrashing
 };
@@ -447,21 +473,20 @@ struct PixelErrorCost_OrientationFocalRadial
 struct PixelErrorCost_OrientationFocalRadialTangential
 {
     static const int NUM_RESIDUALS = 2;
-    static const int NUM_PARAMETERS_1 = 4;
+    static const int NUM_PARAMETERS_1 = POSE_PARAMETERS;
     static const int NUM_PARAMETERS_2 = 3;
     static const int NUM_PARAMETERS_3 = 1;
     static const int NUM_PARAMETERS_4 = 2;
     static const int NUM_PARAMETERS_5 = 3;
     static const int NUM_PARAMETERS_6 = 2;
 
-    PixelErrorCost_OrientationFocalRadialTangential(const Eigen::Vector3d &camera_loc, const CameraModel &camera_model,
-                                                    const Eigen::Vector2d &camera_pixel)
-        : loc(camera_loc), model(camera_model), pixel(camera_pixel)
+    PixelErrorCost_OrientationFocalRadialTangential(const CameraModel &camera_model, const Eigen::Vector2d &camera_pixel)
+        : model(camera_model), pixel(camera_pixel)
     {
     }
 
     template <typename T>
-    bool operator()(const T *rotation, const T *point, const T *focal, const T *principal, const T *radial,
+    bool operator()(const T *pose, const T *point, const T *focal, const T *principal, const T *radial,
                     const T *tangential, T *residuals) const
     {
         using QuaterionT = Eigen::Quaternion<T>;
@@ -473,10 +498,11 @@ struct PixelErrorCost_OrientationFocalRadialTangential
         using Vector2TCM = Eigen::Map<const Vector2T>;
         using Vector2TM = Eigen::Map<Vector2T>;
 
-        const QuaterionTCM rotation_em(rotation);
+        const QuaterionTCM rotation_em(pose);
+        const Vector3TCM loc_em(pose + 4);
         const Vector3TCM point_em(point);
 
-        Vector3T ray = rotation_em.inverse() * (point_em - loc.cast<T>());
+        Vector3T ray = rotation_em.inverse() * (point_em - loc_em);
 
         DifferentiableCameraModel<T> model_t = model.cast<T>();
         model_t.focal_length_pixels = *focal;
@@ -493,7 +519,6 @@ struct PixelErrorCost_OrientationFocalRadialTangential
     }
 
   private:
-    const Eigen::Vector3d &loc;
     const CameraModel &model;
     const Eigen::Vector2d pixel; // unique to this measurement, keep a local copy to avoid cache thrashing
 };
@@ -503,16 +528,15 @@ template <int N> struct MultiRayPlaneIntersectionAngleCost_FocalRadial
     static_assert(N >= 2 && N <= 5, "N must be between 2 and 5");
     static const int NUM_RESIDUALS = N * 3;
 
-    MultiRayPlaneIntersectionAngleCost_FocalRadial(const std::array<Eigen::Vector3d, N> &camera_locs,
-                                                   const std::array<Eigen::Vector2d, N> &camera_pixels,
+    MultiRayPlaneIntersectionAngleCost_FocalRadial(const std::array<Eigen::Vector2d, N> &camera_pixels,
                                                    const std::array<Eigen::Vector2d, 3> &plane_points,
                                                    const InverseDifferentiableCameraModel<double> &model)
-        : camera_loc(camera_locs), camera_pixel(camera_pixels), plane_point(plane_points), sharedModel(model)
+        : camera_pixel(camera_pixels), plane_point(plane_points), sharedModel(model)
     {
     }
 
     template <typename T>
-    bool computeResiduals(const T *const *rotations, const T *z0, const T *z1, const T *z2, const T *focal,
+    bool computeResiduals(const T *const *poses, const T *z0, const T *z1, const T *z2, const T *focal,
                           const T *principal, const T *radial, T *residuals) const
     {
         using QuaternionT = Eigen::Quaternion<T>;
@@ -539,12 +563,12 @@ template <int N> struct MultiRayPlaneIntersectionAngleCost_FocalRadial
         T avg_dist = T(0);
         for (int i = 0; i < N; i++)
         {
-            const QuaternionTCM rot(rotations[i]);
+            const QuaternionTCM rot(poses[i]);
             ray<T> r;
             r.dir = rot * image_to_3d<T>(camera_pixel[i].template cast<T>(), model);
-            r.offset = camera_loc[i].template cast<T>();
+            r.offset = Vector3TCM(poses[i] + 4);
             all_valid &= rayPlaneIntersection(r, pno, intersection[i]);
-            avg_dist += (intersection[i] - camera_loc[i]).norm();
+            avg_dist += (intersection[i] - r.offset).norm();
         }
         avg_dist /= T(N);
 
@@ -559,7 +583,6 @@ template <int N> struct MultiRayPlaneIntersectionAngleCost_FocalRadial
         return all_valid;
     }
 
-    const std::array<Eigen::Vector3d, N> camera_loc;
     const std::array<Eigen::Vector2d, N> camera_pixel;
     const std::array<Eigen::Vector2d, 3> plane_point;
     const InverseDifferentiableCameraModel<double> sharedModel;
@@ -568,8 +591,8 @@ template <int N> struct MultiRayPlaneIntersectionAngleCost_FocalRadial
 struct PlaneIntersectionAngleCost_OrientationFocalRadial_SharedModel
 {
     static const int NUM_RESIDUALS = MultiRayPlaneIntersectionAngleCost_FocalRadial<2>::NUM_RESIDUALS;
-    static const int NUM_PARAMETERS_1 = 4; // rotation 0
-    static const int NUM_PARAMETERS_2 = 4; // rotation 1
+    static const int NUM_PARAMETERS_1 = POSE_PARAMETERS; // pose 0
+    static const int NUM_PARAMETERS_2 = POSE_PARAMETERS; // pose 1
     static const int NUM_PARAMETERS_3 = 1; // z 0
     static const int NUM_PARAMETERS_4 = 1; // z 1
     static const int NUM_PARAMETERS_5 = 1; // z 2
@@ -578,20 +601,19 @@ struct PlaneIntersectionAngleCost_OrientationFocalRadial_SharedModel
     static const int NUM_PARAMETERS_8 = 3; // radial
 
     PlaneIntersectionAngleCost_OrientationFocalRadial_SharedModel(
-        const Eigen::Vector3d &camera_loc1, const Eigen::Vector3d &camera_loc2, const Eigen::Vector2d &camera_pixel1,
-        const Eigen::Vector2d &camera_pixel2, const Eigen::Vector2d &plane_point1, const Eigen::Vector2d &plane_point2,
-        const Eigen::Vector2d &plane_point3, const InverseDifferentiableCameraModel<double> &sharedModel)
-        : _impl({camera_loc1, camera_loc2}, {camera_pixel1, camera_pixel2},
-                {{plane_point1, plane_point2, plane_point3}}, sharedModel)
+        const Eigen::Vector2d &camera_pixel1, const Eigen::Vector2d &camera_pixel2, const Eigen::Vector2d &plane_point1,
+        const Eigen::Vector2d &plane_point2, const Eigen::Vector2d &plane_point3,
+        const InverseDifferentiableCameraModel<double> &sharedModel)
+        : _impl({camera_pixel1, camera_pixel2}, {{plane_point1, plane_point2, plane_point3}}, sharedModel)
     {
     }
 
     template <typename T>
-    bool operator()(const T *rotation0, const T *rotation1, const T *z0, const T *z1, const T *z2, const T *focal,
+    bool operator()(const T *pose0, const T *pose1, const T *z0, const T *z1, const T *z2, const T *focal,
                     const T *principal, const T *radial, T *residuals) const
     {
-        const T *rotations[2]{rotation0, rotation1};
-        return _impl.computeResiduals(rotations, z0, z1, z2, focal, principal, radial, residuals);
+        const T *poses[2]{pose0, pose1};
+        return _impl.computeResiduals(poses, z0, z1, z2, focal, principal, radial, residuals);
     }
 
   private:
@@ -603,20 +625,20 @@ template <int N> struct MultiRayPlaneIntersectionAngleCost
     static_assert(N >= 2 && N <= 5, "N must be between 2 and 5");
     static const int NUM_RESIDUALS = N * 3;
 
-    MultiRayPlaneIntersectionAngleCost(const std::array<Eigen::Vector3d, N> &camera_locs,
-                                       const std::array<Eigen::Vector3d, N> &camera_rays,
+    MultiRayPlaneIntersectionAngleCost(const std::array<Eigen::Vector3d, N> &camera_rays,
                                        const std::array<Eigen::Vector2d, 3> &plane_points)
-        : camera_loc(camera_locs), camera_ray(camera_rays), plane_point(plane_points)
+        : camera_ray(camera_rays), plane_point(plane_points)
     {
     }
 
     template <typename T>
-    bool computeResiduals(const T *const *rotations, const T *z0, const T *z1, const T *z2, T *residuals) const
+    bool computeResiduals(const T *const *poses, const T *z0, const T *z1, const T *z2, T *residuals) const
     {
         using QuaternionT = Eigen::Quaternion<T>;
         using Vector3T = Eigen::Matrix<T, 3, 1>;
         using QuaternionTCM = Eigen::Map<const QuaternionT>;
         using Vector3TM = Eigen::Map<Vector3T>;
+        using Vector3TCM = Eigen::Map<const Vector3T>;
 
         const T plane_z[3]{*z0, *z1, *z2};
         plane_3_corners<T> plane3;
@@ -630,12 +652,12 @@ template <int N> struct MultiRayPlaneIntersectionAngleCost
         T avg_dist = T(0);
         for (int i = 0; i < N; i++)
         {
-            const QuaternionTCM rot(rotations[i]);
+            const QuaternionTCM rot(poses[i]);
             ray<T> r;
             r.dir = rot * camera_ray[i].template cast<T>();
-            r.offset = camera_loc[i].template cast<T>();
+            r.offset = Vector3TCM(poses[i] + 4);
             all_valid &= rayPlaneIntersection(r, pno, intersection[i]);
-            avg_dist += (intersection[i] - camera_loc[i]).norm();
+            avg_dist += (intersection[i] - r.offset).norm();
         }
         avg_dist /= T(N);
 
@@ -650,7 +672,6 @@ template <int N> struct MultiRayPlaneIntersectionAngleCost
         return all_valid;
     }
 
-    const std::array<Eigen::Vector3d, N> camera_loc;
     const std::array<Eigen::Vector3d, N> camera_ray;
     const std::array<Eigen::Vector2d, 3> plane_point;
 };
@@ -658,25 +679,24 @@ template <int N> struct MultiRayPlaneIntersectionAngleCost
 struct PlaneIntersectionAngleCost
 {
     static const int NUM_RESIDUALS = MultiRayPlaneIntersectionAngleCost<2>::NUM_RESIDUALS;
-    static const int NUM_PARAMETERS_1 = 4;
-    static const int NUM_PARAMETERS_2 = 4;
+    static const int NUM_PARAMETERS_1 = POSE_PARAMETERS;
+    static const int NUM_PARAMETERS_2 = POSE_PARAMETERS;
     static const int NUM_PARAMETERS_3 = 1;
     static const int NUM_PARAMETERS_4 = 1;
     static const int NUM_PARAMETERS_5 = 1;
 
-    PlaneIntersectionAngleCost(const Eigen::Vector3d &camera_loc1, const Eigen::Vector3d &camera_loc2,
-                               const Eigen::Vector3d &camera_ray1, const Eigen::Vector3d &camera_ray2,
+    PlaneIntersectionAngleCost(const Eigen::Vector3d &camera_ray1, const Eigen::Vector3d &camera_ray2,
                                const Eigen::Vector2d &plane_point1, const Eigen::Vector2d &plane_point2,
                                const Eigen::Vector2d &plane_point3)
-        : _impl({camera_loc1, camera_loc2}, {camera_ray1, camera_ray2}, {{plane_point1, plane_point2, plane_point3}})
+        : _impl({camera_ray1, camera_ray2}, {{plane_point1, plane_point2, plane_point3}})
     {
     }
 
     template <typename T>
-    bool operator()(const T *rotation0, const T *rotation1, const T *z0, const T *z1, const T *z2, T *residuals) const
+    bool operator()(const T *pose0, const T *pose1, const T *z0, const T *z1, const T *z2, T *residuals) const
     {
-        const T *rotations[2]{rotation0, rotation1};
-        return _impl.computeResiduals(rotations, z0, z1, z2, residuals);
+        const T *poses[2]{pose0, pose1};
+        return _impl.computeResiduals(poses, z0, z1, z2, residuals);
     }
 
   private:
@@ -688,10 +708,9 @@ template <int N> struct PlaneIntersectionAngleCost_NRay
     static_assert(N >= 3 && N <= 5, "N must be between 3 and 5");
     static const int NUM_RESIDUALS = N * 3;
 
-    PlaneIntersectionAngleCost_NRay(const std::array<Eigen::Vector3d, N> &locs,
-                                    const std::array<Eigen::Vector3d, N> &rays,
+    PlaneIntersectionAngleCost_NRay(const std::array<Eigen::Vector3d, N> &rays,
                                     const std::array<Eigen::Vector2d, 3> &plane_points)
-        : _impl(locs, rays, plane_points)
+        : _impl(rays, plane_points)
     {
     }
 
@@ -703,7 +722,7 @@ template <int N> struct PlaneIntersectionAngleCost_NRay
         return _impl.computeResiduals(rotations, z0, z1, z2, res);
     }
 
-    // 3 z-heights, then N rotations
+    // 3 z-heights, then N poses
     template <typename T>
     bool operator()(const T *z0, const T *z1, const T *z2, const T *r0, const T *r1, const T *r2, T *res) const
     {
@@ -739,11 +758,10 @@ template <int N> struct PlaneIntersectionAngleCost_NRay_FocalRadial
     static_assert(N >= 3 && N <= 5, "N must be between 3 and 5");
     static const int NUM_RESIDUALS = N * 3;
 
-    PlaneIntersectionAngleCost_NRay_FocalRadial(const std::array<Eigen::Vector3d, N> &locs,
-                                                const std::array<Eigen::Vector2d, N> &pixels,
+    PlaneIntersectionAngleCost_NRay_FocalRadial(const std::array<Eigen::Vector2d, N> &pixels,
                                                 const std::array<Eigen::Vector2d, 3> &plane_points,
                                                 const InverseDifferentiableCameraModel<double> &model)
-        : _impl(locs, pixels, plane_points, model)
+        : _impl(pixels, plane_points, model)
     {
     }
 
@@ -757,7 +775,7 @@ template <int N> struct PlaneIntersectionAngleCost_NRay_FocalRadial
         return _impl.computeResiduals(rotations, z0, z1, z2, focal, principal, radial, res);
     }
 
-    // Parameter order: z0, z1, z2, focal, principal, radial, r0..rN
+    // Parameter order: z0, z1, z2, focal, principal, radial, pose0..poseN
     template <typename T>
     bool operator()(const T *z0, const T *z1, const T *z2, const T *focal, const T *principal, const T *radial,
                     const T *r0, const T *r1, const T *r2, T *res) const

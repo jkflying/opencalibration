@@ -96,7 +96,7 @@ std::vector<size_t> LoadStage::finalize(GeoCoord &coordinate_system, Measurement
                           img.model->focal_length_pixels);
         }
 
-        Eigen::Vector3d local_pos = img.position =
+        Eigen::Vector3d local_pos = img.position = img.gps_position =
             coordinate_system.toLocalCS(img.metadata.capture_info.latitude, img.metadata.capture_info.longitude,
                                         img.metadata.capture_info.altitude);
         size_t node_id = graph.addNode(std::move(img));
