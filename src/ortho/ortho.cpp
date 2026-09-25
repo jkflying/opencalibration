@@ -534,6 +534,10 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
     std::atomic<int> completed_rows{0};
     auto last_log_time = std::chrono::steady_clock::now();
 
+    constexpr size_t maxOverlapCameras = 64;
+    constexpr size_t colorCandidateCameras = 5;
+    constexpr uint32_t noSource = std::numeric_limits<uint32_t>::max();
+
 #pragma omp parallel
     {
         std::vector<MeshIntersectionSearcher> searchers;
@@ -546,6 +550,8 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
                 searchers.pop_back();
             }
         }
+        auto cameraSearcher = context.imageGPSLocations.searcher();
+        const std::vector<jk::tree::KDTree<size_t, 2>::DistancePayload> noCameras;
 
 #pragma omp for schedule(dynamic)
         for (int row = 0; row < image_dimensions.height; row++)
@@ -576,53 +582,52 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
                     }
                 }
 
-                if (std::isnan(z))
-                {
-                    continue;
-                }
-
                 Eigen::Vector3d sample_point(x, y, z);
 
                 Eigen::Vector<uint8_t, Eigen::Dynamic> color;
                 color.resize(4);
                 color.fill(0);
-                uint32_t pixelSource = std::numeric_limits<uint32_t>::max();
+                uint32_t pixelSource = noSource;
 
-                auto closest5 = context.imageGPSLocations.searchKnn({x, y}, 5);
+                const auto &nearestCameras =
+                    std::isnan(z) ? noCameras
+                                  : cameraSearcher.search({x, y}, std::numeric_limits<double>::max(), maxOverlapCameras);
+                uint8_t overlapCount = 0;
 
-                // get image vertically closest
-                for (const auto &closest : closest5)
+                for (size_t i = 0; i < nearestCameras.size(); i++)
                 {
-                    const auto *closestNode = graph.getNode(closest.payload);
-                    const auto &payload = closestNode->payload;
-                    const auto &cc = camera_cache.at(closest.payload);
+                    const auto &candidate = nearestCameras[i];
+                    const auto &payload = graph.getNode(candidate.payload)->payload;
+                    const auto &cc = camera_cache.at(candidate.payload);
 
                     Eigen::Vector3d camera_ray = cc.inv_rotation * (sample_point - payload.position);
                     if (camera_ray.z() <= 0)
                         continue;
 
-                    // Use overload with precomputed inverse rotation matrix
-                    Eigen::Vector2d pixel =
-                        image_from_3d(sample_point, *payload.model, payload.position, cc.inv_rotation);
+                    Eigen::Vector2d pixel = image_from_3d(camera_ray, *payload.model);
                     Eigen::Vector2d thumb_pixel = pixel * cc.thumb_scale;
+                    if (!thumb_pixel.allFinite())
+                        continue;
 
                     int px = static_cast<int>(thumb_pixel.x());
                     int py = static_cast<int>(thumb_pixel.y());
 
                     if (px > 0 && px < cc.thumb_size[1] && py > 0 && py < cc.thumb_size[0])
                     {
-                        Eigen::Vector<uint8_t, Eigen::Dynamic> pixelValue;
-                        pixelValue.resize(3);
-                        if (payload.thumbnail.get(py, px, pixelValue))
+                        overlapCount++;
+                        if (i < colorCandidateCameras && pixelSource == noSource)
                         {
-                            color << pixelValue, 255;
-                            pixelSource = closest.payload & 0xFFFFFFFF;
-                            break;
+                            Eigen::Vector<uint8_t, Eigen::Dynamic> pixelValue(3);
+                            if (payload.thumbnail.get(py, px, pixelValue))
+                            {
+                                color << pixelValue, 255;
+                                pixelSource = candidate.payload & 0xFFFFFFFF;
+                            }
                         }
                     }
                 }
 
-                if (pixelSource == std::numeric_limits<uint32_t>::max())
+                if (pixelSource == noSource)
                 {
                     // background checkerboard
                     uint8_t grey = (row + col) % 2 == 0 ? 64 : 128;
@@ -632,6 +637,7 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
                 // assign color to thumbnail pixel
                 pixelValues.set(row, col, color);
                 result.cameraUUID.pixels(row, col) = pixelSource;
+                result.overlap.pixels(row, col) = overlapCount;
             }
 
             int current_completed = ++completed_rows;

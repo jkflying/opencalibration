@@ -48,6 +48,21 @@ void run_parallel(fvec &funcs, int parallelism)
     }
 }
 
+cv::Mat packCameraIdLow24BitsIntoRgb(const opencalibration::RasterLayer<int32_t> &cameraIds)
+{
+    cv::Mat packed(cameraIds.pixels.rows(), cameraIds.pixels.cols(), CV_8UC4);
+    for (Eigen::Index row = 0; row < cameraIds.pixels.rows(); row++)
+    {
+        for (Eigen::Index col = 0; col < cameraIds.pixels.cols(); col++)
+        {
+            const uint32_t id = static_cast<uint32_t>(cameraIds.pixels(row, col));
+            const uint8_t red = id >> 16, green = id >> 8, blue = id, alpha = 255;
+            packed.at<cv::Vec4b>(row, col) = cv::Vec4b(blue, green, red, alpha);
+        }
+    }
+    return packed;
+}
+
 } // namespace
 
 namespace opencalibration
@@ -943,7 +958,7 @@ Pipeline::Impl::Transition Pipeline::Impl::generate_thumbnail()
     if (!thumbnail_filename.empty())
         cv::imwrite(thumbnail_filename, rasterToCv(thumbnail.pixelValues));
     if (!source_filename.empty())
-        cv::imwrite(source_filename, rasterToCv(thumbnail.cameraUUID));
+        cv::imwrite(source_filename, packCameraIdLow24BitsIntoRgb(thumbnail.cameraUUID));
     if (!overlap_filename.empty())
         cv::imwrite(overlap_filename, rasterToCv(thumbnail.overlap));
 
