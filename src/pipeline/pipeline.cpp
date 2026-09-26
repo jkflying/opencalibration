@@ -301,6 +301,7 @@ bool Pipeline::loadCheckpoint(const std::string &checkpoint_dir, const std::stri
 
     _impl->graph = std::move(data.graph);
     _impl->surfaces = std::move(data.surfaces);
+    _impl->relax_stage->setSurfaceModels(_impl->surfaces);
 
     if (data.origin_latitude != 0.0 || data.origin_longitude != 0.0)
     {
