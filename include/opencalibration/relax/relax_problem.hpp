@@ -10,6 +10,7 @@
 #include <opencalibration/types/point_cloud.hpp>
 #include <opencalibration/types/relax_options.hpp>
 #include <opencalibration/types/surface_model.hpp>
+#include <opencalibration/types/track_ray.hpp>
 
 #include <ceres/loss_function.h>
 #include <ceres/manifold.h>
@@ -25,6 +26,8 @@
 
 namespace opencalibration
 {
+
+class MeshIntersectionSearcher;
 
 struct OptimizationPackage
 {
@@ -64,6 +67,11 @@ class RelaxProblem
                              const ankerl::unordered_dense::set<size_t> &edges_to_optimize,
                              const RelaxOptionSet &options);
 
+    void setupTriangulatedRaysProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                                      ankerl::unordered_dense::map<size_t, CameraModel> &cam_models,
+                                      const ankerl::unordered_dense::set<size_t> &edges_to_optimize,
+                                      const RelaxOptionSet &options);
+
     void relaxObservedModelOnly(); // only 3d points and ground plane
     void solve();
 
@@ -88,6 +96,9 @@ class RelaxProblem
     void addPointMeasurementsCost(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge,
                                   const RelaxOptionSet &options);
 
+    void addTriangulatedRaysCost(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge,
+                                 const RelaxOptionSet &options);
+
     void collectEdgeTracks(const MeasurementGraph &graph, size_t edge_id, const MeasurementGraph::Edge &edge);
 
     void addRayTriangleMeasurementCost(const MeasurementGraph &graph, size_t edge_id,
@@ -95,6 +106,16 @@ class RelaxProblem
 
     void addMultiRayTrackCosts(const MeasurementGraph &graph, const RelaxOptionSet &options,
                                double grid_fraction = 0.1);
+
+    std::vector<TrackRay> addMeshTrackCost(const MeasurementGraph &graph, const std::vector<TrackRay> &rays,
+                                           const RelaxOptionSet &options,
+                                           MeshIntersectionSearcher &intersectionSearcher);
+    std::vector<TrackRay> addTriangulatedTrackCost(const std::vector<TrackRay> &rays, bool fix_positions);
+    static std::vector<TrackRay> selectInlierRays(std::vector<std::pair<double, size_t>> &ray_scores,
+                                                  const std::vector<TrackRay> &rays);
+    uint64_t trackCellKey(const Eigen::Vector2d &pixel, const CameraModel &model) const;
+    bool coveredByMultiRayTracks(const MeasurementGraph::Edge &edge, const feature_match_denormalized &inlier,
+                                 const CameraModel &source_model, const CameraModel &dest_model) const;
 
     void initializeGroundPlane();
     void initializeGroundMesh(const std::vector<surface_model> &previousSurfaces, bool useMinimalMesh = false);
@@ -115,6 +136,7 @@ class RelaxProblem
     ceres::ProductManifold<ceres::EigenQuaternionManifold, ceres::EuclideanManifold<3>> _pose_parameterization;
     ceres::ProductManifold<ceres::EigenQuaternionManifold, ceres::SubsetManifold>
         _pose_fixed_position_parameterization;
+    ceres::EigenQuaternionManifold _orientation_parameterization;
 
     ceres::SubsetManifold _brown2_parameterization;
     ceres::SubsetManifold _brown24_parameterization;

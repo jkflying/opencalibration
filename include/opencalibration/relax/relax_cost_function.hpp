@@ -335,6 +335,134 @@ struct MultiDecomposedRotationCost
     std::vector<DecomposedRotationCost> decompose;
 };
 
+template <int N> struct TriangulatedReprojectionCost
+{
+    static_assert(N >= 2 && N <= 5, "N must be between 2 and 5");
+    static const int NUM_RESIDUALS = N * 3;
+
+    TriangulatedReprojectionCost(const std::array<Eigen::Vector3d, N> &camera_rays) : camera_ray(camera_rays)
+    {
+    }
+
+    TriangulatedReprojectionCost(const std::array<Eigen::Vector3d, N> &camera_rays,
+                                 const std::array<Eigen::Vector3d, N> &camera_positions)
+        : camera_ray(camera_rays), fixed_position(camera_positions), position_fixed(true)
+    {
+    }
+
+    template <typename T> bool eval(const T *const *poses, T *residuals) const
+    {
+        using Vector3T = Eigen::Matrix<T, 3, 1>;
+        using Matrix3T = Eigen::Matrix<T, 3, 3>;
+        using QuaternionTCM = Eigen::Map<const Eigen::Quaternion<T>>;
+        using Vector3TCM = Eigen::Map<const Vector3T>;
+        using Vector3TM = Eigen::Map<Vector3T>;
+
+        std::array<Vector3T, N> dirs, positions;
+        for (int i = 0; i < N; i++)
+        {
+            dirs[i] = (QuaternionTCM(poses[i]) * camera_ray[i].template cast<T>()).normalized();
+            positions[i] = position_fixed ? fixed_position[i].template cast<T>() : Vector3T(Vector3TCM(poses[i] + 4));
+        }
+
+        const auto triangulate = [&](const std::array<T, N> &weights, Vector3T &point) {
+            Matrix3T normal_matrix = Matrix3T::Zero();
+            Vector3T normal_rhs = Vector3T::Zero();
+            for (int i = 0; i < N; i++)
+            {
+                const Matrix3T perpendicular = weights[i] * (Matrix3T::Identity() - dirs[i] * dirs[i].transpose());
+                normal_matrix += perpendicular;
+                normal_rhs += perpendicular * positions[i];
+            }
+            if (!(normal_matrix.determinant() > T(1e-12)))
+                return false;
+            point = normal_matrix.inverse() * normal_rhs;
+            return true;
+        };
+
+        std::array<T, N> weights;
+        weights.fill(T(1));
+        Vector3T point;
+        if (!triangulate(weights, point))
+            return false;
+
+        if constexpr (N > 2)
+        {
+            const T cos_5_degrees(0.996);
+            bool any_outlier = false;
+            for (int i = 0; i < N; i++)
+                any_outlier |= dirs[i].dot((point - positions[i]).normalized()) < cos_5_degrees;
+            if (any_outlier)
+            {
+                for (int i = 0; i < N; i++)
+                {
+                    std::array<T, N> all_but_i;
+                    all_but_i.fill(T(1));
+                    all_but_i[i] = T(0);
+                    Vector3T point_seen_by_others;
+                    weights[i] = triangulate(all_but_i, point_seen_by_others)
+                                     ? (T(1) + dirs[i].dot((point_seen_by_others - positions[i]).normalized())) * T(0.5)
+                                     : T(1);
+                }
+                Vector3T weighted_point;
+                if (triangulate(weights, weighted_point))
+                    point = weighted_point;
+            }
+        }
+
+        for (int i = 0; i < N; i++)
+        {
+            const Vector3T p_cam = QuaternionTCM(poses[i]).inverse() * (point - positions[i]);
+            const Vector3T chord = p_cam.normalized() - camera_ray[i].template cast<T>().normalized();
+            Vector3TM(residuals + i * 3) = chordScaledToAngle(chord);
+        }
+        return true;
+    }
+
+    template <typename T> static Eigen::Matrix<T, 3, 1> chordScaledToAngle(const Eigen::Matrix<T, 3, 1> &chord)
+    {
+        using std::asin;
+        using std::sqrt;
+        const T half_chord_sq = chord.squaredNorm() * T(0.25);
+        const T half_chord = sqrt(ceres::fmin(half_chord_sq, T(1 - 1e-9)));
+        const T scale = half_chord_sq < T(1e-8) ? T(1) + half_chord_sq / T(6) : asin(half_chord) / half_chord;
+        return chord * scale;
+    }
+
+    template <typename T> bool operator()(const T *p0, const T *p1, T *res) const
+    {
+        static_assert(N == 2);
+        const T *poses[]{p0, p1};
+        return eval(poses, res);
+    }
+
+    template <typename T> bool operator()(const T *p0, const T *p1, const T *p2, T *res) const
+    {
+        static_assert(N == 3);
+        const T *poses[]{p0, p1, p2};
+        return eval(poses, res);
+    }
+
+    template <typename T> bool operator()(const T *p0, const T *p1, const T *p2, const T *p3, T *res) const
+    {
+        static_assert(N == 4);
+        const T *poses[]{p0, p1, p2, p3};
+        return eval(poses, res);
+    }
+
+    template <typename T>
+    bool operator()(const T *p0, const T *p1, const T *p2, const T *p3, const T *p4, T *res) const
+    {
+        static_assert(N == 5);
+        const T *poses[]{p0, p1, p2, p3, p4};
+        return eval(poses, res);
+    }
+
+    const std::array<Eigen::Vector3d, N> camera_ray;
+    const std::array<Eigen::Vector3d, N> fixed_position{};
+    const bool position_fixed = false;
+};
+
 struct PixelErrorCost_Orientation
 {
     static const int NUM_RESIDUALS = 2;

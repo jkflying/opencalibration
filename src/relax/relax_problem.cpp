@@ -151,6 +151,76 @@ void RelaxProblem::setup3dPointProblem(const MeasurementGraph &graph, std::vecto
     _solver_options.linear_solver_type = ceres::SPARSE_SCHUR;
 }
 
+void RelaxProblem::setupTriangulatedRaysProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                                                ankerl::unordered_dense::map<size_t, CameraModel> &cam_models,
+                                                const ankerl::unordered_dense::set<size_t> &edges_to_optimize,
+                                                const RelaxOptionSet &options)
+{
+    initialize(nodes, cam_models);
+    _loss.Reset(new ceres::HuberLoss(0.2 * M_PI / 180), ceres::TAKE_OWNERSHIP);
+
+    for (size_t edge_id : edges_to_optimize)
+    {
+        const MeasurementGraph::Edge *edge = graph.getEdge(edge_id);
+        if (edge != nullptr && shouldAddEdgeToOptimization(edges_to_optimize, edge_id))
+            collectEdgeTracks(graph, edge_id, *edge);
+    }
+    addMultiRayTrackCosts(graph, options, 0.05);
+
+    gridFilterMatchesPerImage(graph, edges_to_optimize, 0.05);
+
+    for (size_t edge_id : edges_to_optimize)
+    {
+        const MeasurementGraph::Edge *edge = graph.getEdge(edge_id);
+        if (edge != nullptr && shouldAddEdgeToOptimization(edges_to_optimize, edge_id))
+        {
+            addTriangulatedRaysCost(graph, edge_id, *edge, options);
+        }
+    }
+
+    addGPSPositionPrior(graph, options, false);
+}
+
+void RelaxProblem::addTriangulatedRaysCost(const MeasurementGraph &graph, size_t edge_id,
+                                           const MeasurementGraph::Edge &edge, const RelaxOptionSet &options)
+{
+    OptimizationPackage pkg;
+    pkg.source = nodeid2poseopt(graph, edge.getSource());
+    pkg.dest = nodeid2poseopt(graph, edge.getDest());
+
+    if (pkg.source.loc_ptr == nullptr || pkg.dest.loc_ptr == nullptr)
+        return;
+
+    const auto &source_whitelist = _grid_filter[edge.getSource()][edge_id].getBestMeasurementsPerCell();
+    const auto &dest_whitelist = _grid_filter[edge.getDest()][edge_id].getBestMeasurementsPerCell();
+
+    bool points_added = false;
+    for (const auto &inlier : edge.payload.inlier_matches)
+    {
+        if (source_whitelist.find(&inlier) == source_whitelist.end() &&
+            dest_whitelist.find(&inlier) == dest_whitelist.end())
+            continue;
+
+        if (coveredByMultiRayTracks(edge, inlier, *pkg.source.model_ptr, *pkg.dest.model_ptr))
+            continue;
+
+        _problem->AddResidualBlock(
+            newAutoDiffTriangulatedReprojectionCost(
+                {image_to_3d(inlier.pixel_1, *pkg.source.model_ptr), image_to_3d(inlier.pixel_2, *pkg.dest.model_ptr)},
+                !options.hasAll({Option::POSITION})
+                    ? std::vector<Eigen::Vector3d>{*pkg.source.loc_ptr, *pkg.dest.loc_ptr}
+                    : std::vector<Eigen::Vector3d>{}),
+            &_loss, pkg.source.pose_ptr, pkg.dest.pose_ptr);
+        points_added = true;
+    }
+
+    if (points_added)
+    {
+        setPoseParameterization(pkg.source.pose_ptr, pkg.source.optimize, options);
+        setPoseParameterization(pkg.dest.pose_ptr, pkg.dest.optimize, options);
+    }
+}
+
 void RelaxProblem::initialize(std::vector<NodePose> &nodes,
                               ankerl::unordered_dense::map<size_t, CameraModel> &cam_models)
 {
@@ -256,7 +326,11 @@ double *RelaxProblem::poseBlock(size_t node_id, const Eigen::Quaterniond &orient
 
 void RelaxProblem::setPoseParameterization(double *pose, bool optimize, const RelaxOptionSet &options)
 {
-    if (options.hasAll({Option::POSITION}))
+    if (_problem->ParameterBlockSize(pose) == 4)
+    {
+        _problem->SetManifold(pose, &_orientation_parameterization);
+    }
+    else if (options.hasAll({Option::POSITION}))
     {
         _problem->SetManifold(pose, &_pose_parameterization);
     }
@@ -414,6 +488,31 @@ void RelaxProblem::collectEdgeTracks(const MeasurementGraph &graph, size_t edge_
     }
 }
 
+uint64_t RelaxProblem::trackCellKey(const Eigen::Vector2d &pixel, const CameraModel &model) const
+{
+    int gi = static_cast<int>(std::floor((pixel.x() / model.pixels_cols) / _track_grid_fraction));
+    int gj = static_cast<int>(std::floor((pixel.y() / model.pixels_rows) / _track_grid_fraction));
+    return gridCellKey(gi, gj);
+}
+
+bool RelaxProblem::coveredByMultiRayTracks(const MeasurementGraph::Edge &edge,
+                                           const feature_match_denormalized &inlier, const CameraModel &source_model,
+                                           const CameraModel &dest_model) const
+{
+    if (_multi_ray_measurements.contains(NodeIdFeatureIndex{edge.getSource(), inlier.feature_index_1}) ||
+        _multi_ray_measurements.contains(NodeIdFeatureIndex{edge.getDest(), inlier.feature_index_2}))
+        return true;
+
+    auto cellCovered = [this](size_t node_id, const Eigen::Vector2d &pixel, const CameraModel &model) {
+        auto cells = _multi_ray_covered_cells.find(node_id);
+        if (cells == _multi_ray_covered_cells.end())
+            return false;
+        return cells->second.contains(trackCellKey(pixel, model));
+    };
+    return cellCovered(edge.getSource(), inlier.pixel_1, source_model) &&
+           cellCovered(edge.getDest(), inlier.pixel_2, dest_model);
+}
+
 void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, size_t edge_id,
                                                  const MeasurementGraph::Edge &edge, const RelaxOptionSet &options)
 {
@@ -454,30 +553,8 @@ void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, 
             dest_whitelist.find(&inlier) == dest_whitelist.end())
             continue;
 
-        // Skip measurements that are handled by multi-ray track costs
-        NodeIdFeatureIndex nifi_src{edge.getSource(), inlier.feature_index_1};
-        NodeIdFeatureIndex nifi_dst{edge.getDest(), inlier.feature_index_2};
-        if (_multi_ray_measurements.contains(nifi_src) || _multi_ray_measurements.contains(nifi_dst))
+        if (coveredByMultiRayTracks(edge, inlier, source_model, dest_model))
             continue;
-
-        // Skip if both images' grid cells are already covered by multi-ray tracks
-        {
-            auto cellKey = [this](double px, double py, double cols, double rows) {
-                int gi = static_cast<int>(std::floor((px / cols) / _track_grid_fraction));
-                int gj = static_cast<int>(std::floor((py / rows) / _track_grid_fraction));
-                return gridCellKey(gi, gj);
-            };
-            auto src_cells = _multi_ray_covered_cells.find(edge.getSource());
-            auto dst_cells = _multi_ray_covered_cells.find(edge.getDest());
-            bool src_covered = src_cells != _multi_ray_covered_cells.end() &&
-                               src_cells->second.contains(cellKey(inlier.pixel_1.x(), inlier.pixel_1.y(),
-                                                                  source_model.pixels_cols, source_model.pixels_rows));
-            bool dst_covered = dst_cells != _multi_ray_covered_cells.end() &&
-                               dst_cells->second.contains(cellKey(inlier.pixel_2.x(), inlier.pixel_2.y(),
-                                                                  dest_model.pixels_cols, dest_model.pixels_rows));
-            if (src_covered && dst_covered)
-                continue;
-        }
 
         ray_d sourceRay, destRay;
         sourceRay.dir = image_to_3d(inlier.pixel_1, source_model);
@@ -554,26 +631,11 @@ void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, 
     _edges_used.insert(edge_id);
 }
 
-namespace
-{
-struct RayInfo
-{
-    size_t node_id;
-    size_t feature_index;
-    size_t camera_model_id;
-    Eigen::Vector3d camera_loc;
-    Eigen::Vector3d camera_ray;
-    Eigen::Vector2d pixel;
-    Eigen::Quaterniond orientation;
-    double *pose_ptr;
-};
-
-} // namespace
-
 void RelaxProblem::addMultiRayTrackCosts(const MeasurementGraph &graph, const RelaxOptionSet &options,
                                          double grid_fraction)
 {
     _track_grid_fraction = grid_fraction;
+    const bool triangulate = options.get(Option::TRIANGULATED_RAYS);
 
     // Merge edge tracks into multi-image tracks via UnionFind
     std::vector<const FeatureTrack *> flat_tracks;
@@ -604,7 +666,7 @@ void RelaxProblem::addMultiRayTrackCosts(const MeasurementGraph &graph, const Re
     }
 
     // Group measurements by track root
-    ankerl::unordered_dense::map<size_t, std::vector<RayInfo>> track_rays;
+    ankerl::unordered_dense::map<size_t, std::vector<TrackRay>> track_rays;
 
     for (size_t i = 0; i < flat_tracks.size(); i++)
     {
@@ -626,8 +688,8 @@ void RelaxProblem::addMultiRayTrackCosts(const MeasurementGraph &graph, const Re
             if (already_present)
                 continue;
 
-            auto opt_iter = _nodes_to_optimize.find(m.node_id);
-            if (opt_iter == _nodes_to_optimize.end())
+            const auto po = nodeid2poseopt(graph, m.node_id, false);
+            if (po.pose_ptr == nullptr)
                 continue;
 
             const auto *node = graph.getNode(m.node_id);
@@ -637,9 +699,8 @@ void RelaxProblem::addMultiRayTrackCosts(const MeasurementGraph &graph, const Re
             const auto &model = *node->payload.model;
             const auto &pixel = node->payload.features[m.feature_index].location;
 
-            const NodePose &pose = *opt_iter->second;
-            rays.push_back(RayInfo{m.node_id, m.feature_index, model.id, pose.position, image_to_3d(pixel, model),
-                                   pixel, pose.orientation, poseBlock(m.node_id, pose.orientation, pose.position)});
+            rays.push_back(TrackRay{m.node_id, m.feature_index, model.id, *po.loc_ptr, image_to_3d(pixel, model),
+                                   pixel, *po.rot_ptr, po.pose_ptr, po.optimize});
         }
     }
 
@@ -672,7 +733,7 @@ void RelaxProblem::addMultiRayTrackCosts(const MeasurementGraph &graph, const Re
     }
 
     MeshIntersectionSearcher intersectionSearcher;
-    if (!intersectionSearcher.init(_mesh))
+    if (!triangulate && !intersectionSearcher.init(_mesh))
         return;
 
     size_t tracks_added = 0;
@@ -684,185 +745,237 @@ void RelaxProblem::addMultiRayTrackCosts(const MeasurementGraph &graph, const Re
         if (!accepted_tracks.contains(root))
             continue;
 
-        // Compute mean camera location for mesh triangle lookup
-        Eigen::Vector3d mean_loc = Eigen::Vector3d::Zero();
-        for (const auto &r : rays)
-            mean_loc += r.camera_loc;
-        mean_loc /= static_cast<double>(rays.size());
-
-        // Intersect first ray pair to find approximate 3D point for mesh lookup
-        Eigen::Vector3d ray0_world = rays[0].orientation * rays[0].camera_ray;
-        Eigen::Vector3d ray1_world = rays[1].orientation * rays[1].camera_ray;
-        auto intersection_3d =
-            rayIntersection(ray_d{ray0_world, rays[0].camera_loc}, ray_d{ray1_world, rays[1].camera_loc});
-
-        if (!intersection_3d.first.allFinite())
+        const std::vector<TrackRay> good_rays =
+            triangulate ? addTriangulatedTrackCost(rays, !options.hasAll({Option::POSITION}))
+                        : addMeshTrackCost(graph, rays, options, intersectionSearcher);
+        if (good_rays.empty())
             continue;
 
-        // Find the mesh triangle at this point
-        const auto tri = intersectionSearcher.triangleIntersect(
-            ray_d{Eigen::Vector3d(0, 0, -1), {intersection_3d.first.x(), intersection_3d.first.y(), mean_loc.z()}});
-        if (tri.type != MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
-            continue;
-
-        const auto &triangle = tri.nodeLocations;
-        std::array<Eigen::Vector2d, 3> corner2d = {triangle[0]->topRows<2>(), triangle[1]->topRows<2>(),
-                                                   triangle[2]->topRows<2>()};
-        std::array<double *, 3> zValues;
-        for (size_t i = 0; i < 3; i++)
-            zValues[i] = const_cast<double *>(&triangle[i]->z());
-
-        // Outlier rejection: compute per-ray intersection distance from centroid
-        std::vector<std::pair<double, size_t>> ray_scores(rays.size());
+        for (const auto &ray : good_rays)
         {
-            plane_3_corners_d plane3;
-            for (int i = 0; i < 3; i++)
-                plane3.corner[i] = *triangle[i];
-            auto pno = cornerPlane2normOffsetPlane(plane3);
+            setPoseParameterization(ray.pose_ptr, ray.optimize, options);
+            _multi_ray_measurements.insert(NodeIdFeatureIndex{ray.node_id, ray.feature_index});
 
-            std::vector<Eigen::Vector3d> intersections(rays.size());
-            bool all_valid = true;
-            double avg_dist = 0;
-            for (size_t i = 0; i < rays.size(); i++)
-            {
-                ray_d world_ray{rays[i].orientation * rays[i].camera_ray, rays[i].camera_loc};
-                all_valid &= rayPlaneIntersection(world_ray, pno, intersections[i]);
-                avg_dist += (intersections[i] - rays[i].camera_loc).norm();
-            }
-            if (!all_valid)
-                continue;
-            avg_dist /= static_cast<double>(rays.size());
-
-            int n = std::min(static_cast<int>(intersections.size()), ROBUST_CENTROID_MAX_POINTS);
-            double huber_threshold = avg_dist * 0.01;
-            Eigen::Vector3d centroid = robustCentroid(intersections.data(), n, huber_threshold);
-
-            for (size_t i = 0; i < rays.size(); i++)
-            {
-                double angle_err = (intersections[i] - centroid).norm() / avg_dist;
-                ray_scores[i] = {angle_err, i};
-            }
-        }
-
-        // Reject rays with error > 3x median
-        std::sort(ray_scores.begin(), ray_scores.end());
-        double median_err = ray_scores[ray_scores.size() / 2].first;
-        double threshold = std::max(median_err * 3.0, 1e-6);
-
-        std::vector<RayInfo> good_rays;
-        for (const auto &[err, idx] : ray_scores)
-        {
-            if (err <= threshold && good_rays.size() < 5)
-                good_rays.push_back(rays[idx]);
-        }
-
-        if (good_rays.size() < 3)
-            continue;
-
-        const int N = static_cast<int>(good_rays.size());
-
-        // Check if all rays share the same camera model for intrinsics optimization
-        bool all_same_model = true;
-        for (int i = 1; i < N; i++)
-        {
-            if (good_rays[i].camera_model_id != good_rays[0].camera_model_id)
-            {
-                all_same_model = false;
-                break;
-            }
-        }
-
-        bool use_focal_radial =
-            all_same_model && options.hasAny(RelaxOptionSet{Option::FOCAL_LENGTH, Option::PRINCIPAL_POINT,
-                                                            Option::LENS_DISTORTIONS_RADIAL});
-
-        std::vector<double *> param_blocks;
-        ceres::CostFunction *cost = nullptr;
-
-        InverseDifferentiableCameraModel<double> *inv_model_ptr = nullptr;
-
-        if (use_focal_radial)
-        {
-            auto inverse_iter = _inverse_cam_model_to_optimize.find(good_rays[0].camera_model_id);
-            if (inverse_iter == _inverse_cam_model_to_optimize.end())
-            {
-                const auto *node = graph.getNode(good_rays[0].node_id);
-                _inverse_cam_model_to_optimize[good_rays[0].camera_model_id] = convertModel(*node->payload.model);
-                inverse_iter = _inverse_cam_model_to_optimize.find(good_rays[0].camera_model_id);
-            }
-            inv_model_ptr = &inverse_iter->second;
-
-            // z-heights, focal, principal, radial, then poses
-            for (int i = 0; i < 3; i++)
-                param_blocks.push_back(zValues[i]);
-            param_blocks.push_back(&inv_model_ptr->focal_length_pixels);
-            param_blocks.push_back(inv_model_ptr->principle_point.data());
-            param_blocks.push_back(inv_model_ptr->radial_distortion.data());
-            std::vector<Eigen::Vector2d> pixels;
-            for (int i = 0; i < N; i++)
-            {
-                param_blocks.push_back(good_rays[i].pose_ptr);
-                pixels.push_back(good_rays[i].pixel);
-            }
-
-            cost = newAutoDiffPlaneIntersectionAngleCost_NRay_FocalRadial(pixels, corner2d, *inv_model_ptr);
-        }
-        else
-        {
-            // z-heights, then poses
-            for (int i = 0; i < 3; i++)
-                param_blocks.push_back(zValues[i]);
-            std::vector<Eigen::Vector3d> camera_rays;
-            for (int i = 0; i < N; i++)
-            {
-                param_blocks.push_back(good_rays[i].pose_ptr);
-                camera_rays.push_back(good_rays[i].camera_ray);
-            }
-
-            cost = newAutoDiffPlaneIntersectionAngleCost_NRay(camera_rays, corner2d);
-        }
-
-        if (cost == nullptr)
-            continue;
-
-        _problem->AddResidualBlock(cost, nullptr, param_blocks);
-
-        if (inv_model_ptr != nullptr)
-        {
-            _problem->SetParameterLowerBound(&inv_model_ptr->focal_length_pixels, 0, 100.0);
-            _problem->SetParameterUpperBound(&inv_model_ptr->focal_length_pixels, 0, 20000.0);
-            if (!options.hasAny(RelaxOptionSet{Option::FOCAL_LENGTH}))
-                _problem->SetParameterBlockConstant(&inv_model_ptr->focal_length_pixels);
-            if (!options.hasAny(RelaxOptionSet{Option::PRINCIPAL_POINT}))
-                _problem->SetParameterBlockConstant(inv_model_ptr->principle_point.data());
-            setRadialDistortionParameterization(inv_model_ptr->radial_distortion.data(), options);
-
-            const auto *node = graph.getNode(good_rays[0].node_id);
-            trackRadialObservation(inv_model_ptr->radial_distortion.data(), node->payload.model->pixels_rows,
-                                   node->payload.model->pixels_cols, inv_model_ptr->focal_length_pixels);
-        }
-
-        for (int i = 0; i < N; i++)
-        {
-            setPoseParameterization(good_rays[i].pose_ptr, true, options);
-            _multi_ray_measurements.insert(NodeIdFeatureIndex{good_rays[i].node_id, good_rays[i].feature_index});
-
-            const auto *node = graph.getNode(good_rays[i].node_id);
+            const auto *node = graph.getNode(ray.node_id);
             if (node != nullptr)
-            {
-                const auto &model = *node->payload.model;
-                double nx = good_rays[i].pixel.x() / model.pixels_cols;
-                double ny = good_rays[i].pixel.y() / model.pixels_rows;
-                int gi = static_cast<int>(std::floor(nx / grid_fraction));
-                int gj = static_cast<int>(std::floor(ny / grid_fraction));
-                _multi_ray_covered_cells[good_rays[i].node_id].insert(gridCellKey(gi, gj));
-            }
+                _multi_ray_covered_cells[ray.node_id].insert(trackCellKey(ray.pixel, *node->payload.model));
         }
 
         tracks_added++;
     }
 
     spdlog::info("Added {} multi-ray track costs (3-5 rays)", tracks_added);
+}
+
+std::vector<TrackRay> RelaxProblem::addMeshTrackCost(const MeasurementGraph &graph, const std::vector<TrackRay> &rays,
+                                                     const RelaxOptionSet &options,
+                                                     MeshIntersectionSearcher &intersectionSearcher)
+{
+    // Compute mean camera location for mesh triangle lookup
+    Eigen::Vector3d mean_loc = Eigen::Vector3d::Zero();
+    for (const auto &r : rays)
+        mean_loc += r.camera_loc;
+    mean_loc /= static_cast<double>(rays.size());
+
+    // Intersect first ray pair to find approximate 3D point for mesh lookup
+    Eigen::Vector3d ray0_world = rays[0].orientation * rays[0].camera_ray;
+    Eigen::Vector3d ray1_world = rays[1].orientation * rays[1].camera_ray;
+    auto intersection_3d =
+        rayIntersection(ray_d{ray0_world, rays[0].camera_loc}, ray_d{ray1_world, rays[1].camera_loc});
+
+    if (!intersection_3d.first.allFinite())
+        return {};
+
+    // Find the mesh triangle at this point
+    const auto tri = intersectionSearcher.triangleIntersect(
+        ray_d{Eigen::Vector3d(0, 0, -1), {intersection_3d.first.x(), intersection_3d.first.y(), mean_loc.z()}});
+    if (tri.type != MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
+        return {};
+
+    const auto &triangle = tri.nodeLocations;
+    std::array<Eigen::Vector2d, 3> corner2d = {triangle[0]->topRows<2>(), triangle[1]->topRows<2>(),
+                                               triangle[2]->topRows<2>()};
+    std::array<double *, 3> zValues;
+    for (size_t i = 0; i < 3; i++)
+        zValues[i] = const_cast<double *>(&triangle[i]->z());
+
+    // Outlier rejection: compute per-ray intersection distance from centroid
+    std::vector<std::pair<double, size_t>> ray_scores(rays.size());
+    {
+        plane_3_corners_d plane3;
+        for (int i = 0; i < 3; i++)
+            plane3.corner[i] = *triangle[i];
+        auto pno = cornerPlane2normOffsetPlane(plane3);
+
+        std::vector<Eigen::Vector3d> intersections(rays.size());
+        bool all_valid = true;
+        double avg_dist = 0;
+        for (size_t i = 0; i < rays.size(); i++)
+        {
+            ray_d world_ray{rays[i].orientation * rays[i].camera_ray, rays[i].camera_loc};
+            all_valid &= rayPlaneIntersection(world_ray, pno, intersections[i]);
+            avg_dist += (intersections[i] - rays[i].camera_loc).norm();
+        }
+        if (!all_valid)
+            return {};
+        avg_dist /= static_cast<double>(rays.size());
+
+        int n = std::min(static_cast<int>(intersections.size()), ROBUST_CENTROID_MAX_POINTS);
+        double huber_threshold = avg_dist * 0.01;
+        Eigen::Vector3d centroid = robustCentroid(intersections.data(), n, huber_threshold);
+
+        for (size_t i = 0; i < rays.size(); i++)
+        {
+            double angle_err = (intersections[i] - centroid).norm() / avg_dist;
+            ray_scores[i] = {angle_err, i};
+        }
+    }
+
+    std::vector<TrackRay> good_rays = selectInlierRays(ray_scores, rays);
+    if (good_rays.size() < 3)
+        return {};
+
+    const int N = static_cast<int>(good_rays.size());
+
+    // Check if all rays share the same camera model for intrinsics optimization
+    bool all_same_model = true;
+    for (int i = 1; i < N; i++)
+    {
+        if (good_rays[i].camera_model_id != good_rays[0].camera_model_id)
+        {
+            all_same_model = false;
+            break;
+        }
+    }
+
+    bool use_focal_radial =
+        all_same_model &&
+        options.hasAny(RelaxOptionSet{Option::FOCAL_LENGTH, Option::PRINCIPAL_POINT, Option::LENS_DISTORTIONS_RADIAL});
+
+    std::vector<double *> param_blocks;
+    ceres::CostFunction *cost = nullptr;
+
+    InverseDifferentiableCameraModel<double> *inv_model_ptr = nullptr;
+
+    if (use_focal_radial)
+    {
+        auto inverse_iter = _inverse_cam_model_to_optimize.find(good_rays[0].camera_model_id);
+        if (inverse_iter == _inverse_cam_model_to_optimize.end())
+        {
+            const auto *node = graph.getNode(good_rays[0].node_id);
+            _inverse_cam_model_to_optimize[good_rays[0].camera_model_id] = convertModel(*node->payload.model);
+            inverse_iter = _inverse_cam_model_to_optimize.find(good_rays[0].camera_model_id);
+        }
+        inv_model_ptr = &inverse_iter->second;
+
+        // z-heights, focal, principal, radial, then poses
+        for (int i = 0; i < 3; i++)
+            param_blocks.push_back(zValues[i]);
+        param_blocks.push_back(&inv_model_ptr->focal_length_pixels);
+        param_blocks.push_back(inv_model_ptr->principle_point.data());
+        param_blocks.push_back(inv_model_ptr->radial_distortion.data());
+        std::vector<Eigen::Vector2d> pixels;
+        for (int i = 0; i < N; i++)
+        {
+            param_blocks.push_back(good_rays[i].pose_ptr);
+            pixels.push_back(good_rays[i].pixel);
+        }
+
+        cost = newAutoDiffPlaneIntersectionAngleCost_NRay_FocalRadial(pixels, corner2d, *inv_model_ptr);
+    }
+    else
+    {
+        // z-heights, then poses
+        for (int i = 0; i < 3; i++)
+            param_blocks.push_back(zValues[i]);
+        std::vector<Eigen::Vector3d> camera_rays;
+        for (int i = 0; i < N; i++)
+        {
+            param_blocks.push_back(good_rays[i].pose_ptr);
+            camera_rays.push_back(good_rays[i].camera_ray);
+        }
+
+        cost = newAutoDiffPlaneIntersectionAngleCost_NRay(camera_rays, corner2d);
+    }
+
+    if (cost == nullptr)
+        return {};
+
+    _problem->AddResidualBlock(cost, nullptr, param_blocks);
+
+    if (inv_model_ptr != nullptr)
+    {
+        _problem->SetParameterLowerBound(&inv_model_ptr->focal_length_pixels, 0, 100.0);
+        _problem->SetParameterUpperBound(&inv_model_ptr->focal_length_pixels, 0, 20000.0);
+        if (!options.hasAny(RelaxOptionSet{Option::FOCAL_LENGTH}))
+            _problem->SetParameterBlockConstant(&inv_model_ptr->focal_length_pixels);
+        if (!options.hasAny(RelaxOptionSet{Option::PRINCIPAL_POINT}))
+            _problem->SetParameterBlockConstant(inv_model_ptr->principle_point.data());
+        setRadialDistortionParameterization(inv_model_ptr->radial_distortion.data(), options);
+
+        const auto *node = graph.getNode(good_rays[0].node_id);
+        trackRadialObservation(inv_model_ptr->radial_distortion.data(), node->payload.model->pixels_rows,
+                               node->payload.model->pixels_cols, inv_model_ptr->focal_length_pixels);
+    }
+
+    return good_rays;
+}
+
+// Reject rays with error > 3x median
+std::vector<TrackRay> RelaxProblem::selectInlierRays(std::vector<std::pair<double, size_t>> &ray_scores,
+                                                     const std::vector<TrackRay> &rays)
+{
+    std::sort(ray_scores.begin(), ray_scores.end());
+    const double threshold = std::max(ray_scores[ray_scores.size() / 2].first * 3.0, 1e-6);
+
+    std::vector<TrackRay> good_rays;
+    for (const auto &[err, idx] : ray_scores)
+    {
+        if (err <= threshold && good_rays.size() < 5)
+            good_rays.push_back(rays[idx]);
+    }
+    return good_rays;
+}
+
+std::vector<TrackRay> RelaxProblem::addTriangulatedTrackCost(const std::vector<TrackRay> &rays, bool fix_positions)
+{
+    Eigen::Matrix3d normal_matrix = Eigen::Matrix3d::Zero();
+    Eigen::Vector3d normal_rhs = Eigen::Vector3d::Zero();
+    for (const auto &r : rays)
+    {
+        const Eigen::Vector3d dir = (r.orientation * r.camera_ray).normalized();
+        const Eigen::Matrix3d perpendicular = Eigen::Matrix3d::Identity() - dir * dir.transpose();
+        normal_matrix += perpendicular;
+        normal_rhs += perpendicular * r.camera_loc;
+    }
+    const Eigen::Vector3d point = normal_matrix.ldlt().solve(normal_rhs);
+    if (!point.allFinite())
+        return {};
+
+    std::vector<std::pair<double, size_t>> ray_scores(rays.size());
+    for (size_t i = 0; i < rays.size(); i++)
+    {
+        const Eigen::Vector3d p_cam = rays[i].orientation.inverse() * (point - rays[i].camera_loc);
+        ray_scores[i] = {(p_cam.normalized() - rays[i].camera_ray.normalized()).norm(), i};
+    }
+
+    const std::vector<TrackRay> good_rays = selectInlierRays(ray_scores, rays);
+    if (good_rays.size() < 3 ||
+        std::none_of(good_rays.begin(), good_rays.end(), [](const TrackRay &r) { return r.optimize; }))
+        return {};
+
+    std::vector<Eigen::Vector3d> camera_rays, camera_positions;
+    std::vector<double *> param_blocks;
+    for (const auto &r : good_rays)
+    {
+        camera_rays.push_back(r.camera_ray);
+        if (fix_positions)
+            camera_positions.push_back(r.camera_loc);
+        param_blocks.push_back(r.pose_ptr);
+    }
+    _problem->AddResidualBlock(newAutoDiffTriangulatedReprojectionCost(camera_rays, camera_positions), &_loss,
+                               param_blocks);
+    return good_rays;
 }
 
 void RelaxProblem::relaxObservedModelOnly()

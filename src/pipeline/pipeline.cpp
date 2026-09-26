@@ -22,6 +22,7 @@
 #include <spdlog/spdlog.h>
 #include <usm.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <deque>
@@ -559,17 +560,35 @@ Pipeline::Impl::Transition Pipeline::Impl::initial_processing()
         load_stage->init(graph, paths);
         link_stage->init(graph, imageGPSLocations, previous_loaded_ids);
         relax_stage->init(graph, previous_linked_ids, imageGPSLocations, false, true,
-                          {Option::ORIENTATION, Option::GROUND_PLANE});
+                          {Option::ORIENTATION, Option::TRIANGULATED_RAYS});
+
+        const auto batch_start = std::chrono::steady_clock::now();
+        const auto elapsed = [batch_start] {
+            return std::chrono::duration<double>(std::chrono::steady_clock::now() - batch_start).count();
+        };
+        const auto log_stage_done = [&elapsed](const char *name, fvec funcs) {
+            auto remaining = std::make_shared<std::atomic<size_t>>(funcs.size());
+            for (auto &f : funcs)
+                f = [&elapsed, name, remaining, f = std::move(f)] {
+                    f();
+                    if (--*remaining == 0)
+                        spdlog::debug("{} stage done after {:.2f}s", name, elapsed());
+                };
+            return funcs;
+        };
 
         fvec funcs;
         {
-            fvec load_funcs = load_stage->get_runners();
-            fvec link_funcs = link_stage->get_runners(graph);
-            fvec relax_funcs = relax_stage->get_runners(graph);
+            fvec load_funcs = log_stage_done("load", load_stage->get_runners());
+            fvec link_funcs = log_stage_done("link", link_stage->get_runners(graph));
+            fvec relax_funcs = log_stage_done("relax", relax_stage->get_runners(graph));
+            spdlog::debug("Batch starting: {} load, {} link, {} relax runners", load_funcs.size(), link_funcs.size(),
+                          relax_funcs.size());
             funcs = interleave<fvec>({load_funcs, link_funcs, relax_funcs});
         }
 
         run_parallel(funcs, parallelism);
+        spdlog::debug("Batch done after {:.2f}s", elapsed());
 
         next_loaded_ids = load_stage->finalize(coordinate_system, graph, imageGPSLocations);
         next_linked_ids = link_stage->finalize(graph);

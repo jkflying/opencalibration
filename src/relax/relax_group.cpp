@@ -16,6 +16,7 @@ void RelaxGroup::init(const MeasurementGraph &graph, const std::vector<size_t> &
                       const RelaxConfig &config)
 {
     _directly_connected.clear();
+    _candidate_edges.clear();
     _edges_to_optimize.clear();
     _nodes_to_optimize.clear();
     _local_poses.clear();
@@ -66,13 +67,34 @@ void RelaxGroup::init(const MeasurementGraph &graph, const std::vector<size_t> &
         }
     }
 
+    ankerl::unordered_dense::set<size_t> fixed_nodes;
+    for (size_t edge_id : _candidate_edges)
+    {
+        const auto *edge = graph.getEdge(edge_id);
+        const bool source_optimized = _nodes_to_optimize.contains(edge->getSource());
+        const bool dest_optimized = _nodes_to_optimize.contains(edge->getDest());
+        if (source_optimized && dest_optimized)
+        {
+            _edges_to_optimize.insert(edge_id);
+            continue;
+        }
+
+        const size_t fixed_id = source_optimized ? edge->getDest() : edge->getSource();
+        const auto &fixed = graph.getNode(fixed_id)->payload;
+        if (fixed.orientation.coeffs().allFinite() && fixed.position.allFinite())
+        {
+            fixed_nodes.insert(fixed_id);
+            _edges_to_optimize.insert(edge_id);
+        }
+    }
+
     std::sort(_local_poses.begin(), _local_poses.end(), [&graph](const NodePose &a, const NodePose &b) {
         const std::string &a_s = graph.getNode(a.node_id)->payload.path, &b_s = graph.getNode(b.node_id)->payload.path;
         return a_s < b_s;
     });
 
-    spdlog::info("Queueing {} image nodes, {} edges for graph relaxation", _local_poses.size(),
-                 _edges_to_optimize.size());
+    spdlog::info("Queueing {} image nodes, {} fixed, {} edges for graph relaxation", _local_poses.size(),
+                 fixed_nodes.size(), _edges_to_optimize.size());
 }
 
 void RelaxGroup::build_optimization_edges(const MeasurementGraph &graph,
@@ -94,19 +116,13 @@ void RelaxGroup::build_optimization_edges(const MeasurementGraph &graph,
             ideally_connected_nodes.find(edge->getDest()) != ideally_connected_nodes.end())
         {
             _directly_connected.insert(edge->getDest());
-            if (_nodes_to_optimize.find(edge->getDest()) != _nodes_to_optimize.end())
-            {
-                _edges_to_optimize.insert(edge_id);
-            }
+            _candidate_edges.insert(edge_id);
         }
         else if (edge->getDest() == node_id &&
                  ideally_connected_nodes.find(edge->getSource()) != ideally_connected_nodes.end())
         {
             _directly_connected.insert(edge->getSource());
-            if (_nodes_to_optimize.find(edge->getSource()) != _nodes_to_optimize.end())
-            {
-                _edges_to_optimize.insert(edge_id);
-            }
+            _candidate_edges.insert(edge_id);
         }
     }
 }

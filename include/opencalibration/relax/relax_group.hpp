@@ -30,6 +30,7 @@ class RelaxGroup
     ankerl::unordered_dense::set<size_t> _edges_to_optimize;
     ankerl::unordered_dense::set<size_t> _nodes_to_optimize;
     ankerl::unordered_dense::set<size_t> _directly_connected;
+    ankerl::unordered_dense::set<size_t> _candidate_edges;
 
     void build_optimization_edges(const MeasurementGraph &graph, const jk::tree::KDTree<size_t, 2> &imageGPSLocations,
                                   size_t node_id);

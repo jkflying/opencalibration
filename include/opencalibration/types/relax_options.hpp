@@ -14,6 +14,7 @@ enum class Option : int32_t
     GROUND_PLANE, // choose just one of these
     GROUND_MESH,
     POINTS_3D,
+    TRIANGULATED_RAYS,
 
     FOCAL_LENGTH,
     PRINCIPAL_POINT,
@@ -98,6 +99,8 @@ inline std::string toString(Option o)
         return "GROUND_MESH";
     case Option::POINTS_3D:
         return "POINTS_3D";
+    case Option::TRIANGULATED_RAYS:
+        return "TRIANGULATED_RAYS";
     case Option::FOCAL_LENGTH:
         return "FOCAL_LENGTH";
     case Option::PRINCIPAL_POINT:

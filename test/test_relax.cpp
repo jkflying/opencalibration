@@ -11,6 +11,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <optional>
 #include <random>
 
 using namespace opencalibration;
@@ -494,6 +495,28 @@ TEST_F(relax_group, measurement_3_images_points)
             << "g: " << ground_ori[i].coeffs().transpose();
 }
 
+TEST_F(relax_group, measurement_3_images_triangulated_rays)
+{
+    // GIVEN: a graph, 3 images with edges between them all observing non-planar points, with their rotation disturbed
+    init_cameras();
+    add_point_measurements(generate_3d_points());
+    add_ori_noise({-0.05, 0.05, 0.05});
+
+    // WHEN: we relax them with triangulated rays
+    ankerl::unordered_dense::set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
+    relax(graph, np, cam_models, edges, {Option::ORIENTATION, Option::TRIANGULATED_RAYS}, {});
+
+    // THEN: it should put them back into the original orientation
+    for (int i = 0; i < 3; i++)
+        EXPECT_LT(Eigen::AngleAxisd(np[i].orientation.inverse() * ground_ori[i]).angle(), 1e-6)
+            << i << ": " << np[i].orientation.coeffs().transpose() << std::endl
+            << "g: " << ground_ori[i].coeffs().transpose();
+
+    // AND: the positions should not move, since they aren't being optimized
+    for (int i = 0; i < 3; i++)
+        EXPECT_EQ(np[i].position, ground_pos[i]) << i;
+}
+
 TEST_F(relax_group, measurement_3_images_plane)
 {
     // GIVEN: a graph, 3 images with edges between them all, then with their rotation disturbed
@@ -650,6 +673,33 @@ TEST_F(relax_group, group_with_connection_depth_has_unique_nodes)
     EXPECT_EQ(optimized_ids, expected_ids);
 }
 
+TEST_F(relax_group, group_anchors_to_fixed_neighbours)
+{
+    // GIVEN: a graph, 3 images with edges between them all, where only the first image has a disturbed orientation
+    init_cameras();
+    add_point_measurements(generate_3d_points());
+    add_ori_noise_graph({-0.05, 0, 0});
+    jk::tree::KDTree<size_t, 2> imageGPSLocations;
+    for (size_t i = 0; i < 3; i++)
+    {
+        imageGPSLocations.addPoint({ground_pos[i].x(), ground_pos[i].y()}, id[i]);
+    }
+
+    // WHEN: we relax a group of just the first image, with no connection depth
+    RelaxGroup group;
+    group.init(graph, {id[0]}, imageGPSLocations, 0, {Option::ORIENTATION, Option::TRIANGULATED_RAYS});
+    group.run(graph, {});
+    auto optimized_ids = group.finalize(graph);
+
+    // THEN: only the first image is optimized
+    EXPECT_EQ(optimized_ids, std::vector<size_t>{id[0]});
+
+    // AND: the solved neighbours pull it back into the original orientation
+    EXPECT_LT(Eigen::AngleAxisd(graph.getNode(id[0])->payload.orientation.inverse() * ground_ori[0]).angle(), 1e-6);
+    for (int i = 1; i < 3; i++)
+        EXPECT_EQ(graph.getNode(id[i])->payload.orientation.coeffs(), ground_ori[i].coeffs()) << i;
+}
+
 class TestRelaxProblem : public RelaxProblem
 {
   public:
@@ -666,6 +716,12 @@ class TestRelaxProblem : public RelaxProblem
     const ceres::Solver::Summary &test_get_solver_summary() const
     {
         return _summary;
+    }
+
+    size_t test_num_multi_ray_measurements(std::optional<size_t> node_id = std::nullopt) const
+    {
+        return std::count_if(_multi_ray_measurements.begin(), _multi_ray_measurements.end(),
+                             [&](const NodeIdFeatureIndex &m) { return !node_id || m.node_id == *node_id; });
     }
 
     size_t test_num_grid_filtered_matches(size_t node_id, size_t edge_id)
@@ -743,6 +799,67 @@ TEST_F(relax_group, measurement_3_images_points_internals_point_triangulation_ex
     EXPECT_LE(rp.test_get_solver_summary().iterations.size(), 2);
     EXPECT_LT(rp.test_get_solver_summary().initial_cost, 1e-10);
     EXPECT_LT(rp.test_get_solver_summary().final_cost, 1e-10);
+}
+
+TEST_F(relax_group, measurement_3_images_triangulated_rays_internals_multi_ray_tracks_exact)
+{
+    // GIVEN: a graph, 3 images with edges between them all, observing non-planar points with zero noise
+    init_cameras();
+    add_point_measurements(generate_3d_points());
+
+    // WHEN: we set up the triangulated rays problem
+    ankerl::unordered_dense::set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
+    TestRelaxProblem rp;
+    rp.setupTriangulatedRaysProblem(graph, np, cam_models, edges, {Option::ORIENTATION, Option::TRIANGULATED_RAYS});
+
+    // THEN: the 3-view tracks should be used
+    EXPECT_GT(rp.test_num_multi_ray_measurements(), 0);
+
+    // AND: the true poses should have zero cost despite the non-planar terrain
+    rp.solve();
+    EXPECT_LT(rp.test_get_solver_summary().initial_cost, 1e-10);
+    EXPECT_LT(rp.test_get_solver_summary().final_cost, 1e-10);
+}
+
+TEST_F(relax_group, measurement_3_images_triangulated_rays_internals_multi_ray_tracks_include_fixed_images)
+{
+    // GIVEN: a graph, 3 images with edges between them all, where the first image is already solved and fixed
+    init_cameras();
+    add_point_measurements(generate_3d_points());
+    np.erase(np.begin());
+
+    // WHEN: we set up the triangulated rays problem
+    ankerl::unordered_dense::set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
+    TestRelaxProblem rp;
+    rp.setupTriangulatedRaysProblem(graph, np, cam_models, edges, {Option::ORIENTATION, Option::TRIANGULATED_RAYS});
+
+    // THEN: the fixed image should still anchor the 3-view tracks
+    EXPECT_GT(rp.test_num_multi_ray_measurements(id[0]), 0);
+
+    // AND: it should stay fixed
+    rp.solve();
+    EXPECT_EQ(graph.getNode(id[0])->payload.orientation.coeffs(), ground_ori[0].coeffs());
+    EXPECT_LT(rp.test_get_solver_summary().final_cost, 1e-10);
+}
+
+TEST_F(relax_group, measurement_3_images_mesh_internals_multi_ray_tracks_include_fixed_images)
+{
+    // GIVEN: a graph, 3 images with edges between them all, where the first image is already solved and fixed
+    init_cameras();
+    add_point_measurements(generate_planar_points());
+    np.erase(np.begin());
+
+    // WHEN: we set up the ground mesh problem
+    ankerl::unordered_dense::set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
+    TestRelaxProblem rp;
+    rp.setupGroundMeshProblem(graph, np, cam_models, edges, {Option::ORIENTATION, Option::GROUND_MESH}, {});
+
+    // THEN: the fixed image should still anchor the 3-view tracks
+    EXPECT_GT(rp.test_num_multi_ray_measurements(id[0]), 0);
+
+    // AND: it should stay fixed
+    rp.solve();
+    EXPECT_EQ(graph.getNode(id[0])->payload.orientation.coeffs(), ground_ori[0].coeffs());
 }
 
 TEST_F(relax_group, measurement_3_images_points_internals_point_triangulation_noise)

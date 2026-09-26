@@ -10,7 +10,8 @@ add_library(oc_relax relax.cpp
                      autodiff/plane_intersection_focal_radial.cpp
                      autodiff/plane_intersection_nray.cpp
                      autodiff/plane_intersection_nray_focal_radial.cpp
-                     autodiff/priors.cpp)
+                     autodiff/priors.cpp
+                     autodiff/triangulated_reprojection.cpp)
 target_include_directories(oc_relax PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)

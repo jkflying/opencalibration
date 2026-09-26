@@ -41,13 +41,11 @@ surface_model runRelativeOrientation(const MeasurementGraph &graph, std::vector<
     return rp.getSurfaceModel();
 }
 
-surface_model runGroundPlane(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
-                             ankerl::unordered_dense::map<size_t, CameraModel> &cam_models,
-                             const ankerl::unordered_dense::set<size_t> &edges_to_optimize,
-                             const RelaxOptionSet &options)
+void initializeOrientationsOnGroundPlane(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                                         ankerl::unordered_dense::map<size_t, CameraModel> &cam_models,
+                                         const ankerl::unordered_dense::set<size_t> &edges_to_optimize,
+                                         const RelaxOptionSet &options)
 {
-    PerformanceMeasure p("Relax runner ground plane");
-
     Eigen::Quaterniond previous_node_orientation = DOWN_ORIENTED_NORTH;
     for (auto &node : nodes)
     {
@@ -61,8 +59,12 @@ surface_model runGroundPlane(const MeasurementGraph &graph, std::vector<NodePose
             if (graph.size_nodes() > 2 * nodes.size())
             {
                 std::vector<NodePose> justThis{node};
+                ankerl::unordered_dense::set<size_t> own_edges;
+                for (size_t edge_id : graph.getNode(node.node_id)->getEdges())
+                    if (edges_to_optimize.contains(edge_id))
+                        own_edges.insert(edge_id);
                 RelaxProblem rp;
-                rp.setupGroundPlaneProblem(graph, justThis, cam_models, edges_to_optimize, options);
+                rp.setupGroundPlaneProblem(graph, justThis, cam_models, own_edges, options);
                 rp.relaxObservedModelOnly();
                 rp.solve();
                 node = justThis[0];
@@ -77,6 +79,15 @@ surface_model runGroundPlane(const MeasurementGraph &graph, std::vector<NodePose
         }
         previous_node_orientation = node.orientation;
     }
+}
+
+surface_model runGroundPlane(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                             ankerl::unordered_dense::map<size_t, CameraModel> &cam_models,
+                             const ankerl::unordered_dense::set<size_t> &edges_to_optimize,
+                             const RelaxOptionSet &options)
+{
+    PerformanceMeasure p("Relax runner ground plane");
+    initializeOrientationsOnGroundPlane(graph, nodes, cam_models, edges_to_optimize, options);
 
     RelaxProblem rp;
     rp.setupGroundPlaneProblem(graph, nodes, cam_models, edges_to_optimize, options);
@@ -114,6 +125,30 @@ surface_model runPoints(const MeasurementGraph &graph, std::vector<NodePose> &no
     return rp.getSurfaceModel();
 }
 
+surface_model runTriangulatedRays(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
+                                  ankerl::unordered_dense::map<size_t, CameraModel> &cam_models,
+                                  const ankerl::unordered_dense::set<size_t> &edges_to_optimize,
+                                  const RelaxOptionSet &options)
+{
+    PerformanceMeasure p("Relax runner triangulated rays");
+    RelaxOptionSet orientation_options = options;
+    orientation_options.set(Option::POSITION, false);
+
+    initializeOrientationsOnGroundPlane(graph, nodes, cam_models, edges_to_optimize, orientation_options);
+
+    RelaxProblem rp;
+    rp.setupTriangulatedRaysProblem(graph, nodes, cam_models, edges_to_optimize, orientation_options);
+    rp.solve();
+
+    if (!options.hasAll({Option::POSITION}))
+        return rp.getSurfaceModel();
+
+    RelaxProblem position_rp;
+    position_rp.setupTriangulatedRaysProblem(graph, nodes, cam_models, edges_to_optimize, options);
+    position_rp.solve();
+    return position_rp.getSurfaceModel();
+}
+
 } // namespace
 
 namespace opencalibration
@@ -128,6 +163,8 @@ surface_model relax(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
         return runGroundMesh(graph, nodes, cam_models, edges_to_optimize, config, previousSurfaces);
     if (config.options.get(Option::POINTS_3D))
         return runPoints(graph, nodes, cam_models, edges_to_optimize, config.options);
+    if (config.options.get(Option::TRIANGULATED_RAYS))
+        return runTriangulatedRays(graph, nodes, cam_models, edges_to_optimize, config.options);
     if (config.options.get(Option::GROUND_PLANE))
         return runGroundPlane(graph, nodes, cam_models, edges_to_optimize, config.options);
     return runRelativeOrientation(graph, nodes, cam_models, edges_to_optimize);

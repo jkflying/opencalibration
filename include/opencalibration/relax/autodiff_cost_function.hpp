@@ -31,6 +31,9 @@ ceres::CostFunction *newAutoDiffPlaneIntersectionAngleCost_NRay_FocalRadial(
     const std::vector<Eigen::Vector2d> &camera_pixels, const std::array<Eigen::Vector2d, 3> &plane_points,
     const InverseDifferentiableCameraModel<double> &model);
 
+ceres::CostFunction *newAutoDiffTriangulatedReprojectionCost(const std::vector<Eigen::Vector3d> &camera_rays,
+                                                             const std::vector<Eigen::Vector3d> &camera_positions = {});
+
 ceres::CostFunction *newAutoDiffPixelErrorCost_Orientation(const CameraModel &camera_model,
                                                            const Eigen::Vector2d &camera_pixel);
 
