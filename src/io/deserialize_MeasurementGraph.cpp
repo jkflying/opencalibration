@@ -10,10 +10,60 @@
 #include <opencalibration/io/cv_raster_conversion.hpp>
 #include <rapidjson/document.h>
 #include <rapidjson/prettywriter.h>
+#include <rapidjson/reader.h>
 #include <rapidjson/stringbuffer.h>
 
 namespace
 {
+class BufferedIStream
+{
+  public:
+    typedef char Ch;
+    explicit BufferedIStream(std::istream &in) : _sb(in.rdbuf()), _buf(1 << 16)
+    {
+    }
+    Ch Peek()
+    {
+        if (_pos == _len)
+        {
+            _consumed += _len;
+            _len = static_cast<size_t>(_sb->sgetn(_buf.data(), static_cast<std::streamsize>(_buf.size())));
+            _pos = 0;
+        }
+        return _pos < _len ? _buf[_pos] : '\0';
+    }
+    Ch Take()
+    {
+        const Ch c = Peek();
+        if (_pos < _len)
+            _pos++;
+        return c;
+    }
+    size_t Tell() const
+    {
+        return _consumed + _pos;
+    }
+    Ch *PutBegin()
+    {
+        return nullptr;
+    }
+    void Put(Ch)
+    {
+    }
+    void Flush()
+    {
+    }
+    size_t PutEnd(Ch *)
+    {
+        return 0;
+    }
+
+  private:
+    std::streambuf *_sb;
+    std::vector<char> _buf;
+    size_t _pos = 0, _len = 0, _consumed = 0;
+};
+
 template <size_t N> std::bitset<N> bitset_from_bytes(const std::string &buf)
 {
     assert(buf.size() == ((N + 7) >> 3));
@@ -29,7 +79,124 @@ namespace opencalibration
 template <> class Deserializer<MeasurementGraph>
 {
   public:
-    static bool from_json(const std::string &json, MeasurementGraph &graph)
+    template <typename Value> static void readFeatures(const Value &features, std::vector<feature_2d> &out)
+    {
+        std::string descriptor;
+        out.reserve(features.Size());
+        for (const auto &feat : features.GetArray())
+        {
+            feature_2d f;
+            const char *base64_descriptor = feat.GetObject()["descriptor"].GetString();
+            descriptor.resize(Base64decode_len(base64_descriptor), '\0');
+            int actual_size = Base64decode(const_cast<char *>(descriptor.c_str()), base64_descriptor);
+            descriptor.resize(actual_size);
+            f.descriptor = bitset_from_bytes<feature_2d::DESCRIPTOR_BITS>(descriptor);
+
+            f.location.x() = feat.GetObject()["location"].GetArray()[0].GetDouble();
+            f.location.y() = feat.GetObject()["location"].GetArray()[1].GetDouble();
+
+            f.strength = feat.GetObject()["strength"].GetDouble();
+
+            out.push_back(f);
+        }
+    }
+
+    struct FeaturesHandler : rapidjson::BaseReaderHandler<rapidjson::UTF8<>, FeaturesHandler>
+    {
+        MeasurementGraph &graph;
+        std::vector<feature_2d> *out = nullptr;
+        feature_2d f;
+        std::string key, descriptor;
+        int depth = 0, loc_idx = 0;
+
+        explicit FeaturesHandler(MeasurementGraph &g) : graph(g)
+        {
+        }
+        bool StartObject()
+        {
+            if (++depth == 3)
+                f = {};
+            return true;
+        }
+        bool EndObject(rapidjson::SizeType)
+        {
+            if (depth-- == 3 && out != nullptr)
+                out->push_back(f);
+            return true;
+        }
+        bool StartArray()
+        {
+            if (++depth == 4)
+                loc_idx = 0;
+            return true;
+        }
+        bool EndArray(rapidjson::SizeType)
+        {
+            if (--depth == 1)
+                out = nullptr;
+            return true;
+        }
+        bool Key(const char *s, rapidjson::SizeType len, bool)
+        {
+            if (depth == 1)
+            {
+                auto *node = graph.getNode(std::strtoull(s, nullptr, 10));
+                out = node != nullptr ? &node->payload.features : nullptr;
+                if (out != nullptr)
+                    out->clear();
+            }
+            else
+            {
+                key.assign(s, len);
+            }
+            return true;
+        }
+        bool String(const char *s, rapidjson::SizeType, bool)
+        {
+            if (depth == 3 && key == "descriptor")
+            {
+                descriptor.resize(Base64decode_len(s), '\0');
+                descriptor.resize(Base64decode(descriptor.data(), s));
+                f.descriptor = bitset_from_bytes<feature_2d::DESCRIPTOR_BITS>(descriptor);
+            }
+            return true;
+        }
+        bool Double(double d)
+        {
+            if (depth == 4 && loc_idx < 2)
+                f.location[loc_idx++] = d;
+            else if (depth == 3 && key == "strength")
+                f.strength = d;
+            return true;
+        }
+        bool Int(int i)
+        {
+            return Double(i);
+        }
+        bool Uint(unsigned i)
+        {
+            return Double(i);
+        }
+        bool Int64(int64_t i)
+        {
+            return Double(static_cast<double>(i));
+        }
+        bool Uint64(uint64_t i)
+        {
+            return Double(static_cast<double>(i));
+        }
+    };
+
+    static bool features_from_json(std::istream &in, MeasurementGraph &graph)
+    {
+        BufferedIStream stream(in);
+        FeaturesHandler handler(graph);
+        rapidjson::Reader reader;
+        return !reader.Parse<rapidjson::kParseFullPrecisionFlag | rapidjson::kParseNanAndInfFlag>(stream, handler)
+                    .IsError();
+    }
+
+    template <typename Input> static bool from_json(Input &input, MeasurementGraph &graph)
     {
         typedef rapidjson::GenericDocument<rapidjson::UTF8<>, rapidjson::MemoryPoolAllocator<>,
                                            rapidjson::MemoryPoolAllocator<>>
@@ -42,14 +209,23 @@ template <> class Deserializer<MeasurementGraph>
         ankerl::unordered_dense::map<size_t, std::shared_ptr<CameraModel>> camera_models;
 
         DocumentType d(&valueAllocator, sizeof(parseBuffer), &parseAllocator);
-        d.Parse(json);
+        if constexpr (std::is_same_v<Input, const std::string>)
+        {
+            d.Parse(input);
+        }
+        else
+        {
+            BufferedIStream stream(input);
+            d.ParseStream(stream);
+        }
 
         bool parsed = false;
         char *end = nullptr;
         if (d.IsObject())
         {
             const auto &base = d.GetObject();
-            if (base.HasMember("version") && base["version"].IsInt64() && base["version"].GetInt64() == 1)
+            if (base.HasMember("version") && base["version"].IsInt64() &&
+                (base["version"].GetInt64() == 1 || base["version"].GetInt64() == 2))
             {
                 const auto &nodes = base["nodes"].GetObject();
                 for (const auto &node_member : nodes)
@@ -167,26 +343,12 @@ template <> class Deserializer<MeasurementGraph>
                         }
                     }
 
-                    const auto &features = node_member.value.GetObject()["features"].GetArray();
-                    std::string descriptor;
-                    for (const auto &feat : features)
+                    const auto &node_obj = node_member.value.GetObject();
+                    if (node_obj.HasMember("features"))
                     {
-                        feature_2d f;
-                        const char *base64_descriptor = feat.GetObject()["descriptor"].GetString();
-                        descriptor.resize(Base64decode_len(base64_descriptor), '\0');
-                        int actual_size = Base64decode(const_cast<char *>(descriptor.c_str()), base64_descriptor);
-                        descriptor.resize(actual_size);
-                        f.descriptor = bitset_from_bytes<feature_2d::DESCRIPTOR_BITS>(descriptor);
-
-                        f.location.x() = feat.GetObject()["location"].GetArray()[0].GetDouble();
-                        f.location.y() = feat.GetObject()["location"].GetArray()[1].GetDouble();
-
-                        f.strength = feat.GetObject()["strength"].GetDouble();
-
-                        node.payload.features.push_back(f);
+                        readFeatures(node_obj["features"], node.payload.features);
                     }
 
-                    const auto &node_obj = node_member.value.GetObject();
                     if (node_obj.HasMember("num_sparse_features"))
                     {
                         node.payload.num_sparse_features = node_obj["num_sparse_features"].GetUint64();
@@ -252,6 +414,10 @@ template <> class Deserializer<MeasurementGraph>
                     {
                         relations.relationType = camera_relations::RelationType::FUNDAMENTAL_MATRIX;
                     }
+                    else if (rel_type == "essential_matrix")
+                    {
+                        relations.relationType = camera_relations::RelationType::ESSENTIAL_MATRIX;
+                    }
                     else
                     {
                         relations.relationType = camera_relations::RelationType::UNKNOWN;
@@ -286,5 +452,15 @@ template <> class Deserializer<MeasurementGraph>
 bool deserialize(const std::string &json, MeasurementGraph &graph)
 {
     return Deserializer<MeasurementGraph>::from_json(json, graph);
+}
+
+bool deserialize(std::istream &json, MeasurementGraph &graph)
+{
+    return Deserializer<MeasurementGraph>::from_json(json, graph);
+}
+
+bool deserializeFeatures(std::istream &json, MeasurementGraph &graph)
+{
+    return Deserializer<MeasurementGraph>::features_from_json(json, graph);
 }
 } // namespace opencalibration

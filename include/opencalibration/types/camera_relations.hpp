@@ -20,6 +20,7 @@ struct camera_relations
     {
         HOMOGRAPHY,
         FUNDAMENTAL_MATRIX,
+        ESSENTIAL_MATRIX,
         UNKNOWN
     } relationType = RelationType::UNKNOWN;
 

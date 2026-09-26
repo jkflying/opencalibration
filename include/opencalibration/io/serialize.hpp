@@ -7,7 +7,8 @@
 
 namespace opencalibration
 {
-bool serialize(const MeasurementGraph &graph, std::ostream &out);
+bool serialize(const MeasurementGraph &graph, std::ostream &out, bool include_features = true);
+bool serializeFeatures(const MeasurementGraph &graph, std::ostream &out);
 
 bool serialize(const MeshGraph &graph, std::ostream &out);
 

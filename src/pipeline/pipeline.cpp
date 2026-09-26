@@ -290,11 +290,11 @@ bool Pipeline::saveCheckpoint(const std::string &checkpoint_dir)
     return opencalibration::saveCheckpoint(data, checkpoint_dir);
 }
 
-bool Pipeline::loadCheckpoint(const std::string &checkpoint_dir)
+bool Pipeline::loadCheckpoint(const std::string &checkpoint_dir, const std::string &stage)
 {
     CheckpointData data;
 
-    if (!opencalibration::loadCheckpoint(checkpoint_dir, data))
+    if (!opencalibration::loadCheckpoint(checkpoint_dir, data, stage))
     {
         return false;
     }

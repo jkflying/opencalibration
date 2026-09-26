@@ -1,4 +1,5 @@
 #include <opencalibration/extract/camera_database.hpp>
+#include <opencalibration/io/checkpoint.hpp>
 #include <opencalibration/performance/performance.hpp>
 #include <opencalibration/pipeline/pipeline.hpp>
 
@@ -210,8 +211,17 @@ int main(int argc, char *argv[])
 
     if (!checkpoint_restore.empty())
     {
-        spdlog::info("Loading checkpoint from {}", checkpoint_restore);
-        if (!p.loadCheckpoint(checkpoint_restore))
+        std::string stage;
+        const auto resume_state = Pipeline::fromString(resume_from);
+        for (const auto &s : listCheckpointStages(checkpoint_restore))
+        {
+            if (resume_state && s.state == *resume_state)
+            {
+                stage = s.name;
+            }
+        }
+        spdlog::info("Loading checkpoint {} from {}", stage.empty() ? "latest" : stage, checkpoint_restore);
+        if (!p.loadCheckpoint(checkpoint_restore, stage))
         {
             spdlog::error("Failed to load checkpoint from {}", checkpoint_restore);
             return -1;
@@ -322,19 +332,6 @@ int main(int argc, char *argv[])
                 spdlog::error("Failed to save checkpoint to {}", checkpoint_save);
             }
             previous_state = p.getState();
-        }
-    }
-
-    if (!checkpoint_save.empty())
-    {
-        spdlog::info("Saving final checkpoint to {}", checkpoint_save);
-        if (!p.saveCheckpoint(checkpoint_save))
-        {
-            spdlog::error("Failed to save checkpoint to {}", checkpoint_save);
-        }
-        else
-        {
-            std::cout << "Checkpoint saved to " << checkpoint_save << std::endl;
         }
     }
 

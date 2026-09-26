@@ -15,4 +15,4 @@ add_library(oc_io $<TARGET_OBJECTS:cv_raster_obj>
 target_include_directories(oc_io PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
-target_link_libraries(oc_io PUBLIC spdlog::spdlog)
+target_link_libraries(oc_io PUBLIC spdlog::spdlog PRIVATE zstd)

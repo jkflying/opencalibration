@@ -14,11 +14,7 @@ TEST(serialize_graph, empty_graph)
 {
     std::ostringstream serialized;
     EXPECT_TRUE(serialize(MeasurementGraph(), serialized));
-    EXPECT_EQ(serialized.str(), "{\n"
-                                "    \"version\": 1,\n"
-                                "    \"nodes\": {},\n"
-                                "    \"edges\": {}\n"
-                                "}");
+    EXPECT_EQ(serialized.str(), R"({"version":2,"nodes":{},"edges":{}})");
 }
 
 TEST(serialize_graph, one_image)

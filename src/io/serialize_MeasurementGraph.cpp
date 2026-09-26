@@ -7,6 +7,7 @@
 #define RAPIDJSON_WRITE_DEFAULT_FLAGS kWriteNanAndInfFlag
 #include <rapidjson/document.h>
 #include <rapidjson/prettywriter.h>
+#include <rapidjson/writer.h>
 #include <rapidjson/stringbuffer.h>
 
 #include <unordered_set>
@@ -51,6 +52,34 @@ struct Stream
         os->flush();
     }
 };
+
+template <typename Writer> void writeFeatures(Writer &writer, const std::vector<opencalibration::feature_2d> &features)
+{
+    writer.StartArray();
+    for (const auto &feature : features)
+    {
+        writer.StartObject();
+
+        writer.Key("location");
+        writer.StartArray();
+        writer.Double(feature.location.x());
+        writer.Double(feature.location.y());
+        writer.EndArray();
+
+        writer.Key("strength");
+        writer.Double(feature.strength);
+
+        writer.Key("descriptor");
+        std::string descriptor = bitset_to_bytes(feature.descriptor);
+        std::string base64_descriptor;
+        base64_descriptor.resize(Base64encode_len(descriptor.size()));
+        int actual_size = Base64encode(base64_descriptor.data(), descriptor.c_str(), descriptor.size());
+        writer.String(base64_descriptor.c_str(), actual_size - 1);
+
+        writer.EndObject();
+    }
+    writer.EndArray();
+}
 
 } // namespace
 namespace opencalibration
@@ -208,18 +237,34 @@ template <> class Serializer<MeasurementGraph>
         return true;
     }
 
-    static bool to_json(const MeasurementGraph &graph, std::ostream &out)
+    static bool features_to_json(const MeasurementGraph &graph, std::ostream &out)
+    {
+        Stream stream;
+        stream.os = &out;
+        rapidjson::Writer<Stream> writer(stream);
+
+        writer.StartObject();
+        for (const auto &kv : graph._nodes)
+        {
+            const std::string node_id_str = std::to_string(kv.first);
+            writer.Key(node_id_str.c_str(), node_id_str.size());
+            writeFeatures(writer, kv.second.payload.features);
+        }
+        writer.EndObject();
+        return true;
+    }
+
+    static bool to_json(const MeasurementGraph &graph, std::ostream &out, bool include_features)
     {
         Stream stream;
         stream.os = &out;
 
-        rapidjson::PrettyWriter<Stream> writer(stream);
+        rapidjson::Writer<Stream> writer(stream);
 
-        writer.SetFormatOptions(rapidjson::PrettyFormatOptions::kFormatSingleLineArray);
         writer.StartObject();
 
         writer.Key("version");
-        writer.Int64(1);
+        writer.Int64(2);
 
         writer.Key("nodes");
         writer.StartObject();
@@ -429,34 +474,11 @@ template <> class Serializer<MeasurementGraph>
                 }
                 writer.EndObject();
 
-                writer.Key("features");
-                writer.StartArray();
-
-                for (const auto &feature : node.payload.features)
+                if (include_features)
                 {
-                    writer.StartObject();
-
-                    writer.Key("location");
-                    writer.StartArray();
-                    {
-                        writer.Double(feature.location.x());
-                        writer.Double(feature.location.y());
-                    }
-                    writer.EndArray();
-
-                    writer.Key("strength");
-                    writer.Double(feature.strength);
-
-                    writer.Key("descriptor");
-                    std::string descriptor = bitset_to_bytes(feature.descriptor);
-                    std::string base64_descriptor;
-                    base64_descriptor.resize(Base64encode_len(descriptor.size()));
-                    int actual_size = Base64encode(base64_descriptor.data(), descriptor.c_str(), descriptor.size());
-                    writer.String(base64_descriptor.c_str(), actual_size - 1);
-
-                    writer.EndObject();
+                    writer.Key("features");
+                    writeFeatures(writer, node.payload.features);
                 }
-                writer.EndArray();
 
                 writer.Key("num_sparse_features");
                 writer.Uint64(node.payload.num_sparse_features);
@@ -552,6 +574,9 @@ template <> class Serializer<MeasurementGraph>
                     case camera_relations::RelationType::FUNDAMENTAL_MATRIX:
                         writer.String("fundamental_matrix");
                         break;
+                    case camera_relations::RelationType::ESSENTIAL_MATRIX:
+                        writer.String("essential_matrix");
+                        break;
                     case camera_relations::RelationType::UNKNOWN:
                         writer.String("UNKNOWN");
                         break;
@@ -596,9 +621,14 @@ template <> class Serializer<MeasurementGraph>
     }
 };
 
-bool serialize(const MeasurementGraph &graph, std::ostream &out)
+bool serialize(const MeasurementGraph &graph, std::ostream &out, bool include_features)
 {
-    return Serializer<MeasurementGraph>::to_json(graph, out);
+    return Serializer<MeasurementGraph>::to_json(graph, out, include_features);
+}
+
+bool serializeFeatures(const MeasurementGraph &graph, std::ostream &out)
+{
+    return Serializer<MeasurementGraph>::features_to_json(graph, out);
 }
 
 bool toVisualizedGeoJson(const MeasurementGraph &graph,

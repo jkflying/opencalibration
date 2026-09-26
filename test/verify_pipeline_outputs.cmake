@@ -11,8 +11,8 @@ set(EXPECTED_FILES
     test_data_thumb.png
     test_data_source.png
     test_data_overlap.png
-    test_checkpoint/graph.json
-    test_checkpoint/metadata.json
+    test_checkpoint/checkpoints.txt
+    test_checkpoint/features.json.zst
 )
 
 set(ALL_PASSED TRUE)

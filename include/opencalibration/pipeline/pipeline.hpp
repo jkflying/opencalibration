@@ -44,7 +44,7 @@ class Pipeline
     void set_generate_dense_mesh(bool generate);
 
     bool saveCheckpoint(const std::string &checkpoint_dir);
-    bool loadCheckpoint(const std::string &checkpoint_dir);
+    bool loadCheckpoint(const std::string &checkpoint_dir, const std::string &stage = "");
     bool resumeFromState(PipelineState target_state);
 
     void iterateOnce();

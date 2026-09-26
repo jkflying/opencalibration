@@ -19,7 +19,14 @@ struct CheckpointData
     uint64_t state_run_count = 0;
 };
 
+struct CheckpointStage
+{
+    std::string name;
+    PipelineState state;
+};
+
+std::vector<CheckpointStage> listCheckpointStages(const std::string &checkpoint_dir);
 bool saveCheckpoint(const CheckpointData &data, const std::string &checkpoint_dir);
-bool loadCheckpoint(const std::string &checkpoint_dir, CheckpointData &data);
+bool loadCheckpoint(const std::string &checkpoint_dir, CheckpointData &data, std::string stage = "");
 
 } // namespace opencalibration

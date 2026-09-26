@@ -205,3 +205,29 @@ TEST_F(CheckpointTest, load_missing_graph)
     CheckpointData data;
     EXPECT_FALSE(loadCheckpoint(test_checkpoint_dir, data));
 }
+
+TEST_F(CheckpointTest, stages_share_features_file)
+{
+    Pipeline p(1);
+    p.add({TEST_DATA_DIR "P2530253.JPG"});
+    while (p.getState() != PipelineState::COMPLETE)
+    {
+        p.iterateOnce();
+    }
+    ASSERT_GT(p.getGraph().cnodebegin()->second.payload.features.size(), 0u);
+
+    ASSERT_TRUE(p.saveCheckpoint(test_checkpoint_dir));
+    const auto features_path = std::filesystem::path(test_checkpoint_dir) / "features.json.zst";
+    const auto features_written = std::filesystem::last_write_time(features_path);
+    ASSERT_TRUE(p.saveCheckpoint(test_checkpoint_dir));
+    EXPECT_EQ(features_written, std::filesystem::last_write_time(features_path));
+
+    const auto stages = listCheckpointStages(test_checkpoint_dir);
+    ASSERT_EQ(2u, stages.size());
+    EXPECT_NE(stages[0].name, stages[1].name);
+    EXPECT_EQ(PipelineState::COMPLETE, stages[0].state);
+
+    CheckpointData loaded;
+    ASSERT_TRUE(loadCheckpoint(test_checkpoint_dir, loaded, stages[0].name));
+    EXPECT_TRUE(loaded.graph == p.getGraph());
+}

@@ -6,5 +6,7 @@
 namespace opencalibration
 {
 bool deserialize(const std::string &json, MeasurementGraph &graph);
+bool deserialize(std::istream &json, MeasurementGraph &graph);
+bool deserializeFeatures(std::istream &json, MeasurementGraph &graph);
 bool deserialize(std::istream &ply, MeshGraph &graph);
 } // namespace opencalibration

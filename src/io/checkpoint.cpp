@@ -8,8 +8,10 @@
 #define RAPIDJSON_HAS_STDSTRING 1
 #define RAPIDJSON_WRITE_DEFAULT_FLAGS kWriteNanAndInfFlag
 #include <rapidjson/document.h>
-#include <rapidjson/prettywriter.h>
 #include <rapidjson/stringbuffer.h>
+#include <rapidjson/writer.h>
+
+#include <zstd.h>
 
 #include <filesystem>
 #include <fstream>
@@ -20,15 +22,15 @@ namespace opencalibration
 namespace
 {
 
-bool saveMetadata(const CheckpointData &data, const std::filesystem::path &checkpoint_dir)
+bool saveMetadata(const CheckpointData &data, const std::filesystem::path &path)
 {
     rapidjson::StringBuffer buffer;
-    rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(buffer);
+    rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
 
     writer.StartObject();
 
     writer.Key("version");
-    writer.Int(1);
+    writer.Int(2);
 
     writer.Key("state");
     writer.String(pipelineStateToString(data.state).c_str());
@@ -47,7 +49,7 @@ bool saveMetadata(const CheckpointData &data, const std::filesystem::path &check
 
     writer.EndObject();
 
-    std::ofstream out(checkpoint_dir / "metadata.json");
+    std::ofstream out(path);
     if (!out.is_open())
     {
         spdlog::error("Failed to open metadata.json for writing");
@@ -57,9 +59,9 @@ bool saveMetadata(const CheckpointData &data, const std::filesystem::path &check
     return true;
 }
 
-bool loadMetadata(CheckpointData &data, const std::filesystem::path &checkpoint_dir, size_t &surface_count)
+bool loadMetadata(CheckpointData &data, const std::filesystem::path &path, size_t &surface_count)
 {
-    std::ifstream in(checkpoint_dir / "metadata.json");
+    std::ifstream in(path);
     if (!in.is_open())
     {
         spdlog::error("Failed to open metadata.json for reading");
@@ -75,7 +77,7 @@ bool loadMetadata(CheckpointData &data, const std::filesystem::path &checkpoint_
         return false;
     }
 
-    if (!doc.HasMember("version") || doc["version"].GetInt() != 1)
+    if (!doc.HasMember("version") || doc["version"].GetInt() < 1 || doc["version"].GetInt() > 2)
     {
         spdlog::error("Unsupported checkpoint version");
         return false;
@@ -157,7 +159,186 @@ bool loadPointCloud(point_cloud &cloud, const std::filesystem::path &filepath)
     return true;
 }
 
+class ZstdFileBuf : public std::streambuf
+{
+  public:
+    explicit ZstdFileBuf(const std::filesystem::path &path)
+        : _file(path, std::ios::binary), _cctx(ZSTD_createCCtx()), _out(ZSTD_CStreamOutSize())
+    {
+        ZSTD_CCtx_setParameter(_cctx, ZSTD_c_compressionLevel, 3);
+        ZSTD_CCtx_setParameter(_cctx, ZSTD_c_nbWorkers, 2);
+    }
+    ~ZstdFileBuf() override
+    {
+        ZSTD_freeCCtx(_cctx);
+    }
+    bool close()
+    {
+        const bool ok = _ok && compress(nullptr, 0, ZSTD_e_end);
+        _file.close();
+        return ok && !_file.fail();
+    }
+
+  protected:
+    std::streamsize xsputn(const char *s, std::streamsize n) override
+    {
+        _ok = _ok && compress(s, n, ZSTD_e_continue);
+        return _ok ? n : 0;
+    }
+    int_type overflow(int_type ch) override
+    {
+        if (traits_type::eq_int_type(ch, traits_type::eof()))
+            return traits_type::not_eof(ch);
+        const char c = traits_type::to_char_type(ch);
+        return xsputn(&c, 1) == 1 ? ch : traits_type::eof();
+    }
+
+  private:
+    bool compress(const char *data, size_t size, ZSTD_EndDirective mode)
+    {
+        ZSTD_inBuffer in{data, size, 0};
+        size_t remaining = 0;
+        do
+        {
+            ZSTD_outBuffer out{_out.data(), _out.size(), 0};
+            remaining = ZSTD_compressStream2(_cctx, &out, &in, mode);
+            if (ZSTD_isError(remaining))
+                return false;
+            _file.write(_out.data(), out.pos);
+        } while (mode == ZSTD_e_end ? remaining != 0 : in.pos != in.size);
+        return _file.good();
+    }
+
+    std::ofstream _file;
+    ZSTD_CCtx *_cctx;
+    std::vector<char> _out;
+    bool _ok = true;
+};
+
+template <typename Write> bool writeCompressed(const std::filesystem::path &path, Write &&write)
+{
+    ZstdFileBuf buf(path);
+    std::ostream out(&buf);
+    const bool written = write(out);
+    return buf.close() && written;
+}
+
+class ZstdReadBuf : public std::streambuf
+{
+  public:
+    explicit ZstdReadBuf(const std::filesystem::path &path)
+        : _file(path, std::ios::binary), _dctx(ZSTD_createDCtx()), _in(ZSTD_DStreamInSize()),
+          _out(ZSTD_DStreamOutSize())
+    {
+    }
+    ~ZstdReadBuf() override
+    {
+        ZSTD_freeDCtx(_dctx);
+    }
+
+  protected:
+    int_type underflow() override
+    {
+        while (true)
+        {
+            if (_input.pos == _input.size && !_output_full)
+            {
+                _file.read(_in.data(), static_cast<std::streamsize>(_in.size()));
+                if (_file.gcount() == 0)
+                    return traits_type::eof();
+                _input = {_in.data(), static_cast<size_t>(_file.gcount()), 0};
+            }
+            ZSTD_outBuffer output{_out.data(), _out.size(), 0};
+            if (ZSTD_isError(ZSTD_decompressStream(_dctx, &output, &_input)))
+                return traits_type::eof();
+            _output_full = output.pos == output.size;
+            if (output.pos > 0)
+            {
+                setg(_out.data(), _out.data(), _out.data() + output.pos);
+                return traits_type::to_int_type(_out[0]);
+            }
+        }
+    }
+
+  private:
+    std::ifstream _file;
+    ZSTD_DCtx *_dctx;
+    std::vector<char> _in, _out;
+    ZSTD_inBuffer _input{nullptr, 0, 0};
+    bool _output_full = false;
+};
+
+template <typename Read> bool readJson(const std::filesystem::path &path, Read &&read)
+{
+    std::filesystem::path zst = path;
+    zst += ".zst";
+    if (std::filesystem::exists(zst))
+    {
+        ZstdReadBuf buf(zst);
+        std::istream in(&buf);
+        return read(in);
+    }
+    std::ifstream in(path, std::ios::binary);
+    return in.is_open() && read(in);
+}
+
+std::filesystem::path stageFile(const std::filesystem::path &dir, const std::string &stage, const std::string &name)
+{
+    return dir / (stage.empty() ? name : stage + "_" + name);
+}
+
+std::string featuresFingerprint(const MeasurementGraph &graph)
+{
+    uint64_t fingerprint = 0;
+    for (auto it = graph.cnodebegin(); it != graph.cnodeend(); ++it)
+    {
+        fingerprint += (it->first + 0x9e3779b97f4a7c15ull) * (it->second.payload.features.size() + 1);
+    }
+    return std::to_string(graph.size_nodes()) + " " + std::to_string(fingerprint);
+}
+
+std::string readFile(const std::filesystem::path &path)
+{
+    std::ifstream in(path);
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
+bool saveFeatures(const MeasurementGraph &graph, const std::filesystem::path &dir)
+{
+    const std::string fingerprint = featuresFingerprint(graph);
+    if (std::filesystem::exists(dir / "features.json.zst") && readFile(dir / "features.fingerprint") == fingerprint)
+    {
+        return true;
+    }
+
+    if (!writeCompressed(dir / "features.json.zst.tmp",
+                         [&](std::ostream &out) { return serializeFeatures(graph, out); }))
+    {
+        spdlog::error("Failed to write features.json.zst");
+        return false;
+    }
+    std::filesystem::rename(dir / "features.json.zst.tmp", dir / "features.json.zst");
+    std::ofstream(dir / "features.fingerprint") << fingerprint;
+    return true;
+}
+
 } // namespace
+
+std::vector<CheckpointStage> listCheckpointStages(const std::string &checkpoint_dir)
+{
+    std::vector<CheckpointStage> stages;
+    std::ifstream in(std::filesystem::path(checkpoint_dir) / "checkpoints.txt");
+    std::string line;
+    while (std::getline(in, line))
+    {
+        const size_t tab = line.find('\t');
+        if (tab == std::string::npos)
+            continue;
+        stages.push_back({line.substr(0, tab),
+                          stringToPipelineState(line.substr(tab + 1)).value_or(PipelineState::INITIAL_PROCESSING)});
+    }
+    return stages;
+}
 
 bool saveCheckpoint(const CheckpointData &data, const std::string &checkpoint_dir)
 {
@@ -171,23 +352,20 @@ bool saveCheckpoint(const CheckpointData &data, const std::string &checkpoint_di
         return false;
     }
 
-    if (!saveMetadata(data, dir))
+    const size_t index = listCheckpointStages(checkpoint_dir).size();
+    const std::string stage = (index < 10 ? "0" : "") + std::to_string(index) + "_" + pipelineStateToString(data.state);
+
+    if (!saveMetadata(data, stageFile(dir, stage, "metadata.json")) || !saveFeatures(data.graph, dir))
     {
         return false;
     }
 
-    std::ofstream graph_out(dir / "graph.json");
-    if (!graph_out.is_open())
-    {
-        spdlog::error("Failed to open graph.json for writing");
-        return false;
-    }
-    if (!serialize(data.graph, graph_out))
+    if (!writeCompressed(stageFile(dir, stage, "graph.json.zst"),
+                         [&](std::ostream &out) { return serialize(data.graph, out, false); }))
     {
         spdlog::error("Failed to serialize graph");
         return false;
     }
-    graph_out.close();
 
     for (size_t i = 0; i < data.surfaces.size(); i++)
     {
@@ -196,7 +374,7 @@ bool saveCheckpoint(const CheckpointData &data, const std::string &checkpoint_di
         if (surface.mesh.size_nodes() > 0)
         {
             std::string mesh_filename = "surface_" + std::to_string(i) + ".ply";
-            std::ofstream mesh_out(dir / mesh_filename);
+            std::ofstream mesh_out(stageFile(dir, stage, mesh_filename));
             if (!mesh_out.is_open())
             {
                 spdlog::error("Failed to open {} for writing", mesh_filename);
@@ -213,25 +391,27 @@ bool saveCheckpoint(const CheckpointData &data, const std::string &checkpoint_di
         for (size_t j = 0; j < surface.cloud.size(); j++)
         {
             std::string cloud_filename = "pointcloud_" + std::to_string(i) + "_" + std::to_string(j) + ".xyz";
-            if (!savePointCloud(surface.cloud[j], dir / cloud_filename))
+            if (!savePointCloud(surface.cloud[j], stageFile(dir, stage, cloud_filename)))
             {
                 return false;
             }
         }
 
         std::string cloud_count_filename = "surface_" + std::to_string(i) + "_cloudcount.txt";
-        std::ofstream count_out(dir / cloud_count_filename);
+        std::ofstream count_out(stageFile(dir, stage, cloud_count_filename));
         if (count_out.is_open())
         {
             count_out << surface.cloud.size();
         }
     }
 
-    spdlog::info("Checkpoint saved to {}", checkpoint_dir);
+    std::ofstream(dir / "checkpoints.txt", std::ios::app) << stage << "\t" << pipelineStateToString(data.state) << "\n";
+
+    spdlog::info("Checkpoint {} saved to {}", stage, checkpoint_dir);
     return true;
 }
 
-bool loadCheckpoint(const std::string &checkpoint_dir, CheckpointData &data)
+bool loadCheckpoint(const std::string &checkpoint_dir, CheckpointData &data, std::string stage)
 {
     std::filesystem::path dir(checkpoint_dir);
 
@@ -241,24 +421,28 @@ bool loadCheckpoint(const std::string &checkpoint_dir, CheckpointData &data)
         return false;
     }
 
+    const auto stages = listCheckpointStages(checkpoint_dir);
+    if (stage.empty() && !stages.empty())
+    {
+        stage = stages.back().name;
+    }
+
     size_t surface_count = 0;
-    if (!loadMetadata(data, dir, surface_count))
+    if (!loadMetadata(data, stageFile(dir, stage, "metadata.json"), surface_count))
     {
         return false;
     }
 
-    std::ifstream graph_in(dir / "graph.json");
-    if (!graph_in.is_open())
-    {
-        spdlog::error("Failed to open graph.json for reading");
-        return false;
-    }
-    std::string graph_json((std::istreambuf_iterator<char>(graph_in)), std::istreambuf_iterator<char>());
-    graph_in.close();
-
-    if (!deserialize(graph_json, data.graph))
+    if (!readJson(stageFile(dir, stage, "graph.json"), [&](std::istream &in) { return deserialize(in, data.graph); }))
     {
         spdlog::error("Failed to deserialize graph");
+        return false;
+    }
+
+    if (!stage.empty() &&
+        !readJson(dir / "features.json", [&](std::istream &in) { return deserializeFeatures(in, data.graph); }))
+    {
+        spdlog::error("Failed to deserialize features");
         return false;
     }
 
@@ -270,7 +454,7 @@ bool loadCheckpoint(const std::string &checkpoint_dir, CheckpointData &data)
         auto &surface = data.surfaces[i];
 
         std::string mesh_filename = "surface_" + std::to_string(i) + ".ply";
-        std::filesystem::path mesh_path = dir / mesh_filename;
+        std::filesystem::path mesh_path = stageFile(dir, stage, mesh_filename);
         if (std::filesystem::exists(mesh_path))
         {
             std::ifstream mesh_in(mesh_path);
@@ -284,7 +468,7 @@ bool loadCheckpoint(const std::string &checkpoint_dir, CheckpointData &data)
         }
 
         std::string cloud_count_filename = "surface_" + std::to_string(i) + "_cloudcount.txt";
-        std::filesystem::path count_path = dir / cloud_count_filename;
+        std::filesystem::path count_path = stageFile(dir, stage, cloud_count_filename);
         size_t cloud_count = 0;
         if (std::filesystem::exists(count_path))
         {
@@ -299,7 +483,7 @@ bool loadCheckpoint(const std::string &checkpoint_dir, CheckpointData &data)
         for (size_t j = 0; j < cloud_count; j++)
         {
             std::string cloud_filename = "pointcloud_" + std::to_string(i) + "_" + std::to_string(j) + ".xyz";
-            std::filesystem::path cloud_path = dir / cloud_filename;
+            std::filesystem::path cloud_path = stageFile(dir, stage, cloud_filename);
             if (std::filesystem::exists(cloud_path))
             {
                 if (!loadPointCloud(surface.cloud[j], cloud_path))
@@ -310,7 +494,7 @@ bool loadCheckpoint(const std::string &checkpoint_dir, CheckpointData &data)
         }
     }
 
-    spdlog::info("Checkpoint loaded from {}", checkpoint_dir);
+    spdlog::info("Checkpoint {} loaded from {}", stage, checkpoint_dir);
     return true;
 }
 
