@@ -526,7 +526,7 @@ struct PixelErrorCost_OrientationFocalRadialTangential
 template <int N> struct MultiRayPlaneIntersectionAngleCost_FocalRadial
 {
     static_assert(N >= 2 && N <= 5, "N must be between 2 and 5");
-    static const int NUM_RESIDUALS = N * 3;
+    static const int NUM_RESIDUALS = N * 2;
 
     MultiRayPlaneIntersectionAngleCost_FocalRadial(const std::array<Eigen::Vector2d, N> &camera_pixels,
                                                    const std::array<Eigen::Vector2d, 3> &plane_points,
@@ -542,7 +542,7 @@ template <int N> struct MultiRayPlaneIntersectionAngleCost_FocalRadial
         using QuaternionT = Eigen::Quaternion<T>;
         using Vector3T = Eigen::Matrix<T, 3, 1>;
         using QuaternionTCM = Eigen::Map<const QuaternionT>;
-        using Vector3TM = Eigen::Map<Vector3T>;
+        using Vector2TM = Eigen::Map<Eigen::Matrix<T, 2, 1>>;
         using Vector3TCM = Eigen::Map<const Vector3T>;
         using Vector2TCM = Eigen::Map<const Eigen::Matrix<T, 2, 1>>;
 
@@ -559,13 +559,15 @@ template <int N> struct MultiRayPlaneIntersectionAngleCost_FocalRadial
         plane_norm_offset<T> pno = cornerPlane2normOffsetPlane(plane3);
 
         Vector3T intersection[N];
+        Vector3T camera_ray[N];
         bool all_valid = true;
         T avg_dist = T(0);
         for (int i = 0; i < N; i++)
         {
             const QuaternionTCM rot(poses[i]);
+            camera_ray[i] = image_to_3d<T>(camera_pixel[i].template cast<T>(), model);
             ray<T> r;
-            r.dir = rot * image_to_3d<T>(camera_pixel[i].template cast<T>(), model);
+            r.dir = rot * camera_ray[i];
             r.offset = Vector3TCM(poses[i] + 4);
             all_valid &= rayPlaneIntersection(r, pno, intersection[i]);
             avg_dist += (intersection[i] - r.offset).norm();
@@ -575,9 +577,22 @@ template <int N> struct MultiRayPlaneIntersectionAngleCost_FocalRadial
         T huber_threshold = avg_dist * T(0.01);
         Vector3T centroid = robustCentroid(intersection, N, huber_threshold);
 
+        const T focal_scale = *focal / T(sharedModel.focal_length_pixels);
         for (int i = 0; i < N; i++)
         {
-            Vector3TM(residuals + i * 3) = (intersection[i] - centroid) / avg_dist;
+            const QuaternionTCM rot(poses[i]);
+            const Vector3T p_cam = rot.inverse() * (centroid - Vector3TCM(poses[i] + 4));
+            if (p_cam.z() > T(0.5) * p_cam.norm())
+            {
+                Vector2TM(residuals + i * 2) =
+                    (p_cam.template head<2>() / p_cam.z() - camera_ray[i].template head<2>() / camera_ray[i].z()) *
+                    focal_scale;
+            }
+            else
+            {
+                Vector2TM(residuals + i * 2) =
+                    (p_cam.normalized() - camera_ray[i].normalized()).template head<2>() * focal_scale;
+            }
         }
 
         return all_valid;
@@ -756,7 +771,7 @@ template <int N> struct PlaneIntersectionAngleCost_NRay
 template <int N> struct PlaneIntersectionAngleCost_NRay_FocalRadial
 {
     static_assert(N >= 3 && N <= 5, "N must be between 3 and 5");
-    static const int NUM_RESIDUALS = N * 3;
+    static const int NUM_RESIDUALS = MultiRayPlaneIntersectionAngleCost_FocalRadial<N>::NUM_RESIDUALS;
 
     PlaneIntersectionAngleCost_NRay_FocalRadial(const std::array<Eigen::Vector2d, N> &pixels,
                                                 const std::array<Eigen::Vector2d, 3> &plane_points,
