@@ -155,79 +155,6 @@ TEST(ImageCache, clear)
     // Clean up not needed - output directory is for test artifacts
 }
 
-TEST(CameraIdRoundTrip, uint64_camera_ids_survive_geotiff_sidecar)
-{
-    // GIVEN: Camera IDs that require more than 32 bits to represent
-    // (MeasurementGraph generates random size_t IDs)
-    GDALAllRegister();
-
-    int w = 4, h = 4, num_layers = 2;
-    std::string sidecar_path = TEST_DATA_OUTPUT_DIR "test_camera_id_sidecar.tif";
-
-    GDALDriverH driver = GDALGetDriverByName("GTiff");
-    ASSERT_NE(driver, nullptr);
-    GDALDatasetH hWriteDs = GDALCreate(driver, sidecar_path.c_str(), w, h, num_layers * 2, GDT_UInt32, nullptr);
-    GDALDatasetPtr write_ds(hWriteDs);
-    ASSERT_NE(write_ds.get(), nullptr);
-
-    std::vector<size_t> test_ids = {
-        0xDEADBEEF12345678ULL, // large 64-bit value
-        0xFFFFFFFF00000001ULL, // high bits set
-        42,                    // small value (fits in 32 bits)
-        0x100000000ULL,        // smallest value that doesn't fit in 32 bits
-    };
-
-    for (int layer = 0; layer < num_layers; layer++)
-    {
-        std::vector<uint32_t> lo(w * h, 0), hi(w * h, 0);
-        for (int i = 0; i < w * h; i++)
-        {
-            size_t cam_id = test_ids[(layer * w * h + i) % test_ids.size()];
-            lo[i] = static_cast<uint32_t>(cam_id & 0xFFFFFFFF);
-            hi[i] = static_cast<uint32_t>((cam_id >> 32) & 0xFFFFFFFF);
-        }
-
-        int cam_band_offset = layer * 2;
-        CPLErr err;
-        GDALRasterBandWrapper band_lo(GDALGetRasterBand(write_ds.get(), cam_band_offset + 1));
-        err = band_lo.RasterIO(GF_Write, 0, 0, w, h, lo.data(), w, h, GDT_UInt32, 0, 0);
-        ASSERT_EQ(err, CE_None);
-
-        GDALRasterBandWrapper band_hi(GDALGetRasterBand(write_ds.get(), cam_band_offset + 2));
-        err = band_hi.RasterIO(GF_Write, 0, 0, w, h, hi.data(), w, h, GDT_UInt32, 0, 0);
-        ASSERT_EQ(err, CE_None);
-    }
-
-    write_ds.reset();
-    GDALDatasetPtr read_ds(GDALOpen(sidecar_path.c_str(), GA_ReadOnly));
-    ASSERT_NE(read_ds.get(), nullptr);
-
-    // WHEN: We read back the camera IDs
-    for (int layer = 0; layer < num_layers; layer++)
-    {
-        std::vector<uint32_t> lo(w * h, 0), hi(w * h, 0);
-        int cam_band_offset = layer * 2;
-
-        CPLErr err;
-        GDALRasterBandWrapper band_read_lo(GDALGetRasterBand(read_ds.get(), cam_band_offset + 1));
-        err = band_read_lo.RasterIO(GF_Read, 0, 0, w, h, lo.data(), w, h, GDT_UInt32, 0, 0);
-        ASSERT_EQ(err, CE_None);
-
-        GDALRasterBandWrapper band_read_hi(GDALGetRasterBand(read_ds.get(), cam_band_offset + 2));
-        err = band_read_hi.RasterIO(GF_Read, 0, 0, w, h, hi.data(), w, h, GDT_UInt32, 0, 0);
-        ASSERT_EQ(err, CE_None);
-
-        // THEN: Reconstructed 64-bit IDs should match the originals
-        for (int i = 0; i < w * h; i++)
-        {
-            size_t expected = test_ids[(layer * w * h + i) % test_ids.size()];
-            size_t actual = static_cast<size_t>(lo[i]) | (static_cast<size_t>(hi[i]) << 32);
-            EXPECT_EQ(actual, expected) << "Layer " << layer << " pixel " << i << ": expected 0x" << std::hex
-                                        << expected << " got 0x" << actual;
-        }
-    }
-}
-
 // ==================== GeoTIFF Generation Tests ====================
 
 struct ortho : public ::testing::Test
@@ -296,26 +223,71 @@ struct ortho : public ::testing::Test
         return vec3d;
     }
 
-    // Helper to generate layered orthomosaic (multi-pass approach)
-    void generateLayeredOrthomosaic(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph_ref,
+    void generateOrthomosaicGeoTIFF(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph_ref,
                                     const GeoCoord &coord_system, const std::string &output_path, int tile_size = 1024,
                                     double max_output_megapixels = 0.0)
     {
-        std::string layers_path = output_path + ".layers.tif";
-        std::string cameras_path = output_path + ".cameras.tif";
-        std::string dsm_path = output_path + ".dsm.tif";
-
         OrthoMosaicConfig config;
         config.tile_size = tile_size;
         config.max_output_megapixels = max_output_megapixels;
+        generateGeoTIFF(surfaces, graph_ref, coord_system, ColorBalanceResult{}, output_path, "", config);
+    }
 
-        // Pass 1: Generate layers and DSM together
-        generateLayeredGeoTIFF(surfaces, graph_ref, coord_system, layers_path, cameras_path, dsm_path, config);
+    struct RenderedGeoTIFF
+    {
+        int width = 0;
+        int height = 0;
+        double geotransform[6];
+        std::vector<uint8_t> rgba;
+        std::vector<float> dsm;
+    };
 
-        // Pass 2: Blend (skip color balance for tests - use empty result)
-        ColorBalanceResult color_balance{};
-        blendLayeredGeoTIFF(layers_path, cameras_path, dsm_path, output_path, color_balance, graph_ref, coord_system,
-                            config);
+    RenderedGeoTIFF renderNearestCameraScene(const std::string &prefix, int blend_transition_radius)
+    {
+        surface_model points_surface;
+        points_surface.cloud.push_back(generate_planar_points());
+        point_cloud camera_locations;
+        for (const auto &nodePose : nodePoses)
+            camera_locations.push_back(nodePose.position);
+        surface_model mesh_surface;
+        mesh_surface.mesh = rebuildMesh(camera_locations, {points_surface});
+
+        for (int i = 0; i < 3; i++)
+        {
+            std::string path = prefix + "_" + std::to_string(i) + ".png";
+            cv::imwrite(path, cv::Mat(100, 100, CV_8UC3, cameraColorBGR(i)));
+            graph.getNode(id[i])->payload.path = path;
+        }
+
+        GeoCoord coord_system;
+        coord_system.setOrigin(0, 0);
+        OrthoMosaicConfig config;
+        config.tile_size = 64;
+        config.blend_transition_radius = blend_transition_radius;
+        generateGeoTIFF({mesh_surface}, graph, coord_system, ColorBalanceResult{}, prefix + ".tif", prefix + ".dsm.tif",
+                        config);
+
+        GDALDatasetPtr ds(GDALOpen((prefix + ".tif").c_str(), GA_ReadOnly));
+        GDALDatasetPtr dsm_ds(GDALOpen((prefix + ".dsm.tif").c_str(), GA_ReadOnly));
+        RenderedGeoTIFF out;
+        if (!ds || !dsm_ds)
+            return out;
+        out.width = GDALGetRasterXSize(ds.get());
+        out.height = GDALGetRasterYSize(ds.get());
+        GDALGetGeoTransform(ds.get(), out.geotransform);
+        out.rgba.resize(static_cast<size_t>(out.width) * out.height * 4);
+        out.dsm.resize(static_cast<size_t>(out.width) * out.height);
+        if (GDALDatasetRasterIO(ds.get(), GF_Read, 0, 0, out.width, out.height, out.rgba.data(), out.width, out.height,
+                                GDT_Byte, 4, nullptr, 4, out.width * 4, 1) != CE_None ||
+            GDALRasterIO(GDALGetRasterBand(dsm_ds.get(), 1), GF_Read, 0, 0, out.width, out.height, out.dsm.data(),
+                         out.width, out.height, GDT_Float32, 0, 0) != CE_None)
+            return {};
+        return out;
+    }
+
+    static cv::Scalar cameraColorBGR(int cam)
+    {
+        return cv::Scalar(cam * 80, 100, 200);
     }
 };
 
@@ -355,7 +327,7 @@ TEST_F(ortho, geotiff_creation)
     std::string output_path = TEST_DATA_OUTPUT_DIR "test_ortho_output.tif";
 
     // WHEN: we generate a GeoTIFF orthomosaic
-    EXPECT_NO_THROW(generateLayeredOrthomosaic({mesh_surface}, graph, coord_system, output_path, 512));
+    EXPECT_NO_THROW(generateOrthomosaicGeoTIFF({mesh_surface}, graph, coord_system, output_path, 512));
 
     // THEN: the file should exist
     EXPECT_TRUE(std::filesystem::exists(output_path));
@@ -430,7 +402,7 @@ TEST_F(ortho, geotiff_small_tile_size)
     std::string output_path = TEST_DATA_OUTPUT_DIR "test_ortho_small_tile.tif";
 
     // WHEN: we generate a GeoTIFF with small tile size (should create multiple tiles)
-    EXPECT_NO_THROW(generateLayeredOrthomosaic({mesh_surface}, graph, coord_system, output_path, 128));
+    EXPECT_NO_THROW(generateOrthomosaicGeoTIFF({mesh_surface}, graph, coord_system, output_path, 128));
 
     // THEN: the file should exist and be valid
     EXPECT_TRUE(std::filesystem::exists(output_path));
@@ -446,61 +418,16 @@ TEST_F(ortho, geotiff_small_tile_size)
     // Clean up not needed - output directory is for test artifacts
 }
 
-TEST_F(ortho, layered_geotiff_assigns_nearest_visible_camera_per_pixel)
+TEST_F(ortho, geotiff_without_feathering_uses_nearest_visible_camera_per_pixel)
 {
-    // GIVEN: a scene with images and a surface, split into several tiles and blocks
+    // GIVEN: a scene with differently coloured images, split into several tiles and blocks
     init_cameras();
 
-    surface_model points_surface;
-    points_surface.cloud.push_back(generate_planar_points());
-    point_cloud camera_locations;
-    for (const auto &nodePose : nodePoses)
-        camera_locations.push_back(nodePose.position);
-    surface_model mesh_surface;
-    mesh_surface.mesh = rebuildMesh(camera_locations, {points_surface});
+    // WHEN: generating the GeoTIFF with no blend transition
+    const auto out = renderNearestCameraScene(TEST_DATA_OUTPUT_DIR "test_nearest_camera", 0);
 
-    for (int i = 0; i < 3; i++)
-    {
-        std::string path = TEST_DATA_OUTPUT_DIR "test_nearest_camera_" + std::to_string(i) + ".png";
-        cv::imwrite(path, cv::Mat(100, 100, CV_8UC3, cv::Scalar(i * 80, 100, 200)));
-        graph.getNode(id[i])->payload.path = path;
-    }
-
-    GeoCoord coord_system;
-    coord_system.setOrigin(0, 0);
-    std::string prefix = TEST_DATA_OUTPUT_DIR "test_nearest_camera";
-    OrthoMosaicConfig config;
-    config.tile_size = 64;
-
-    // WHEN: generating the layered GeoTIFF
-    generateLayeredGeoTIFF({mesh_surface}, graph, coord_system, prefix + ".layers.tif", prefix + ".cameras.tif",
-                           prefix + ".dsm.tif", config);
-
-    // THEN: every pixel's first layer comes from the XY-nearest camera that sees it, with no block pattern
-    GDALDatasetPtr cameras_ds(GDALOpen((prefix + ".cameras.tif").c_str(), GA_ReadOnly));
-    GDALDatasetPtr dsm_ds(GDALOpen((prefix + ".dsm.tif").c_str(), GA_ReadOnly));
-    ASSERT_NE(cameras_ds.get(), nullptr);
-    ASSERT_NE(dsm_ds.get(), nullptr);
-
-    GDALDatasetWrapper cameras_wrapper(cameras_ds.get());
-    const int w = cameras_wrapper.GetRasterXSize();
-    const int h = cameras_wrapper.GetRasterYSize();
-    ASSERT_GT(w, config.tile_size);
-    double geotransform[6];
-    ASSERT_EQ(GDALGetGeoTransform(cameras_ds.get(), geotransform), CE_None);
-
-    std::vector<uint32_t> lo(w * h), hi(w * h);
-    std::vector<float> dsm(w * h);
-    ASSERT_EQ(GDALRasterBandWrapper(GDALGetRasterBand(cameras_ds.get(), 1))
-                  .RasterIO(GF_Read, 0, 0, w, h, lo.data(), w, h, GDT_UInt32, 0, 0),
-              CE_None);
-    ASSERT_EQ(GDALRasterBandWrapper(GDALGetRasterBand(cameras_ds.get(), 2))
-                  .RasterIO(GF_Read, 0, 0, w, h, hi.data(), w, h, GDT_UInt32, 0, 0),
-              CE_None);
-    ASSERT_EQ(GDALRasterBandWrapper(GDALGetRasterBand(dsm_ds.get(), 1))
-                  .RasterIO(GF_Read, 0, 0, w, h, dsm.data(), w, h, GDT_Float32, 0, 0),
-              CE_None);
-
+    // THEN: every pixel has the colour of the XY-nearest camera that sees it, with no block pattern
+    ASSERT_GT(out.width, 64);
     auto sees = [&](int cam, const Eigen::Vector3d &point) {
         const Eigen::Matrix3d inv_rotation = ground_ori[cam].inverse().toRotationMatrix();
         if ((inv_rotation * (point - ground_pos[cam])).z() <= 0)
@@ -509,17 +436,17 @@ TEST_F(ortho, layered_geotiff_assigns_nearest_visible_camera_per_pixel)
         return pixel.x() >= 0 && pixel.x() < model->pixels_cols && pixel.y() >= 0 && pixel.y() < model->pixels_rows;
     };
 
-    std::set<size_t> assigned_cameras;
+    std::set<int> assigned_cameras;
     int mismatches = 0;
-    for (int row = 0; row < h; row++)
+    for (int row = 0; row < out.height; row++)
     {
-        for (int col = 0; col < w; col++)
+        for (int col = 0; col < out.width; col++)
         {
-            const int i = row * w + col;
-            if (std::isnan(dsm[i]))
+            const int i = row * out.width + col;
+            if (std::isnan(out.dsm[i]))
                 continue;
-            const Eigen::Vector3d point(geotransform[0] + col * geotransform[1],
-                                        geotransform[3] + row * geotransform[5], dsm[i]);
+            const Eigen::Vector3d point(out.geotransform[0] + col * out.geotransform[1],
+                                        out.geotransform[3] + row * out.geotransform[5], out.dsm[i]);
 
             std::array<int, 3> order{0, 1, 2};
             std::sort(order.begin(), order.end(), [&](int l, int r) {
@@ -528,15 +455,44 @@ TEST_F(ortho, layered_geotiff_assigns_nearest_visible_camera_per_pixel)
             });
             auto nearest = std::find_if(order.begin(), order.end(), [&](int cam) { return sees(cam, point); });
 
-            const size_t actual = static_cast<size_t>(lo[i]) | (static_cast<size_t>(hi[i]) << 32);
-            const size_t expected = nearest == order.end() ? 0 : id[*nearest];
-            assigned_cameras.insert(actual);
-            if (actual != expected)
-                mismatches++;
+            const uint8_t *rgba = &out.rgba[static_cast<size_t>(i) * 4];
+            if (nearest == order.end())
+            {
+                mismatches += rgba[3] != 0;
+                continue;
+            }
+            assigned_cameras.insert(*nearest);
+            const cv::Scalar bgr = cameraColorBGR(*nearest);
+            mismatches += rgba[3] != 255 || std::abs(rgba[0] - bgr[2]) > 2 || std::abs(rgba[1] - bgr[1]) > 2 ||
+                          std::abs(rgba[2] - bgr[0]) > 2;
         }
     }
-    EXPECT_EQ(assigned_cameras, (std::set<size_t>{0, id[0], id[1], id[2]}));
+    EXPECT_EQ(assigned_cameras, (std::set<int>{0, 1, 2}));
     EXPECT_EQ(mismatches, 0);
+}
+
+TEST_F(ortho, geotiff_feathers_colours_across_camera_seams)
+{
+    // GIVEN: a scene with differently coloured images
+    init_cameras();
+
+    // WHEN: generating the GeoTIFF with a blend transition
+    const auto out = renderNearestCameraScene(TEST_DATA_OUTPUT_DIR "test_feathered_camera", 64);
+
+    // THEN: some pixels are a mix of cameras, and every blue value stays within the camera colour range
+    ASSERT_GT(out.width, 0);
+    int mixed_pixels = 0, out_of_range = 0;
+    for (size_t i = 0; i < out.dsm.size(); i++)
+    {
+        const uint8_t *rgba = &out.rgba[i * 4];
+        if (rgba[3] != 255)
+            continue;
+        const int blue = rgba[2];
+        mixed_pixels += std::abs(blue - 0) > 2 && std::abs(blue - 80) > 2 && std::abs(blue - 160) > 2;
+        out_of_range += blue > 162;
+    }
+    EXPECT_GT(mixed_pixels, 0);
+    EXPECT_EQ(out_of_range, 0);
 }
 
 TEST_F(ortho, geotiff_respects_max_megapixel_limit)
@@ -571,7 +527,7 @@ TEST_F(ortho, geotiff_respects_max_megapixel_limit)
     constexpr double max_megapixels = 0.01; // 10k pixels
 
     // WHEN: we generate a GeoTIFF with a strict output megapixel cap
-    EXPECT_NO_THROW(generateLayeredOrthomosaic({mesh_surface}, graph, coord_system, output_path, 256, max_megapixels));
+    EXPECT_NO_THROW(generateOrthomosaicGeoTIFF({mesh_surface}, graph, coord_system, output_path, 256, max_megapixels));
 
     // THEN: output dimensions should respect the requested cap
     GDALDatasetPtr dataset = openGDALDataset(output_path);
@@ -624,7 +580,7 @@ TEST_F(ortho, pixel_values_with_known_colors)
     std::string output_path = TEST_DATA_OUTPUT_DIR "test_ortho_pixel_values.tif";
 
     // WHEN: we generate a GeoTIFF orthomosaic
-    EXPECT_NO_THROW(generateLayeredOrthomosaic({mesh_surface}, graph, coord_system, output_path, 512));
+    EXPECT_NO_THROW(generateOrthomosaicGeoTIFF({mesh_surface}, graph, coord_system, output_path, 512));
 
     // THEN: verify the output file exists and has correct structure
     EXPECT_TRUE(std::filesystem::exists(output_path));
@@ -751,7 +707,7 @@ TEST_F(ortho, single_image_coverage)
     std::string output_path = TEST_DATA_OUTPUT_DIR "test_ortho_single_coverage.tif";
 
     // WHEN: we generate a GeoTIFF orthomosaic
-    EXPECT_NO_THROW(generateLayeredOrthomosaic({mesh_surface}, graph, coord_system, output_path, 256));
+    EXPECT_NO_THROW(generateOrthomosaicGeoTIFF({mesh_surface}, graph, coord_system, output_path, 256));
 
     // THEN: verify that the output has valid data
     EXPECT_TRUE(std::filesystem::exists(output_path));
@@ -821,7 +777,7 @@ TEST_F(ortho, textured_obj_export)
     coord_system.setOrigin(0, 0);
 
     std::string geotiff_path = TEST_DATA_OUTPUT_DIR "test_textured_mesh_ortho.tif";
-    generateLayeredOrthomosaic({mesh_surface}, graph, coord_system, geotiff_path, 512);
+    generateOrthomosaicGeoTIFF({mesh_surface}, graph, coord_system, geotiff_path, 512);
     ASSERT_TRUE(std::filesystem::exists(geotiff_path));
 
     // WHEN: we generate a textured OBJ from the mesh and GeoTIFF
@@ -952,7 +908,7 @@ TEST_F(ortho, obj_and_ply_mesh_geometry_match)
     coord_system.setOrigin(0, 0);
 
     std::string geotiff_path = TEST_DATA_OUTPUT_DIR "test_mesh_compare_ortho.tif";
-    generateLayeredOrthomosaic({mesh_surface}, graph, coord_system, geotiff_path, 512);
+    generateOrthomosaicGeoTIFF({mesh_surface}, graph, coord_system, geotiff_path, 512);
 
     // Write PLY
     std::string ply_path = TEST_DATA_OUTPUT_DIR "test_mesh_compare.ply";
@@ -1075,96 +1031,4 @@ TEST_F(ortho, obj_and_ply_mesh_geometry_match)
             << ply_faces[i][2] << ") OBJ=(" << obj_faces[i][0] << ", " << obj_faces[i][1] << ", " << obj_faces[i][2]
             << ")";
     }
-}
-
-TEST(Blending_Functional, no_ringing_with_camera_hash_masks)
-{
-    // GIVEN: Validity masks derived from real camera hash images (blending_tile225).
-    // All layers share a similar edge boundary in the bottom-right corner,
-    // which caused ringing artifacts before the pull-push fill fix.
-    std::string base = TEST_DATA_DIR "blending_tile225/";
-    cv::Mat hash0 = cv::imread(base + "layer_0_camera_hash.png");
-    cv::Mat hash1 = cv::imread(base + "layer_1_camera_hash.png");
-    cv::Mat hash2 = cv::imread(base + "layer_2_camera_hash.png");
-
-    ASSERT_FALSE(hash0.empty()) << "Failed to load layer_0_camera_hash.png";
-    ASSERT_FALSE(hash1.empty()) << "Failed to load layer_1_camera_hash.png";
-    ASSERT_FALSE(hash2.empty()) << "Failed to load layer_2_camera_hash.png";
-
-    int rows = hash0.rows, cols = hash0.cols;
-    int num_layers = 3;
-    float L_value = 50.0f;
-
-    std::vector<cv::Mat> lab_layers(num_layers);
-    std::vector<cv::Mat> weight_maps(num_layers);
-    cv::Mat hashes[3] = {hash0, hash1, hash2};
-
-    for (int i = 0; i < num_layers; i++)
-    {
-        lab_layers[i] = cv::Mat(rows, cols, CV_32FC3, cv::Scalar(0, 0, 0));
-        weight_maps[i] = cv::Mat::zeros(rows, cols, CV_32FC1);
-
-        for (int r = 0; r < rows; r++)
-        {
-            for (int c = 0; c < cols; c++)
-            {
-                cv::Vec3b pixel = hashes[i].at<cv::Vec3b>(r, c);
-                bool valid = (pixel[0] > 5 || pixel[1] > 5 || pixel[2] > 5);
-                if (valid)
-                {
-                    lab_layers[i].at<cv::Vec3f>(r, c) = cv::Vec3f(L_value, 0.0f, 0.0f);
-                    weight_maps[i].at<float>(r, c) = 1.0f;
-                }
-            }
-        }
-    }
-
-    // WHEN: We Laplacian blend
-    cv::Mat result = laplacianBlend(lab_layers, weight_maps, 4);
-    ASSERT_FALSE(result.empty());
-
-    cv::imwrite(TEST_DATA_OUTPUT_DIR "blending_tile225_result.png", result);
-
-    // THEN: All pixels where every layer is valid should have uniform color (no ringing)
-    cv::Vec4b ref(0, 0, 0, 0);
-    bool ref_set = false;
-    int all_valid_pixels = 0;
-    int ringing_pixels = 0;
-    for (int r = 0; r < rows; r++)
-    {
-        for (int c = 0; c < cols; c++)
-        {
-            bool all_valid = true;
-            for (int i = 0; i < num_layers; i++)
-            {
-                if (weight_maps[i].at<float>(r, c) < 0.5f)
-                {
-                    all_valid = false;
-                    break;
-                }
-            }
-
-            if (all_valid)
-            {
-                all_valid_pixels++;
-                cv::Vec4b pixel = result.at<cv::Vec4b>(r, c);
-                if (!ref_set)
-                {
-                    ref = pixel;
-                    ref_set = true;
-                }
-                for (int ch = 0; ch < 3; ch++)
-                {
-                    if (std::abs(pixel[ch] - ref[ch]) > 3)
-                    {
-                        ringing_pixels++;
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    ASSERT_GT(all_valid_pixels, 0) << "Expected at least one pixel where all layers are valid";
-    EXPECT_EQ(ringing_pixels, 0) << "Found " << ringing_pixels << " pixels with ringing artifacts";
 }

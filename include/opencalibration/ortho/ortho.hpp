@@ -94,9 +94,7 @@ double rayTraceHeight(double x, double y, double mean_camera_z, const std::vecto
 
 struct OrthoMosaicConfig
 {
-    int num_layers = 2;
     int tile_size = 1024;
-    int pyramid_levels = 4;
     int color_sample_spacing_full_res_px = 50;
     int blend_transition_radius = 64;
     double max_output_megapixels = 0.0; // 0 = unlimited
@@ -105,15 +103,10 @@ struct OrthoMosaicConfig
 OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph,
                                 const OrthoMosaicConfig &config = {});
 
-void generateLayeredGeoTIFF(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph,
-                            const opencalibration::GeoCoord &coord_system, const std::string &layers_path,
-                            const std::string &cameras_path, const std::string &dsm_output_path,
-                            const OrthoMosaicConfig &config = {}, TileProgressCallback tile_progress = {});
-
-void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &cameras_path, const std::string &dsm_path,
-                         const std::string &output_path, const ColorBalanceResult &color_balance,
-                         const MeasurementGraph &graph, const opencalibration::GeoCoord &coord_system,
-                         const OrthoMosaicConfig &config = {}, TileProgressCallback tile_progress = {});
+void generateGeoTIFF(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph,
+                     const opencalibration::GeoCoord &coord_system, const ColorBalanceResult &color_balance,
+                     const std::string &output_path, const std::string &dsm_output_path,
+                     const OrthoMosaicConfig &config = {}, TileProgressCallback tile_progress = {});
 
 void generateTexturedOBJ(const std::vector<surface_model> &surfaces, const std::string &geotiff_path,
                          const std::string &obj_path);

@@ -16,8 +16,7 @@ enum class PipelineState
     GENERATE_THUMBNAIL,
     DENSIFY_MESH,
     DENSE_MESH_RELAX,
-    GENERATE_LAYERS,
-    BLEND_LAYERS,
+    GENERATE_GEOTIFF,
     COMPLETE
 };
 
@@ -41,10 +40,8 @@ inline std::string pipelineStateToString(PipelineState state)
         return "DENSIFY_MESH";
     case PipelineState::DENSE_MESH_RELAX:
         return "DENSE_MESH_RELAX";
-    case PipelineState::GENERATE_LAYERS:
-        return "GENERATE_LAYERS";
-    case PipelineState::BLEND_LAYERS:
-        return "BLEND_LAYERS";
+    case PipelineState::GENERATE_GEOTIFF:
+        return "GENERATE_GEOTIFF";
     case PipelineState::COMPLETE:
         return "COMPLETE";
     }
@@ -69,10 +66,9 @@ inline std::optional<PipelineState> stringToPipelineState(const std::string &str
         return PipelineState::DENSIFY_MESH;
     if (str == "DENSE_MESH_RELAX")
         return PipelineState::DENSE_MESH_RELAX;
-    if (str == "GENERATE_LAYERS" || str == "GENERATE_GEOTIFF" || str == "GENERATE_DSM")
-        return PipelineState::GENERATE_LAYERS;
-    if (str == "BLEND_LAYERS" || str == "COLOR_BALANCE")
-        return PipelineState::BLEND_LAYERS;
+    if (str == "GENERATE_GEOTIFF" || str == "GENERATE_LAYERS" || str == "BLEND_LAYERS" || str == "COLOR_BALANCE" ||
+        str == "GENERATE_DSM")
+        return PipelineState::GENERATE_GEOTIFF;
     if (str == "COMPLETE")
         return PipelineState::COMPLETE;
     return std::nullopt;

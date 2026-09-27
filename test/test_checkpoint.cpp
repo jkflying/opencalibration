@@ -99,7 +99,7 @@ TEST_F(CheckpointTest, save_and_load_color_balance)
 {
     // GIVEN: a checkpoint holding a solved color balance
     CheckpointData data;
-    data.state = PipelineState::GENERATE_LAYERS;
+    data.state = PipelineState::GENERATE_GEOTIFF;
     data.color_balance.success = true;
     data.color_balance.final_cost = 1.5;
     data.color_balance.num_iterations = 7;
@@ -150,14 +150,17 @@ TEST_F(CheckpointTest, load_nonexistent)
 
 TEST_F(CheckpointTest, fromString_toString_roundtrip)
 {
-    std::vector<PipelineState> states = {
-        PipelineState::INITIAL_PROCESSING, PipelineState::INITIAL_GLOBAL_RELAX, PipelineState::CAMERA_PARAMETER_RELAX,
-        PipelineState::FINAL_GLOBAL_RELAX, PipelineState::GENERATE_THUMBNAIL,   PipelineState::GENERATE_LAYERS,
-        PipelineState::BLEND_LAYERS,       PipelineState::BLEND_LAYERS,         PipelineState::COMPLETE};
+    std::vector<PipelineState> states = {PipelineState::INITIAL_PROCESSING,     PipelineState::INITIAL_GLOBAL_RELAX,
+                                         PipelineState::CAMERA_PARAMETER_RELAX, PipelineState::FINAL_GLOBAL_RELAX,
+                                         PipelineState::GENERATE_THUMBNAIL,     PipelineState::GENERATE_GEOTIFF,
+                                         PipelineState::GENERATE_GEOTIFF,       PipelineState::GENERATE_GEOTIFF,
+                                         PipelineState::GENERATE_GEOTIFF,       PipelineState::COMPLETE};
 
-    std::vector<std::string> state_strings = {"INITIAL_PROCESSING", "INITIAL_GLOBAL_RELAX", "CAMERA_PARAMETER_RELAX",
-                                              "FINAL_GLOBAL_RELAX", "GENERATE_THUMBNAIL",   "GENERATE_LAYERS",
-                                              "COLOR_BALANCE",      "BLEND_LAYERS",         "COMPLETE"};
+    std::vector<std::string> state_strings = {"INITIAL_PROCESSING",     "INITIAL_GLOBAL_RELAX",
+                                              "CAMERA_PARAMETER_RELAX", "FINAL_GLOBAL_RELAX",
+                                              "GENERATE_THUMBNAIL",     "GENERATE_GEOTIFF",
+                                              "GENERATE_LAYERS",        "BLEND_LAYERS",
+                                              "COLOR_BALANCE",          "COMPLETE"};
 
     for (size_t i = 0; i < states.size(); i++)
     {
