@@ -5,7 +5,7 @@
 #include "relax_stage.hpp"
 
 #include <opencalibration/combinatorics/interleave.hpp>
-#include <opencalibration/dense/dense_stereo.hpp>
+#include <opencalibration/dense/densify_multiview.hpp>
 #include <opencalibration/distort/distort_keypoints.hpp>
 #include <opencalibration/io/checkpoint.hpp>
 #include <opencalibration/io/cv_raster_conversion.hpp>
@@ -963,8 +963,8 @@ Pipeline::Impl::Transition Pipeline::Impl::dense_mesh_relax()
 
 Pipeline::Impl::Transition Pipeline::Impl::generate_thumbnail()
 {
-    const bool save_thumbnail = generate_thumbnails && !(thumbnail_filename.empty() && source_filename.empty() &&
-                                                         overlap_filename.empty());
+    const bool save_thumbnail =
+        generate_thumbnails && !(thumbnail_filename.empty() && source_filename.empty() && overlap_filename.empty());
     const bool need_color_balance = generate_geotiff && !geotiff_filename.empty();
     if (!save_thumbnail && !need_color_balance)
     {

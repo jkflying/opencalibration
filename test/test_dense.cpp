@@ -1,4 +1,4 @@
-#include <opencalibration/dense/dense_stereo.hpp>
+#include <opencalibration/dense/densify_multiview.hpp>
 #include <opencalibration/distort/distort_keypoints.hpp>
 #include <opencalibration/surface/intersect.hpp>
 #include <opencalibration/types/measurement_graph.hpp>
@@ -241,7 +241,7 @@ SceneResult runNoisyScene(const CameraModel &cam_model, const Eigen::Quaterniond
 
 } // namespace
 
-class DenseStereoTest : public ::testing::Test
+class DensifyMultiviewTest : public ::testing::Test
 {
   protected:
     void SetUp() override
@@ -254,7 +254,7 @@ class DenseStereoTest : public ::testing::Test
     CameraModel cam_model;
 };
 
-TEST_F(DenseStereoTest, synthetic_overlapping_cameras)
+TEST_F(DensifyMultiviewTest, synthetic_overlapping_cameras)
 {
     MeasurementGraph graph;
 
@@ -350,7 +350,7 @@ TEST_F(DenseStereoTest, synthetic_overlapping_cameras)
     }
 }
 
-TEST_F(DenseStereoTest, no_match_with_different_descriptors)
+TEST_F(DensifyMultiviewTest, no_match_with_different_descriptors)
 {
     MeasurementGraph graph;
 
@@ -395,7 +395,7 @@ TEST_F(DenseStereoTest, no_match_with_different_descriptors)
     EXPECT_EQ(total_points, 0) << "Different descriptors should not produce matches";
 }
 
-TEST_F(DenseStereoTest, no_crash_empty_features)
+TEST_F(DensifyMultiviewTest, no_crash_empty_features)
 {
     MeasurementGraph graph;
 
@@ -417,14 +417,14 @@ TEST_F(DenseStereoTest, no_crash_empty_features)
     EXPECT_TRUE(surfaces[0].cloud.empty());
 }
 
-TEST_F(DenseStereoTest, no_crash_empty_surfaces)
+TEST_F(DensifyMultiviewTest, no_crash_empty_surfaces)
 {
     MeasurementGraph graph;
     std::vector<surface_model> surfaces;
     densifyMesh(graph, surfaces);
 }
 
-TEST_F(DenseStereoTest, points_from_multiple_cameras)
+TEST_F(DensifyMultiviewTest, points_from_multiple_cameras)
 {
     MeasurementGraph graph;
 
@@ -491,7 +491,7 @@ TEST_F(DenseStereoTest, points_from_multiple_cameras)
     }
 }
 
-TEST_F(DenseStereoTest, accuracy_with_pixel_noise)
+TEST_F(DensifyMultiviewTest, accuracy_with_pixel_noise)
 {
     auto result = runNoisyScene(cam_model, cam_ori, 1.0, 0, 0);
 
@@ -500,7 +500,7 @@ TEST_F(DenseStereoTest, accuracy_with_pixel_noise)
     EXPECT_LT(result.mean_xy_error, 0.25) << "Mean XY error should be small with 1px noise";
 }
 
-TEST_F(DenseStereoTest, accuracy_with_orientation_noise)
+TEST_F(DensifyMultiviewTest, accuracy_with_orientation_noise)
 {
     auto result = runNoisyScene(cam_model, cam_ori, 0, 0.1, 0);
 
@@ -509,7 +509,7 @@ TEST_F(DenseStereoTest, accuracy_with_orientation_noise)
     EXPECT_LT(result.mean_xy_error, 0.3) << "Mean XY error should be small with orientation noise";
 }
 
-TEST_F(DenseStereoTest, accuracy_with_descriptor_noise)
+TEST_F(DensifyMultiviewTest, accuracy_with_descriptor_noise)
 {
     auto result = runNoisyScene(cam_model, cam_ori, 0, 0, 20);
 
@@ -517,7 +517,7 @@ TEST_F(DenseStereoTest, accuracy_with_descriptor_noise)
     EXPECT_LT(result.max_xy_error, 0.01);
 }
 
-TEST_F(DenseStereoTest, accuracy_with_combined_noise)
+TEST_F(DensifyMultiviewTest, accuracy_with_combined_noise)
 {
     auto result = runNoisyScene(cam_model, cam_ori, 0.5, 0.05, 10);
 
@@ -525,14 +525,14 @@ TEST_F(DenseStereoTest, accuracy_with_combined_noise)
     EXPECT_LT(result.max_xy_error, 0.5) << "Max error should be bounded with combined noise";
 }
 
-TEST_F(DenseStereoTest, heavy_descriptor_noise_rejects)
+TEST_F(DensifyMultiviewTest, heavy_descriptor_noise_rejects)
 {
     auto result = runNoisyScene(cam_model, cam_ori, 0, 0, 2000);
 
     EXPECT_EQ(result.total_points, 0) << "Heavy descriptor noise should prevent matches";
 }
 
-TEST_F(DenseStereoTest, track_with_two_features_from_one_image_rejected)
+TEST_F(DensifyMultiviewTest, track_with_two_features_from_one_image_rejected)
 {
     // GIVEN: two cameras seeing a ground point, where the first image has a second, offset feature with the same
     // descriptor so that both of its features match the same feature in the second image
@@ -578,7 +578,7 @@ TEST_F(DenseStereoTest, track_with_two_features_from_one_image_rejected)
     EXPECT_EQ(total_points, 0u);
 }
 
-TEST_F(DenseStereoTest, progress_callback_not_called_concurrently)
+TEST_F(DensifyMultiviewTest, progress_callback_not_called_concurrently)
 {
     // GIVEN: many images with dense features
     MeasurementGraph graph;

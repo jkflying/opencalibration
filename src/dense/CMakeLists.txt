@@ -1,4 +1,4 @@
-add_library(oc_dense dense_stereo.cpp)
+add_library(oc_dense densify_multiview.cpp)
 target_include_directories(oc_dense PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)

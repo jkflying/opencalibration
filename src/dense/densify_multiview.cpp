@@ -1,4 +1,4 @@
-#include <opencalibration/dense/dense_stereo.hpp>
+#include <opencalibration/dense/densify_multiview.hpp>
 
 #include <opencalibration/distort/distort_keypoints.hpp>
 #include <opencalibration/geometry/intersection.hpp>
@@ -56,50 +56,137 @@ constexpr double MAX_REPROJECTION_ERROR_PIXELS = 8.0;
 
 constexpr int TRIANGULATION_REFINE_ITERATIONS = 10;
 
-double descriptor_distance(const opencalibration::feature_2d &f1, const opencalibration::feature_2d &f2)
+using Descriptor = std::bitset<opencalibration::feature_2d::DESCRIPTOR_BITS>;
+
+size_t hammingDistance(const Descriptor &a, const Descriptor &b)
 {
-    return (f1.descriptor ^ f2.descriptor).count() * (1.0 / opencalibration::feature_2d::DESCRIPTOR_BITS);
+    return (a ^ b).count();
 }
 
-// Best descriptor match to `query` among the dense features of `img` within SEARCH_RADIUS_PIXELS of `center`,
-// accepted only if it passes the ratio test (or an absolute threshold when there is no second candidate)
-std::optional<size_t> ratioTestMatch(const opencalibration::feature_2d &query, const opencalibration::image &img,
-                                     const jk::tree::KDTree<size_t, 2, 8> &tree, const Eigen::Vector2d &center)
+class CellSortedFeatures
 {
-    auto searcher = tree.searcher();
-    const auto &nearby = searcher.search({center.x(), center.y()}, SEARCH_RADIUS_PIXELS * SEARCH_RADIUS_PIXELS,
-                                         std::numeric_limits<size_t>::max());
-    if (nearby.empty())
-        return std::nullopt;
+  public:
+    CellSortedFeatures() = default;
 
-    double best_dist = std::numeric_limits<double>::infinity();
-    double second_best_dist = std::numeric_limits<double>::infinity();
-    size_t best_feat_idx = 0;
-
-    for (const auto &n : nearby)
+    explicit CellSortedFeatures(const opencalibration::image &img)
     {
-        double d = descriptor_distance(query, img.features[n.payload]);
-        if (d < second_best_dist)
+        const size_t first = img.num_sparse_features;
+        const size_t count = img.features.size() - first;
+        if (count == 0)
+            return;
+
+        _origin = img.features[first].location;
+        Eigen::Vector2d max = _origin;
+        for (size_t i = first; i < img.features.size(); i++)
         {
-            if (d < best_dist)
+            _origin = _origin.cwiseMin(img.features[i].location);
+            max = max.cwiseMax(img.features[i].location);
+        }
+        _cols = cellOf(max.x() - _origin.x()) + 1;
+        _rows = cellOf(max.y() - _origin.y()) + 1;
+
+        std::vector<uint32_t> featureCell(count);
+        _cellBegin.assign(static_cast<size_t>(_cols) * _rows + 1, 0);
+        for (size_t i = 0; i < count; i++)
+        {
+            const Eigen::Vector2d &loc = img.features[first + i].location;
+            featureCell[i] = cellIndex(cellOf(loc.y() - _origin.y()), cellOf(loc.x() - _origin.x()));
+            _cellBegin[featureCell[i] + 1]++;
+        }
+        std::partial_sum(_cellBegin.begin(), _cellBegin.end(), _cellBegin.begin());
+
+        _locations.resize(count);
+        _descriptors.resize(count);
+        _imageFeatureIndex.resize(count);
+        std::vector<uint32_t> nextSlotInCell(_cellBegin.begin(), _cellBegin.end() - 1);
+        for (size_t i = 0; i < count; i++)
+        {
+            const uint32_t slot = nextSlotInCell[featureCell[i]]++;
+            _locations[slot] = img.features[first + i].location;
+            _descriptors[slot] = img.features[first + i].descriptor;
+            _imageFeatureIndex[slot] = first + i;
+        }
+    }
+
+    std::optional<size_t> ratioTestMatchNear(const opencalibration::feature_2d &query,
+                                             const Eigen::Vector2d &center) const
+    {
+        size_t nearby = 0;
+        double best_dist = std::numeric_limits<double>::infinity();
+        double second_best_dist = std::numeric_limits<double>::infinity();
+        size_t best_slot = 0;
+        forEachSlotWithinSearchRadius(center, [&](uint32_t slot) {
+            nearby++;
+            const double d = hammingDistance(query.descriptor, _descriptors[slot]) *
+                             (1.0 / opencalibration::feature_2d::DESCRIPTOR_BITS);
+            if (d < second_best_dist)
             {
-                second_best_dist = best_dist;
-                best_dist = d;
-                best_feat_idx = n.payload;
+                if (d < best_dist)
+                {
+                    second_best_dist = best_dist;
+                    best_dist = d;
+                    best_slot = slot;
+                }
+                else
+                {
+                    second_best_dist = d;
+                }
             }
-            else
+        });
+
+        if (nearby == 0)
+            return std::nullopt;
+        bool good_match =
+            nearby >= 2 ? best_dist < RATIO_THRESHOLD * second_best_dist : best_dist < MAX_ABSOLUTE_DESCRIPTOR_DISTANCE;
+        if (!good_match)
+            return std::nullopt;
+        return _imageFeatureIndex[best_slot];
+    }
+
+  private:
+    static constexpr double CELL_SIZE_PIXELS = SEARCH_RADIUS_PIXELS / 4;
+
+    static int cellOf(double offset)
+    {
+        return static_cast<int>(std::floor(offset * (1 / CELL_SIZE_PIXELS)));
+    }
+
+    size_t cellIndex(int row, int col) const
+    {
+        return static_cast<size_t>(row) * _cols + col;
+    }
+
+    template <typename Visit> void forEachSlotWithinSearchRadius(const Eigen::Vector2d &center, Visit &&visit) const
+    {
+        if (_locations.empty() || !center.allFinite())
+            return;
+
+        const Eigen::Vector2d lo = center - _origin - Eigen::Vector2d::Constant(SEARCH_RADIUS_PIXELS);
+        const Eigen::Vector2d hi = center - _origin + Eigen::Vector2d::Constant(SEARCH_RADIUS_PIXELS);
+        const int firstCol = std::max(0, cellOf(lo.x())), lastCol = std::min(_cols - 1, cellOf(hi.x()));
+        const int firstRow = std::max(0, cellOf(lo.y())), lastRow = std::min(_rows - 1, cellOf(hi.y()));
+        if (firstCol > lastCol)
+            return;
+
+        constexpr double radiusSquared = SEARCH_RADIUS_PIXELS * SEARCH_RADIUS_PIXELS;
+        for (int row = firstRow; row <= lastRow; row++)
+        {
+            const uint32_t rowSpanEnd = _cellBegin[cellIndex(row, lastCol) + 1];
+            for (uint32_t slot = _cellBegin[cellIndex(row, firstCol)]; slot < rowSpanEnd; slot++)
             {
-                second_best_dist = d;
+                if ((_locations[slot] - center).squaredNorm() < radiusSquared)
+                    visit(slot);
             }
         }
     }
 
-    bool good_match = nearby.size() >= 2 ? best_dist < RATIO_THRESHOLD * second_best_dist
-                                         : best_dist < MAX_ABSOLUTE_DESCRIPTOR_DISTANCE;
-    if (!good_match)
-        return std::nullopt;
-    return best_feat_idx;
-}
+    Eigen::Vector2d _origin{0, 0};
+    int _cols = 0, _rows = 0;
+    std::vector<uint32_t> _cellBegin;
+    std::vector<Eigen::Vector2d> _locations;
+    std::vector<Descriptor> _descriptors;
+    std::vector<size_t> _imageFeatureIndex;
+};
 
 struct RayMeasurement
 {
@@ -222,30 +309,17 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
         camera_tree.addPoint({pos.x(), pos.y(), pos.z()}, nid);
     }
 
-    // Build per-image KDTrees of dense features
-    struct ImageFeatureTree
-    {
-        jk::tree::KDTree<size_t, 2, 8> tree;
-    };
-
-    ankerl::unordered_dense::map<size_t, ImageFeatureTree> feature_trees;
-    for (size_t nid : node_ids)
-    {
-        feature_trees[nid];
-    }
-
+    std::vector<CellSortedFeatures> cell_sorted_features(node_ids.size());
     const int num_nodes_ft = static_cast<int>(node_ids.size());
 #pragma omp parallel for schedule(dynamic) // NOLINT(modernize-loop-convert)
     for (int ni = 0; ni < num_nodes_ft; ni++)
     {
-        const size_t nid = node_ids[ni];
-        const auto &img = graph.getNode(nid)->payload;
-        auto &ft = feature_trees.at(nid);
-        for (size_t i = img.num_sparse_features; i < img.features.size(); i++)
-        {
-            const auto &loc = img.features[i].location;
-            ft.tree.addPoint({loc.x(), loc.y()}, i);
-        }
+        cell_sorted_features[ni] = CellSortedFeatures(graph.getNode(node_ids[ni])->payload);
+    }
+    ankerl::unordered_dense::map<size_t, const CellSortedFeatures *> features_by_node;
+    for (size_t ni = 0; ni < node_ids.size(); ni++)
+    {
+        features_by_node[node_ids[ni]] = &cell_sorted_features[ni];
     }
 
     // Use first surface's mesh for intersection
@@ -318,7 +392,7 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
         std::vector<LocalMatch> local_matches;
 
         auto camera_searcher = camera_tree.searcher();
-        const auto &src_tree = feature_trees.at(src_nid).tree;
+        const CellSortedFeatures &src_features = *features_by_node.at(src_nid);
 
         for (size_t fi : order)
         {
@@ -357,11 +431,11 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
                     continue;
                 }
 
-                auto ft_it = feature_trees.find(cand_nid);
-                if (ft_it == feature_trees.end())
+                auto cand_features = features_by_node.find(cand_nid);
+                if (cand_features == features_by_node.end())
                     continue;
 
-                auto forward = ratioTestMatch(feat, cand_img, ft_it->second.tree, predicted);
+                auto forward = cand_features->second->ratioTestMatchNear(feat, predicted);
                 if (!forward)
                     continue;
 
@@ -369,7 +443,7 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
                 // reverse search where the candidate maps to, assuming the local src->cand offset is a translation.
                 const auto &cand_feat = cand_img.features[*forward];
                 const Eigen::Vector2d reverse_center = feat.location + (cand_feat.location - predicted);
-                auto reverse = ratioTestMatch(cand_feat, src_img, src_tree, reverse_center);
+                auto reverse = src_features.ratioTestMatchNear(cand_feat, reverse_center);
                 if (reverse && *reverse == global_fi)
                 {
                     local_matches.push_back({src_id, measurementId(cand_nid, *forward)});
