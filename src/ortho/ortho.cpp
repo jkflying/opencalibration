@@ -4,6 +4,7 @@
 
 #include <opencalibration/ortho/blending.hpp>
 #include <opencalibration/ortho/color_balance.hpp>
+#include <opencalibration/ortho/radiometric_cost.hpp>
 #include <opencalibration/tile_ordering/tile_ordering.hpp>
 
 #include <ceres/jet.h>
@@ -67,6 +68,67 @@ std::pair<float, float> normalizedImagePosition(double pixel_x, double pixel_y, 
     float nx = static_cast<float>((pixel_x - width * 0.5) / (width * 0.5));
     float ny = static_cast<float>((pixel_y - height * 0.5) / (height * 0.5));
     return {std::clamp(nx, -1.0f, 1.0f), std::clamp(ny, -1.0f, 1.0f)};
+}
+
+opencalibration::orthomosaic::SampleGeometry sampleGeometry(const opencalibration::image &payload,
+                                                            const Eigen::Vector3d &world_point,
+                                                            const Eigen::Vector2d &pixel)
+{
+    const int cols = payload.model->pixels_cols;
+    const int rows = payload.model->pixels_rows;
+    opencalibration::orthomosaic::SampleGeometry g;
+    g.normalized_radius = normalizedImageRadius(pixel.x(), pixel.y(), cols, rows);
+    std::tie(g.normalized_x, g.normalized_y) = normalizedImagePosition(pixel.x(), pixel.y(), cols, rows);
+
+    const Eigen::Vector3d view_dir = (world_point - payload.position).normalized();
+    const Eigen::Vector3d camera_down = payload.orientation.inverse() * Eigen::Vector3d(0, 0, 1);
+    g.view_angle_rad = static_cast<float>(std::acos(std::clamp(camera_down.dot(view_dir), -1.0, 1.0)));
+    g.horizontal_view_dir_x = static_cast<float>(view_dir.x());
+    g.horizontal_view_dir_y = static_cast<float>(view_dir.y());
+    return g;
+}
+
+bool applyColorBalance(const opencalibration::orthomosaic::ColorBalanceResult &color_balance, size_t camera_id,
+                       uint32_t model_id, const opencalibration::orthomosaic::SampleGeometry &geometry, cv::Vec3f &lab)
+{
+    using namespace opencalibration::orthomosaic;
+    auto img_it = color_balance.per_image_params.find(camera_id);
+    if (img_it == color_balance.per_image_params.end())
+        return false;
+    const auto &img_params = img_it->second;
+
+    static const VignettingParams no_vignetting;
+    auto mdl_it = color_balance.per_model_params.find(model_id);
+    const auto &vig = mdl_it != color_balance.per_model_params.end() ? mdl_it->second : no_vignetting;
+
+    const RadiometricModel<double> model{&img_params.log_cbrt_exposure,
+                                         img_params.ab_offset.data(),
+                                         &img_params.brdf_coeff,
+                                         img_params.slope.data(),
+                                         vig.log_cbrt_falloff_coeffs.data(),
+                                         color_balance.horizontal_view_dir_log_cbrt_gain.data()};
+    const double in[3] = {lab[0], lab[1], lab[2]};
+    double out[3];
+    correctRadiometry(in, model, geometry, out);
+    lab =
+        cv::Vec3f(std::clamp(out[0], 0.0, 100.0), std::clamp(out[1], -127.0, 127.0), std::clamp(out[2], -127.0, 127.0));
+    return true;
+}
+
+cv::Vec3f rgbToLab(uint8_t r, uint8_t g, uint8_t b)
+{
+    cv::Mat pixel(1, 1, CV_32FC3, cv::Scalar(r / 255.f, g / 255.f, b / 255.f));
+    cv::cvtColor(pixel, pixel, cv::COLOR_RGB2Lab);
+    return pixel.at<cv::Vec3f>(0, 0);
+}
+
+cv::Vec3b labToRgb(const cv::Vec3f &lab)
+{
+    cv::Mat pixel(1, 1, CV_32FC3, cv::Scalar(lab[0], lab[1], lab[2]));
+    cv::cvtColor(pixel, pixel, cv::COLOR_Lab2RGB);
+    cv::Mat rgb;
+    pixel.convertTo(rgb, CV_8UC3, 255.0);
+    return rgb.at<cv::Vec3b>(0, 0);
 }
 
 class PatchSampler
@@ -460,7 +522,77 @@ double rayTraceHeight(double x, double y, double mean_camera_z, const std::vecto
     return context.traceHeight(x, y, mean_camera_z);
 }
 
-OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph)
+namespace
+{
+struct ThumbnailSample
+{
+    size_t camera_id;
+    uint32_t model_id;
+    SampleGeometry geometry;
+    cv::Vec3f lab;
+};
+
+struct ThumbnailColorSampling
+{
+    int pixel_step;
+    size_t pairs_per_sample;
+};
+
+ThumbnailColorSampling thumbnailColorSampling(const OrthoMosaicContext &context, const MeasurementGraph &graph,
+                                              const OrthoMosaicConfig &config)
+{
+    double full_resolution_gsd =
+        calculateGSD(graph, context.involved_nodes, context.bounds.mean_surface_z, ImageResolution::FullResolution);
+    int full_width = std::max(1, static_cast<int>((context.bounds.max_x - context.bounds.min_x) / full_resolution_gsd));
+    int full_height =
+        std::max(1, static_cast<int>((context.bounds.max_y - context.bounds.min_y) / full_resolution_gsd));
+    clampOutputResolution(full_resolution_gsd, full_width, full_height, context, graph, "Color sampling");
+    clampOutputMegapixels(full_resolution_gsd, full_width, full_height, config.max_output_megapixels, "Color sampling");
+
+    const double full_res_samples_per_thumbnail_pixel =
+        std::pow(context.gsd / (full_resolution_gsd * std::max(1, config.color_sample_spacing_full_res_px)), 2);
+    if (full_res_samples_per_thumbnail_pixel >= 1)
+        return {1, static_cast<size_t>(std::lround(full_res_samples_per_thumbnail_pixel))};
+    return {static_cast<int>(std::lround(1 / std::sqrt(full_res_samples_per_thumbnail_pixel))), 1};
+}
+
+void appendCameraPairs(const std::vector<ThumbnailSample> &samples, size_t max_pairs,
+                       std::vector<ColorCorrespondence> &correspondences)
+{
+    size_t pairs = 0;
+    for (size_t b = 1; b < samples.size() && pairs < max_pairs; b++)
+    {
+        for (size_t a = 0; a < b && pairs < max_pairs; a++, pairs++)
+        {
+            const auto &sa = samples[a];
+            const auto &sb = samples[b];
+            correspondences.push_back({{sa.lab[0], sa.lab[1], sa.lab[2]},
+                                       {sb.lab[0], sb.lab[1], sb.lab[2]},
+                                       sa.camera_id,
+                                       sb.camera_id,
+                                       sa.model_id,
+                                       sb.model_id,
+                                       sa.geometry,
+                                       sb.geometry});
+        }
+    }
+}
+
+ankerl::unordered_dense::map<size_t, CameraPosition> cameraPositions(
+    const MeasurementGraph &graph, const ankerl::unordered_dense::set<size_t> &node_ids)
+{
+    ankerl::unordered_dense::map<size_t, CameraPosition> positions;
+    for (size_t node_id : node_ids)
+    {
+        const auto &position = graph.getNode(node_id)->payload.position;
+        positions[node_id] = {position.x(), position.y()};
+    }
+    return positions;
+}
+} // namespace
+
+OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph,
+                                const OrthoMosaicConfig &config)
 {
     OrthoMosaicContext context = prepareOrthoMosaicContext(surfaces, graph, ImageResolution::Thumbnail);
 
@@ -493,7 +625,10 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
     OrthoMosaic result;
     result.gsd = context.gsd;
     MultiLayerRaster<uint8_t> pixelValues(image_dimensions.height, image_dimensions.width, 4);
-    // result.pixelValues; // assign at end
+    pixelValues.layers[0].band = Band::RED;
+    pixelValues.layers[1].band = Band::GREEN;
+    pixelValues.layers[2].band = Band::BLUE;
+    pixelValues.layers[3].band = Band::ALPHA;
     result.cameraUUID.pixels.resize(image_dimensions.height, image_dimensions.width);
     result.overlap.pixels.resize(image_dimensions.height, image_dimensions.width);
     result.dsm.pixels.resize(image_dimensions.height, image_dimensions.width);
@@ -527,6 +662,13 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
     constexpr size_t colorCandidateCameras = 5;
     constexpr uint32_t noSource = std::numeric_limits<uint32_t>::max();
 
+    const ThumbnailColorSampling color_sampling = thumbnailColorSampling(context, graph, config);
+    spdlog::info("Color sampling: thumbnail sample step {} px, up to {} camera pairs per sample",
+                 color_sampling.pixel_step, color_sampling.pairs_per_sample);
+
+    std::vector<ThumbnailSample> pixel_sources(static_cast<size_t>(image_dimensions.height) * image_dimensions.width);
+    std::vector<ColorCorrespondence> correspondences;
+
 #pragma omp parallel
     {
         std::vector<MeshIntersectionSearcher> searchers;
@@ -541,6 +683,8 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
         }
         auto cameraSearcher = context.imageGPSLocations.searcher();
         const std::vector<jk::tree::KDTree<size_t, 2>::DistancePayload> noCameras;
+        std::vector<ColorCorrespondence> local_correspondences;
+        std::vector<ThumbnailSample> samples;
 
 #pragma omp for schedule(dynamic)
         for (int row = 0; row < image_dimensions.height; row++)
@@ -583,6 +727,7 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
                         ? noCameras
                         : cameraSearcher.search({x, y}, std::numeric_limits<double>::max(), maxOverlapCameras);
                 uint8_t overlapCount = 0;
+                samples.clear();
 
                 for (size_t i = 0; i < nearestCameras.size(); i++)
                 {
@@ -605,17 +750,26 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
                     if (px > 0 && px < cc.thumb_size[1] && py > 0 && py < cc.thumb_size[0])
                     {
                         overlapCount++;
-                        if (i < colorCandidateCameras && pixelSource == noSource)
+                        Eigen::Vector<uint8_t, Eigen::Dynamic> pixelValue(3);
+                        if (i < colorCandidateCameras && payload.thumbnail.get(py, px, pixelValue))
                         {
-                            Eigen::Vector<uint8_t, Eigen::Dynamic> pixelValue(3);
-                            if (payload.thumbnail.get(py, px, pixelValue))
+                            if (pixelSource == noSource)
                             {
                                 color << pixelValue, 255;
                                 pixelSource = candidate.payload & 0xFFFFFFFF;
                             }
+                            samples.push_back({candidate.payload, static_cast<uint32_t>(payload.model->id),
+                                               sampleGeometry(payload, sample_point, pixel),
+                                               rgbToLab(pixelValue[0], pixelValue[1], pixelValue[2])});
                         }
                     }
                 }
+
+                if (!samples.empty())
+                    pixel_sources[static_cast<size_t>(row) * image_dimensions.width + col] = samples.front();
+
+                if (row % color_sampling.pixel_step == 0 && col % color_sampling.pixel_step == 0)
+                    appendCameraPairs(samples, color_sampling.pairs_per_sample, local_correspondences);
 
                 if (pixelSource == noSource)
                 {
@@ -641,6 +795,31 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
                     last_log_time = now;
                 }
             }
+        }
+
+#pragma omp critical
+        correspondences.insert(correspondences.end(), local_correspondences.begin(), local_correspondences.end());
+    }
+
+    spdlog::info("Color balance: {} correspondences from thumbnail", correspondences.size());
+    if (!correspondences.empty())
+        result.color_balance = solveColorBalance(correspondences, cameraPositions(graph, context.involved_nodes));
+
+#pragma omp parallel for schedule(dynamic)
+    for (int row = 0; row < image_dimensions.height; row++)
+    {
+        Eigen::Vector<uint8_t, Eigen::Dynamic> color(4);
+        for (int col = 0; col < image_dimensions.width; col++)
+        {
+            if (static_cast<uint32_t>(result.cameraUUID.pixels(row, col)) == noSource)
+                continue;
+            ThumbnailSample source = pixel_sources[static_cast<size_t>(row) * image_dimensions.width + col];
+            if (!applyColorBalance(result.color_balance, source.camera_id, source.model_id, source.geometry,
+                                   source.lab))
+                continue;
+            const cv::Vec3b rgb = labToRgb(source.lab);
+            color << rgb[0], rgb[1], rgb[2], 255;
+            pixelValues.set(row, col, color);
         }
     }
 
@@ -1204,17 +1383,10 @@ bool projectIntoImage(const image &payload, const Eigen::Matrix3d &inv_rotation,
 void setSampleGeometry(PixelSample &sample, const image &payload, const Eigen::Vector3d &world_point,
                        const Eigen::Vector2d &pixel)
 {
-    const int cols = payload.model->pixels_cols;
-    const int rows = payload.model->pixels_rows;
-    sample.normalized_radius = normalizedImageRadius(pixel.x(), pixel.y(), cols, rows);
-    std::tie(sample.normalized_x, sample.normalized_y) = normalizedImagePosition(pixel.x(), pixel.y(), cols, rows);
-
-    const Eigen::Vector3d to_point = world_point - payload.position;
-    const Eigen::Vector3d camera_down = payload.orientation.inverse() * Eigen::Vector3d(0, 0, 1);
-    const double cos_angle = camera_down.dot(to_point.normalized());
-    sample.view_angle = static_cast<float>(std::acos(std::clamp(cos_angle, -1.0, 1.0)));
-    sample.weight = computeBlendWeight(static_cast<float>(pixel.x()), static_cast<float>(pixel.y()), cols, rows,
-                                       static_cast<float>(to_point.norm()));
+    sample.geometry = sampleGeometry(payload, world_point, pixel);
+    sample.weight =
+        computeBlendWeight(static_cast<float>(pixel.x()), static_cast<float>(pixel.y()), payload.model->pixels_cols,
+                           payload.model->pixels_rows, static_cast<float>((world_point - payload.position).norm()));
 }
 
 struct BlockCamera
@@ -1234,9 +1406,7 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
                         int output_width, int output_height, const std::vector<float> &dsm_tile,
                         const MeasurementGraph &graph, const jk::tree::KDTree<size_t, 2> &imageGPSLocations,
                         const ankerl::unordered_dense::map<size_t, Eigen::Matrix3d> &inv_rotation_cache,
-                        FullResolutionImageCache &image_cache, int num_layers, LayeredTileBuffer &tile_out,
-                        std::vector<ColorCorrespondence> &correspondences_out, int correspondence_subsample,
-                        int correspondence_kernel_radius, std::mutex &correspondences_mutex)
+                        FullResolutionImageCache &image_cache, int num_layers, LayeredTileBuffer &tile_out)
 {
     int x_offset = tile_x * tile_size;
     int y_offset = tile_y * tile_size;
@@ -1272,7 +1442,6 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
             return full_image;
         };
 
-        std::vector<ColorCorrespondence> local_correspondences;
         std::vector<BlockCamera> cameras;
         std::vector<size_t> rank;
 
@@ -1356,129 +1525,13 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
                                         *cam.inv_rotation, gsd, cam.samples);
             }
         }
-
-#pragma omp for schedule(dynamic)
-        for (int local_row = 0; local_row < tile_height; local_row++)
-        {
-            for (int local_col = 0; local_col < tile_width; local_col++)
-            {
-                int layer_idx = 0;
-                while (layer_idx < num_layers && tile_out.at(layer_idx, local_row, local_col).valid)
-                    layer_idx++;
-
-                // Voronoi boundary detection: check if rank-1 camera differs from neighbors
-                if (layer_idx > 0 && correspondence_subsample > 0)
-                {
-                    size_t my_cam = tile_out.at(0, local_row, local_col).camera_id;
-                    bool is_boundary = false;
-
-                    const int dx_arr[] = {-1, 1, 0, 0};
-                    const int dy_arr[] = {0, 0, -1, 1};
-                    for (int d = 0; d < 4 && !is_boundary; d++)
-                    {
-                        int nr = local_row + dy_arr[d];
-                        int nc = local_col + dx_arr[d];
-                        if (nr >= 0 && nr < tile_height && nc >= 0 && nc < tile_width)
-                        {
-                            const auto &neighbor = tile_out.at(0, nr, nc);
-                            if (neighbor.valid && neighbor.camera_id != my_cam)
-                            {
-                                is_boundary = true;
-                            }
-                        }
-                    }
-
-                    bool sample_this_pixel = false;
-                    if (is_boundary && ((local_row + local_col) % correspondence_subsample == 0))
-                        sample_this_pixel = true;
-                    else if (!is_boundary && (local_row % correspondence_subsample == 0) &&
-                             (local_col % correspondence_subsample == 0))
-                        sample_this_pixel = true;
-
-                    if (sample_this_pixel)
-                    {
-                        for (int a = 0; a < layer_idx; a++)
-                        {
-                            for (int b = a + 1; b < layer_idx; b++)
-                            {
-                                const auto &sa = tile_out.at(a, local_row, local_col);
-                                const auto &sb = tile_out.at(b, local_row, local_col);
-
-                                cv::Vec3f sum_lab_a(0, 0, 0), sum_lab_b(0, 0, 0);
-                                int count = 0;
-                                for (int dr = -correspondence_kernel_radius; dr <= correspondence_kernel_radius; dr++)
-                                {
-                                    for (int dc = -correspondence_kernel_radius; dc <= correspondence_kernel_radius;
-                                         dc++)
-                                    {
-                                        int kr = local_row + dr;
-                                        int kc = local_col + dc;
-                                        if (kr < 0 || kr >= tile_height || kc < 0 || kc >= tile_width)
-                                            continue;
-                                        const auto &ka = tile_out.at(a, kr, kc);
-                                        const auto &kb = tile_out.at(b, kr, kc);
-                                        if (!ka.valid || !kb.valid || ka.camera_id != sa.camera_id ||
-                                            kb.camera_id != sb.camera_id)
-                                            continue;
-
-                                        cv::Mat bgr_a(1, 1, CV_8UC3), bgr_b(1, 1, CV_8UC3);
-                                        bgr_a.at<cv::Vec3b>(0, 0) = ka.color_bgr;
-                                        bgr_b.at<cv::Vec3b>(0, 0) = kb.color_bgr;
-                                        cv::Mat bgr_a_f, bgr_b_f, lab_a, lab_b;
-                                        bgr_a.convertTo(bgr_a_f, CV_32FC3, 1.0 / 255.0);
-                                        bgr_b.convertTo(bgr_b_f, CV_32FC3, 1.0 / 255.0);
-                                        cv::cvtColor(bgr_a_f, lab_a, cv::COLOR_BGR2Lab);
-                                        cv::cvtColor(bgr_b_f, lab_b, cv::COLOR_BGR2Lab);
-                                        sum_lab_a += lab_a.at<cv::Vec3f>(0, 0);
-                                        sum_lab_b += lab_b.at<cv::Vec3f>(0, 0);
-                                        count++;
-                                    }
-                                }
-                                if (count == 0)
-                                    continue;
-
-                                cv::Vec3f avg_lab_a = sum_lab_a / static_cast<float>(count);
-                                cv::Vec3f avg_lab_b = sum_lab_b / static_cast<float>(count);
-
-                                ColorCorrespondence corr;
-                                corr.lab_a = {avg_lab_a[0], avg_lab_a[1], avg_lab_a[2]};
-                                corr.lab_b = {avg_lab_b[0], avg_lab_b[1], avg_lab_b[2]};
-                                corr.camera_id_a = sa.camera_id;
-                                corr.camera_id_b = sb.camera_id;
-                                corr.model_id_a = sa.model_id;
-                                corr.model_id_b = sb.model_id;
-                                corr.normalized_radius_a = sa.normalized_radius;
-                                corr.normalized_radius_b = sb.normalized_radius;
-                                corr.view_angle_a = sa.view_angle;
-                                corr.view_angle_b = sb.view_angle;
-                                corr.normalized_x_a = sa.normalized_x;
-                                corr.normalized_y_a = sa.normalized_y;
-                                corr.normalized_x_b = sb.normalized_x;
-                                corr.normalized_y_b = sb.normalized_y;
-
-                                local_correspondences.push_back(corr);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        if (!local_correspondences.empty())
-        {
-            std::lock_guard<std::mutex> lock(correspondences_mutex);
-            correspondences_out.insert(correspondences_out.end(), local_correspondences.begin(),
-                                       local_correspondences.end());
-        }
     }
 }
 
-std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surface_model> &surfaces,
-                                                        const MeasurementGraph &graph, const GeoCoord &coord_system,
-                                                        const std::string &layers_path, const std::string &cameras_path,
-                                                        const std::string &dsm_output_path,
-                                                        const OrthoMosaicConfig &config,
-                                                        TileProgressCallback tile_progress)
+void generateLayeredGeoTIFF(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph,
+                            const GeoCoord &coord_system, const std::string &layers_path,
+                            const std::string &cameras_path, const std::string &dsm_output_path,
+                            const OrthoMosaicConfig &config, TileProgressCallback tile_progress)
 {
     spdlog::info("Pass 1: Generating layered GeoTIFF: {}", layers_path);
     PerformanceMeasure p("Ortho stage 1 - setup");
@@ -1534,9 +1587,6 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
 
     spdlog::info("Pass 1: Processing {} tiles ({}x{} grid)", total_tiles, num_tiles_x, num_tiles_y);
 
-    std::vector<ColorCorrespondence> all_correspondences;
-    std::mutex correspondences_mutex;
-
     int completed_tiles = 0;
     auto start_time = std::chrono::steady_clock::now();
     auto last_log_time = start_time;
@@ -1589,9 +1639,7 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
 
         LayeredTileBuffer tile_buf;
         processLayeredTile(tile_x, tile_y, tile_size, bounds, gsd, width, height, dsm_tile, graph,
-                           context.imageGPSLocations, inv_rotation_cache, image_cache, config.num_layers, tile_buf,
-                           all_correspondences, config.correspondence_subsample, config.correspondence_kernel_radius,
-                           correspondences_mutex);
+                           context.imageGPSLocations, inv_rotation_cache, image_cache, config.num_layers, tile_buf);
         lap(process_s);
 
         int x_off = tile_x * tile_size;
@@ -1679,10 +1727,9 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
             completed_tiles == total_tiles)
         {
             double progress = 100.0 * completed_tiles / total_tiles;
-            spdlog::info("Pass 1 Progress: {:.1f}% ({}/{} tiles, {} seconds, {} correspondences), time in dsm {:.0f}s, "
+            spdlog::info("Pass 1 Progress: {:.1f}% ({}/{} tiles, {} seconds), time in dsm {:.0f}s, "
                          "image load {:.0f}s, process {:.0f}s, write wait {:.0f}s",
-                         progress, completed_tiles, total_tiles, elapsed, all_correspondences.size(), dsm_s, load_s,
-                         process_s, write_wait_s);
+                         progress, completed_tiles, total_tiles, elapsed, dsm_s, load_s, process_s, write_wait_s);
             last_log_time = now;
         }
     }
@@ -1711,8 +1758,7 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
         }
     }
 
-    spdlog::info("Pass 1 complete: {} correspondences collected", all_correspondences.size());
-    return all_correspondences;
+    spdlog::info("Pass 1 complete");
 }
 
 void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &cameras_path, const std::string &dsm_path,
@@ -1882,33 +1928,8 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
                         if (!sample.valid)
                             continue;
 
-                        auto img_it = color_balance.per_image_params.find(sample.camera_id);
-                        if (img_it == color_balance.per_image_params.end())
-                            continue;
-                        const auto &img_params = img_it->second;
-
-                        cv::Vec3f &lab = lab_layers[layer].at<cv::Vec3f>(local_row, local_col);
-                        lab[0] -= static_cast<float>(img_params.lab_offset[0]);
-                        lab[1] -= static_cast<float>(img_params.lab_offset[1]);
-                        lab[2] -= static_cast<float>(img_params.lab_offset[2]);
-
-                        auto mdl_it = color_balance.per_model_params.find(sample.model_id);
-                        if (mdl_it != color_balance.per_model_params.end())
-                        {
-                            const auto &vig = mdl_it->second;
-                            float r2 = sample.normalized_radius * sample.normalized_radius;
-                            float vig_corr = static_cast<float>(vig.coeffs[0]) * r2 +
-                                             static_cast<float>(vig.coeffs[1]) * r2 * r2 +
-                                             static_cast<float>(vig.coeffs[2]) * r2 * r2 * r2;
-                            lab[0] -= vig_corr;
-                        }
-                        lab[0] -= static_cast<float>(img_params.brdf_coeff) * sample.view_angle * sample.view_angle;
-                        lab[0] -= static_cast<float>(img_params.slope[0]) * sample.normalized_x +
-                                  static_cast<float>(img_params.slope[1]) * sample.normalized_y;
-
-                        lab[0] = std::clamp(lab[0], 0.0f, 100.0f);
-                        lab[1] = std::clamp(lab[1], -127.0f, 127.0f);
-                        lab[2] = std::clamp(lab[2], -127.0f, 127.0f);
+                        applyColorBalance(color_balance, sample.camera_id, sample.model_id, sample.geometry,
+                                          lab_layers[layer].at<cv::Vec3f>(local_row, local_col));
                     }
                 }
             }

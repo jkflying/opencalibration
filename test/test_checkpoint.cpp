@@ -95,6 +95,39 @@ TEST_F(CheckpointTest, save_and_load_with_surfaces)
     EXPECT_DOUBLE_EQ(10.0, loaded.surfaces[1].cloud[0][0].x());
 }
 
+TEST_F(CheckpointTest, save_and_load_color_balance)
+{
+    // GIVEN: a checkpoint holding a solved color balance
+    CheckpointData data;
+    data.state = PipelineState::GENERATE_LAYERS;
+    data.color_balance.success = true;
+    data.color_balance.final_cost = 1.5;
+    data.color_balance.num_iterations = 7;
+    data.color_balance.horizontal_view_dir_log_cbrt_gain = {0.01, -0.02};
+    data.color_balance.per_image_params[0xFFFFFFFF12345678ull] = {0.1, {1.0, -2.0}, 0.3, {0.04, -0.05}};
+    data.color_balance.per_model_params[3] = {{-0.1, 0.02, -0.003}};
+
+    // WHEN: saving and loading it
+    ASSERT_TRUE(saveCheckpoint(data, test_checkpoint_dir));
+    CheckpointData loaded;
+    ASSERT_TRUE(loadCheckpoint(test_checkpoint_dir, loaded));
+
+    // THEN: every color balance parameter survives
+    const auto &cb = loaded.color_balance;
+    EXPECT_TRUE(cb.success);
+    EXPECT_DOUBLE_EQ(1.5, cb.final_cost);
+    EXPECT_EQ(7, cb.num_iterations);
+    EXPECT_EQ(data.color_balance.horizontal_view_dir_log_cbrt_gain, cb.horizontal_view_dir_log_cbrt_gain);
+    ASSERT_EQ(1u, cb.per_image_params.count(0xFFFFFFFF12345678ull));
+    const auto &img = cb.per_image_params.at(0xFFFFFFFF12345678ull);
+    EXPECT_DOUBLE_EQ(0.1, img.log_cbrt_exposure);
+    EXPECT_EQ((std::array<double, 2>{1.0, -2.0}), img.ab_offset);
+    EXPECT_DOUBLE_EQ(0.3, img.brdf_coeff);
+    EXPECT_EQ((std::array<double, 2>{0.04, -0.05}), img.slope);
+    ASSERT_EQ(1u, cb.per_model_params.count(3));
+    EXPECT_EQ((std::array<double, 3>{-0.1, 0.02, -0.003}), cb.per_model_params.at(3).log_cbrt_falloff_coeffs);
+}
+
 TEST_F(CheckpointTest, pipeline_save_and_load)
 {
     Pipeline p1(1);
@@ -120,7 +153,7 @@ TEST_F(CheckpointTest, fromString_toString_roundtrip)
     std::vector<PipelineState> states = {
         PipelineState::INITIAL_PROCESSING, PipelineState::INITIAL_GLOBAL_RELAX, PipelineState::CAMERA_PARAMETER_RELAX,
         PipelineState::FINAL_GLOBAL_RELAX, PipelineState::GENERATE_THUMBNAIL,   PipelineState::GENERATE_LAYERS,
-        PipelineState::COLOR_BALANCE,      PipelineState::BLEND_LAYERS,         PipelineState::COMPLETE};
+        PipelineState::BLEND_LAYERS,       PipelineState::BLEND_LAYERS,         PipelineState::COMPLETE};
 
     std::vector<std::string> state_strings = {"INITIAL_PROCESSING", "INITIAL_GLOBAL_RELAX", "CAMERA_PARAMETER_RELAX",
                                               "FINAL_GLOBAL_RELAX", "GENERATE_THUMBNAIL",   "GENERATE_LAYERS",

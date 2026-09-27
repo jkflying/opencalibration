@@ -22,6 +22,88 @@ namespace opencalibration
 namespace
 {
 
+template <typename Writer, size_t N> void writeArray(Writer &writer, const std::array<double, N> &values)
+{
+    writer.StartArray();
+    for (double v : values)
+        writer.Double(v);
+    writer.EndArray();
+}
+
+template <size_t N> void readArray(const rapidjson::Value &value, std::array<double, N> &values)
+{
+    for (size_t i = 0; i < N && i < value.Size(); i++)
+        values[i] = value[static_cast<rapidjson::SizeType>(i)].GetDouble();
+}
+
+template <typename Writer> void writeColorBalance(Writer &writer, const orthomosaic::ColorBalanceResult &cb)
+{
+    writer.StartObject();
+    writer.Key("success");
+    writer.Bool(cb.success);
+    writer.Key("final_cost");
+    writer.Double(cb.final_cost);
+    writer.Key("num_iterations");
+    writer.Int(cb.num_iterations);
+    writer.Key("horizontal_view_dir_log_cbrt_gain");
+    writeArray(writer, cb.horizontal_view_dir_log_cbrt_gain);
+
+    writer.Key("images");
+    writer.StartArray();
+    for (const auto &[id, params] : cb.per_image_params)
+    {
+        writer.StartObject();
+        writer.Key("id");
+        writer.Uint64(id);
+        writer.Key("log_cbrt_exposure");
+        writer.Double(params.log_cbrt_exposure);
+        writer.Key("ab_offset");
+        writeArray(writer, params.ab_offset);
+        writer.Key("brdf_coeff");
+        writer.Double(params.brdf_coeff);
+        writer.Key("slope");
+        writeArray(writer, params.slope);
+        writer.EndObject();
+    }
+    writer.EndArray();
+
+    writer.Key("models");
+    writer.StartArray();
+    for (const auto &[id, params] : cb.per_model_params)
+    {
+        writer.StartObject();
+        writer.Key("id");
+        writer.Uint(id);
+        writer.Key("log_cbrt_falloff_coeffs");
+        writeArray(writer, params.log_cbrt_falloff_coeffs);
+        writer.EndObject();
+    }
+    writer.EndArray();
+    writer.EndObject();
+}
+
+void readColorBalance(const rapidjson::Value &value, orthomosaic::ColorBalanceResult &cb)
+{
+    cb.success = value["success"].GetBool();
+    cb.final_cost = value["final_cost"].GetDouble();
+    cb.num_iterations = value["num_iterations"].GetInt();
+    readArray(value["horizontal_view_dir_log_cbrt_gain"], cb.horizontal_view_dir_log_cbrt_gain);
+
+    for (const auto &image : value["images"].GetArray())
+    {
+        auto &params = cb.per_image_params[image["id"].GetUint64()];
+        params.log_cbrt_exposure = image["log_cbrt_exposure"].GetDouble();
+        readArray(image["ab_offset"], params.ab_offset);
+        params.brdf_coeff = image["brdf_coeff"].GetDouble();
+        readArray(image["slope"], params.slope);
+    }
+
+    for (const auto &model : value["models"].GetArray())
+    {
+        readArray(model["log_cbrt_falloff_coeffs"], cb.per_model_params[model["id"].GetUint()].log_cbrt_falloff_coeffs);
+    }
+}
+
 bool saveMetadata(const CheckpointData &data, const std::filesystem::path &path)
 {
     rapidjson::StringBuffer buffer;
@@ -46,6 +128,12 @@ bool saveMetadata(const CheckpointData &data, const std::filesystem::path &path)
 
     writer.Key("surface_count");
     writer.Uint64(data.surfaces.size());
+
+    if (!data.color_balance.per_image_params.empty())
+    {
+        writer.Key("color_balance");
+        writeColorBalance(writer, data.color_balance);
+    }
 
     writer.EndObject();
 
@@ -107,6 +195,11 @@ bool loadMetadata(CheckpointData &data, const std::filesystem::path &path, size_
     if (doc.HasMember("surface_count"))
     {
         surface_count = doc["surface_count"].GetUint64();
+    }
+
+    if (doc.HasMember("color_balance"))
+    {
+        readColorBalance(doc["color_balance"], data.color_balance);
     }
 
     return true;

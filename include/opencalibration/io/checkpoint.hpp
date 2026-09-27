@@ -1,5 +1,6 @@
 #pragma once
 
+#include <opencalibration/ortho/color_balance.hpp>
 #include <opencalibration/types/measurement_graph.hpp>
 #include <opencalibration/types/pipeline_state.hpp>
 #include <opencalibration/types/surface_model.hpp>
@@ -17,6 +18,7 @@ struct CheckpointData
     double origin_longitude = 0.0;
     PipelineState state = PipelineState::INITIAL_PROCESSING;
     uint64_t state_run_count = 0;
+    orthomosaic::ColorBalanceResult color_balance;
 };
 
 struct CheckpointStage

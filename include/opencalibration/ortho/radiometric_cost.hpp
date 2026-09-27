@@ -1,229 +1,123 @@
 #pragma once
 
+#include <opencalibration/ortho/color_balance.hpp>
+
 #include <cmath>
 
 namespace opencalibration::orthomosaic
 {
 
-// Ceres cost function: penalize difference between two cameras observing the same point
-// after applying per-image radiometric corrections.
-//
-// Radiometric model (additive in LAB):
-//   corrected_L = observed_L - offset_L - (vig[0]*r^2 + vig[1]*r^4 + vig[2]*r^6)
-//                 - brdf*theta^2 - slope[0]*nx - slope[1]*ny
-//   corrected_a = observed_a - offset_a
-//   corrected_b = observed_b - offset_b
-//
-// Residual = corrected_a - corrected_b (should be zero for matching points)
-//
-// Parameter blocks: lab_offset_a[3], brdf_a[1], vig_a[3], lab_offset_b[3], brdf_b[1], vig_b[3],
-//                   slope_a[2], slope_b[2]
+constexpr double LAB_L_BLACK_OFFSET = 16.0;
+constexpr double LAB_L_MID_GREY = 50.0;
+constexpr double L_UNITS_PER_LOG_CBRT_GAIN = LAB_L_MID_GREY + LAB_L_BLACK_OFFSET;
+
+template <typename T> void scaleLabByCubeRootOfLinearGain(const T lab[3], T cbrt_linear_gain, T out[3])
+{
+    out[0] = (lab[0] + T(LAB_L_BLACK_OFFSET)) * cbrt_linear_gain - T(LAB_L_BLACK_OFFSET);
+    out[1] = lab[1] * cbrt_linear_gain;
+    out[2] = lab[2] * cbrt_linear_gain;
+}
+
+template <typename T> T vignettingLogCbrtFalloff(const T *log_cbrt_falloff_coeffs, float normalized_radius)
+{
+    T r2 = T(normalized_radius * normalized_radius);
+    return log_cbrt_falloff_coeffs[0] * r2 + log_cbrt_falloff_coeffs[1] * r2 * r2 +
+           log_cbrt_falloff_coeffs[2] * r2 * r2 * r2;
+}
+
+template <typename T>
+void removeVignetting(const T lab[3], const T *log_cbrt_falloff_coeffs, float normalized_radius, T out[3])
+{
+    T cbrt_inverse_falloff = exp(-vignettingLogCbrtFalloff(log_cbrt_falloff_coeffs, normalized_radius));
+    scaleLabByCubeRootOfLinearGain(lab, cbrt_inverse_falloff, out);
+}
+
+template <typename T> struct RadiometricModel
+{
+    const T *log_cbrt_exposure;
+    const T *ab_offset;
+    const T *brdf;
+    const T *slope;
+    const T *vignetting;
+    const T *horizontal_view_dir_gain;
+};
+
+template <typename T> T totalLogCbrtGain(const RadiometricModel<T> &m, const SampleGeometry &g)
+{
+    return vignettingLogCbrtFalloff(m.vignetting, g.normalized_radius) + m.log_cbrt_exposure[0] +
+           m.brdf[0] * T(g.view_angle_rad * g.view_angle_rad) + m.slope[0] * T(g.normalized_x) +
+           m.slope[1] * T(g.normalized_y) + m.horizontal_view_dir_gain[0] * T(g.horizontal_view_dir_x) +
+           m.horizontal_view_dir_gain[1] * T(g.horizontal_view_dir_y);
+}
+
+template <typename T>
+void correctRadiometry(const T lab[3], const RadiometricModel<T> &m, const SampleGeometry &g, T out[3])
+{
+    scaleLabByCubeRootOfLinearGain(lab, exp(-totalLogCbrtGain(m, g)), out);
+    out[1] -= m.ab_offset[0];
+    out[2] -= m.ab_offset[1];
+}
+
 struct RadiometricMatchCost
 {
-    static constexpr int NUM_RESIDUALS = 3;
-    static constexpr int NUM_PARAMETERS_1 = 3; // lab_offset_a
-    static constexpr int NUM_PARAMETERS_2 = 1; // brdf_a
-    static constexpr int NUM_PARAMETERS_3 = 3; // vig_a
-    static constexpr int NUM_PARAMETERS_4 = 3; // lab_offset_b
-    static constexpr int NUM_PARAMETERS_5 = 1; // brdf_b
-    static constexpr int NUM_PARAMETERS_6 = 3; // vig_b
-    static constexpr int NUM_PARAMETERS_7 = 2; // slope_a
-    static constexpr int NUM_PARAMETERS_8 = 2; // slope_b
+    std::array<float, 3> _observed_a, _observed_b;
+    SampleGeometry _geometry_a, _geometry_b;
 
-    float _observed_a[3];
-    float _observed_b[3];
-    float _r_a;         // normalized radius in image A
-    float _r_b;         // normalized radius in image B
-    float _theta_a;     // view angle for image A
-    float _theta_b;     // view angle for image B
-    float _nx_a, _ny_a; // normalized pixel position in image A
-    float _nx_b, _ny_b; // normalized pixel position in image B
-
-    RadiometricMatchCost(const float observed_a[3], const float observed_b[3], float r_a, float r_b, float theta_a,
-                         float theta_b, float nx_a, float ny_a, float nx_b, float ny_b)
-        : _r_a(r_a), _r_b(r_b), _theta_a(theta_a), _theta_b(theta_b), _nx_a(nx_a), _ny_a(ny_a), _nx_b(nx_b), _ny_b(ny_b)
+    explicit RadiometricMatchCost(const ColorCorrespondence &corr)
+        : _observed_a(corr.lab_a), _observed_b(corr.lab_b), _geometry_a(corr.geometry_a), _geometry_b(corr.geometry_b)
     {
-        for (int i = 0; i < 3; i++)
-        {
-            _observed_a[i] = observed_a[i];
-            _observed_b[i] = observed_b[i];
-        }
     }
 
     template <typename T>
-    bool operator()(const T *lab_offset_a, const T *brdf_a, const T *vig_a, const T *lab_offset_b, const T *brdf_b,
-                    const T *vig_b, const T *slope_a, const T *slope_b, T *residuals) const
+    bool operator()(const T *exposure_a, const T *ab_a, const T *brdf_a, const T *slope_a, const T *vig_a,
+                    const T *exposure_b, const T *ab_b, const T *brdf_b, const T *slope_b, const T *vig_b,
+                    const T *view_dir_gain, T *residuals) const
     {
-        T r2_a = T(_r_a * _r_a);
-        T vig_corr_a = vig_a[0] * r2_a + vig_a[1] * r2_a * r2_a + vig_a[2] * r2_a * r2_a * r2_a;
-
-        T r2_b = T(_r_b * _r_b);
-        T vig_corr_b = vig_b[0] * r2_b + vig_b[1] * r2_b * r2_b + vig_b[2] * r2_b * r2_b * r2_b;
-
-        T brdf_corr_a = brdf_a[0] * T(_theta_a * _theta_a);
-        T brdf_corr_b = brdf_b[0] * T(_theta_b * _theta_b);
-
-        T slope_corr_a = slope_a[0] * T(_nx_a) + slope_a[1] * T(_ny_a);
-        T slope_corr_b = slope_b[0] * T(_nx_b) + slope_b[1] * T(_ny_b);
-
+        T obs_a[3] = {T(_observed_a[0]), T(_observed_a[1]), T(_observed_a[2])};
+        T obs_b[3] = {T(_observed_b[0]), T(_observed_b[1]), T(_observed_b[2])};
+        T corr_a[3], corr_b[3];
+        correctRadiometry(obs_a, RadiometricModel<T>{exposure_a, ab_a, brdf_a, slope_a, vig_a, view_dir_gain},
+                          _geometry_a, corr_a);
+        correctRadiometry(obs_b, RadiometricModel<T>{exposure_b, ab_b, brdf_b, slope_b, vig_b, view_dir_gain},
+                          _geometry_b, corr_b);
+        T mean_brightness_above_black = T(0.5) * (corr_a[0] + corr_b[0]) + T(LAB_L_BLACK_OFFSET);
+        T brightness_invariant_scale = T(L_UNITS_PER_LOG_CBRT_GAIN) / mean_brightness_above_black;
         for (int c = 0; c < 3; c++)
-        {
-            T corr_a = T(_observed_a[c]) - lab_offset_a[c];
-            T corr_b = T(_observed_b[c]) - lab_offset_b[c];
-            if (c == 0)
-            {
-                // L channel gets vignetting + BRDF + slope correction
-                corr_a -= vig_corr_a + brdf_corr_a + slope_corr_a;
-                corr_b -= vig_corr_b + brdf_corr_b + slope_corr_b;
-            }
-            residuals[c] = corr_a - corr_b;
-        }
+            residuals[c] = (corr_a[c] - corr_b[c]) * brightness_invariant_scale;
         return true;
     }
 };
 
-// Same as RadiometricMatchCost but for when both cameras share the same camera model
-// (so vignetting parameter block is shared, avoiding Ceres duplicate parameter error)
-// Parameter blocks: lab_offset_a[3], brdf_a[1], lab_offset_b[3], brdf_b[1], vig_shared[3],
-//                   slope_a[2], slope_b[2]
 struct RadiometricMatchCostSharedVig
 {
-    static constexpr int NUM_RESIDUALS = 3;
-    static constexpr int NUM_PARAMETERS_1 = 3; // lab_offset_a
-    static constexpr int NUM_PARAMETERS_2 = 1; // brdf_a
-    static constexpr int NUM_PARAMETERS_3 = 3; // lab_offset_b
-    static constexpr int NUM_PARAMETERS_4 = 1; // brdf_b
-    static constexpr int NUM_PARAMETERS_5 = 3; // vig_shared
-    static constexpr int NUM_PARAMETERS_6 = 2; // slope_a
-    static constexpr int NUM_PARAMETERS_7 = 2; // slope_b
+    RadiometricMatchCost _cost;
 
-    float _observed_a[3];
-    float _observed_b[3];
-    float _r_a, _r_b;
-    float _theta_a, _theta_b;
-    float _nx_a, _ny_a;
-    float _nx_b, _ny_b;
-
-    RadiometricMatchCostSharedVig(const float observed_a[3], const float observed_b[3], float r_a, float r_b,
-                                  float theta_a, float theta_b, float nx_a, float ny_a, float nx_b, float ny_b)
-        : _r_a(r_a), _r_b(r_b), _theta_a(theta_a), _theta_b(theta_b), _nx_a(nx_a), _ny_a(ny_a), _nx_b(nx_b), _ny_b(ny_b)
+    explicit RadiometricMatchCostSharedVig(const ColorCorrespondence &corr) : _cost(corr)
     {
-        for (int i = 0; i < 3; i++)
-        {
-            _observed_a[i] = observed_a[i];
-            _observed_b[i] = observed_b[i];
-        }
     }
 
     template <typename T>
-    bool operator()(const T *lab_offset_a, const T *brdf_a, const T *lab_offset_b, const T *brdf_b, const T *vig,
-                    const T *slope_a, const T *slope_b, T *residuals) const
+    bool operator()(const T *exposure_a, const T *ab_a, const T *brdf_a, const T *slope_a, const T *exposure_b,
+                    const T *ab_b, const T *brdf_b, const T *slope_b, const T *vig, const T *view_dir_gain,
+                    T *residuals) const
     {
-        T r2_a = T(_r_a * _r_a);
-        T vig_corr_a = vig[0] * r2_a + vig[1] * r2_a * r2_a + vig[2] * r2_a * r2_a * r2_a;
-
-        T r2_b = T(_r_b * _r_b);
-        T vig_corr_b = vig[0] * r2_b + vig[1] * r2_b * r2_b + vig[2] * r2_b * r2_b * r2_b;
-
-        T brdf_corr_a = brdf_a[0] * T(_theta_a * _theta_a);
-        T brdf_corr_b = brdf_b[0] * T(_theta_b * _theta_b);
-
-        T slope_corr_a = slope_a[0] * T(_nx_a) + slope_a[1] * T(_ny_a);
-        T slope_corr_b = slope_b[0] * T(_nx_b) + slope_b[1] * T(_ny_b);
-
-        for (int c = 0; c < 3; c++)
-        {
-            T corr_a = T(_observed_a[c]) - lab_offset_a[c];
-            T corr_b = T(_observed_b[c]) - lab_offset_b[c];
-            if (c == 0)
-            {
-                corr_a -= vig_corr_a + brdf_corr_a + slope_corr_a;
-                corr_b -= vig_corr_b + brdf_corr_b + slope_corr_b;
-            }
-            residuals[c] = corr_a - corr_b;
-        }
-        return true;
+        return _cost(exposure_a, ab_a, brdf_a, slope_a, vig, exposure_b, ab_b, brdf_b, slope_b, vig, view_dir_gain,
+                     residuals);
     }
 };
 
-// Prior: penalize per-image LAB offset away from zero
-struct ExposurePrior
+template <int N> struct ZeroPrior
 {
-    static constexpr int NUM_RESIDUALS = 3;
-    static constexpr int NUM_PARAMETERS_1 = 3; // lab_offset
-
     double _weight;
 
-    explicit ExposurePrior(double weight) : _weight(weight)
+    explicit ZeroPrior(double weight) : _weight(weight)
     {
     }
 
-    template <typename T> bool operator()(const T *lab_offset, T *residuals) const
+    template <typename T> bool operator()(const T *params, T *residuals) const
     {
-        for (int c = 0; c < 3; c++)
-        {
-            residuals[c] = T(_weight) * lab_offset[c];
-        }
-        return true;
-    }
-};
-
-// Prior: penalize vignetting coefficients away from zero
-struct VignettingPrior
-{
-    static constexpr int NUM_RESIDUALS = 3;
-    static constexpr int NUM_PARAMETERS_1 = 3; // vignetting coeffs
-
-    double _weight;
-
-    explicit VignettingPrior(double weight) : _weight(weight)
-    {
-    }
-
-    template <typename T> bool operator()(const T *vig, T *residuals) const
-    {
-        for (int c = 0; c < 3; c++)
-        {
-            residuals[c] = T(_weight) * vig[c];
-        }
-        return true;
-    }
-};
-
-// Prior: penalize BRDF coefficient away from zero
-struct BRDFPrior
-{
-    static constexpr int NUM_RESIDUALS = 1;
-    static constexpr int NUM_PARAMETERS_1 = 1; // brdf coeff
-
-    double _weight;
-
-    explicit BRDFPrior(double weight) : _weight(weight)
-    {
-    }
-
-    template <typename T> bool operator()(const T *brdf, T *residuals) const
-    {
-        residuals[0] = T(_weight) * brdf[0];
-        return true;
-    }
-};
-
-struct SlopePrior
-{
-    static constexpr int NUM_RESIDUALS = 2;
-    static constexpr int NUM_PARAMETERS_1 = 2; // slope coeffs
-
-    double _weight;
-
-    explicit SlopePrior(double weight) : _weight(weight)
-    {
-    }
-
-    template <typename T> bool operator()(const T *slope, T *residuals) const
-    {
-        residuals[0] = T(_weight) * slope[0];
-        residuals[1] = T(_weight) * slope[1];
+        for (int i = 0; i < N; i++)
+            residuals[i] = T(_weight) * params[i];
         return true;
     }
 };

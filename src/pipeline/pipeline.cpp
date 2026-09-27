@@ -123,7 +123,6 @@ struct Pipeline::Impl : public usm::StateMachine<PipelineState, PipelineTransiti
     bool skip_final_global_relax = true;
     bool generate_dense_mesh = false;
 
-    std::vector<orthomosaic::ColorCorrespondence> correspondences;
     orthomosaic::ColorBalanceResult color_balance_result;
     std::string intermediate_layers_path;
     std::string intermediate_cameras_path;
@@ -149,7 +148,6 @@ struct Pipeline::Impl : public usm::StateMachine<PipelineState, PipelineTransiti
     Transition densify_mesh();
     Transition dense_mesh_relax();
     Transition generate_layers();
-    Transition color_balance();
     Transition blend_layers();
     Transition complete();
 
@@ -289,6 +287,7 @@ bool Pipeline::saveCheckpoint(const std::string &checkpoint_dir)
     data.origin_longitude = _impl->coordinate_system.getOriginLongitude();
     data.state = _impl->getState();
     data.state_run_count = _impl->stateRunCount();
+    data.color_balance = _impl->color_balance_result;
 
     return opencalibration::saveCheckpoint(data, checkpoint_dir);
 }
@@ -304,6 +303,7 @@ bool Pipeline::loadCheckpoint(const std::string &checkpoint_dir, const std::stri
 
     _impl->graph = std::move(data.graph);
     _impl->surfaces = std::move(data.surfaces);
+    _impl->color_balance_result = std::move(data.color_balance);
     _impl->relax_stage->setSurfaceModels(_impl->surfaces);
 
     if (data.origin_latitude != 0.0 || data.origin_longitude != 0.0)
@@ -360,8 +360,6 @@ std::string Pipeline::toString(PipelineState state)
         return "Dense Mesh Relax";
     case PipelineState::GENERATE_LAYERS:
         return "Generate Layers";
-    case PipelineState::COLOR_BALANCE:
-        return "Color Balance";
     case PipelineState::BLEND_LAYERS:
         return "Blend Layers";
     case PipelineState::COMPLETE:
@@ -391,9 +389,7 @@ std::optional<PipelineState> Pipeline::fromString(const std::string &str)
         return PipelineState::DENSE_MESH_RELAX;
     if (str == "GENERATE_LAYERS" || str == "Generate Layers" || str == "GENERATE_DSM" || str == "Generate DSM")
         return PipelineState::GENERATE_LAYERS;
-    if (str == "COLOR_BALANCE" || str == "Color Balance")
-        return PipelineState::COLOR_BALANCE;
-    if (str == "BLEND_LAYERS" || str == "Blend Layers")
+    if (str == "BLEND_LAYERS" || str == "Blend Layers" || str == "COLOR_BALANCE" || str == "Color Balance")
         return PipelineState::BLEND_LAYERS;
     if (str == "COMPLETE" || str == "Complete")
         return PipelineState::COMPLETE;
@@ -426,8 +422,6 @@ PipelineState Pipeline::Impl::chooseNextState(PipelineState currentState, Transi
         USM_STATE(transition, State::DENSE_MESH_RELAX,
                   USM_MAP(Transition::NEXT, State::GENERATE_LAYERS, s));
         USM_STATE(transition, State::GENERATE_LAYERS,
-                  USM_MAP(Transition::NEXT, State::COLOR_BALANCE, s));
-        USM_STATE(transition, State::COLOR_BALANCE,
                   USM_MAP(Transition::NEXT, State::BLEND_LAYERS, s));
         USM_STATE(transition, State::BLEND_LAYERS,
                   USM_MAP(Transition::NEXT, State::COMPLETE, s));
@@ -454,7 +448,6 @@ Pipeline::Impl::Transition Pipeline::Impl::runCurrentState(PipelineState current
               USM_MAP(State::DENSIFY_MESH, densify_mesh(), t);
               USM_MAP(State::DENSE_MESH_RELAX, dense_mesh_relax(), t);
               USM_MAP(State::GENERATE_LAYERS, generate_layers(), t);
-              USM_MAP(State::COLOR_BALANCE, color_balance(), t);
               USM_MAP(State::BLEND_LAYERS, blend_layers(), t)
     );
     // clang-format on
@@ -504,17 +497,16 @@ Pipeline::Impl::Transition Pipeline::Impl::runCurrentState(PipelineState current
 void Pipeline::Impl::emit_progress(std::string activity, float local_fraction, bool surfaces_updated,
                                    std::optional<TileUpdate> tile_update)
 {
-    static const std::array<std::pair<PipelineState, float>, 11> stage_order = {{
+    static const std::array<std::pair<PipelineState, float>, 10> stage_order = {{
         {State::INITIAL_PROCESSING, 0.20f},
         {State::MESH_REFINEMENT, 0.15f},
         {State::INITIAL_GLOBAL_RELAX, 0.12f},
         {State::CAMERA_PARAMETER_RELAX, 0.12f},
         {State::FINAL_GLOBAL_RELAX, 0.05f},
-        {State::GENERATE_THUMBNAIL, 0.03f},
+        {State::GENERATE_THUMBNAIL, 0.05f},
         {State::DENSIFY_MESH, 0.04f},
         {State::DENSE_MESH_RELAX, 0.03f},
         {State::GENERATE_LAYERS, 0.12f},
-        {State::COLOR_BALANCE, 0.02f},
         {State::BLEND_LAYERS, 0.12f},
     }};
 
@@ -965,27 +957,36 @@ Pipeline::Impl::Transition Pipeline::Impl::dense_mesh_relax()
 
 Pipeline::Impl::Transition Pipeline::Impl::generate_thumbnail()
 {
-    if (!generate_thumbnails || (thumbnail_filename.empty() && source_filename.empty() && overlap_filename.empty()))
+    const bool save_thumbnail = generate_thumbnails && !(thumbnail_filename.empty() && source_filename.empty() &&
+                                                         overlap_filename.empty());
+    const bool need_color_balance = generate_geotiff && !geotiff_filename.empty();
+    if (!save_thumbnail && !need_color_balance)
     {
-        USM_DECISION_TABLE(Transition::NEXT, USM_MAKE_DECISION(!generate_thumbnails, Transition::NEXT));
+        USM_DECISION_TABLE(Transition::NEXT, );
     }
 
     if (surfaces.empty())
     {
         spdlog::warn("No surfaces available for thumbnail generation");
-        USM_DECISION_TABLE(Transition::NEXT, USM_MAKE_DECISION(surfaces.empty(), Transition::NEXT));
+        USM_DECISION_TABLE(Transition::NEXT, );
     }
 
     emit_progress("Generating preview thumbnail", 0.f);
 
-    auto thumbnail = orthomosaic::generateOrthomosaic(surfaces, graph);
+    orthomosaic::OrthoMosaicConfig config;
+    config.max_output_megapixels = orthomosaic_max_megapixels;
+    auto thumbnail = orthomosaic::generateOrthomosaic(surfaces, graph, config);
+    color_balance_result = std::move(thumbnail.color_balance);
 
-    if (!thumbnail_filename.empty())
-        cv::imwrite(thumbnail_filename, rasterToCv(thumbnail.pixelValues));
-    if (!source_filename.empty())
-        cv::imwrite(source_filename, packCameraIdLow24BitsIntoRgb(thumbnail.cameraUUID));
-    if (!overlap_filename.empty())
-        cv::imwrite(overlap_filename, rasterToCv(thumbnail.overlap));
+    if (save_thumbnail)
+    {
+        if (!thumbnail_filename.empty())
+            cv::imwrite(thumbnail_filename, rasterToCv(thumbnail.pixelValues));
+        if (!source_filename.empty())
+            cv::imwrite(source_filename, packCameraIdLow24BitsIntoRgb(thumbnail.cameraUUID));
+        if (!overlap_filename.empty())
+            cv::imwrite(overlap_filename, rasterToCv(thumbnail.overlap));
+    }
 
     emit_progress("Generating preview thumbnail", 1.f, true);
 
@@ -1017,42 +1018,8 @@ Pipeline::Impl::Transition Pipeline::Impl::generate_layers()
         emit_progress("Generating layers", local, false, tu);
     };
 
-    correspondences =
-        orthomosaic::generateLayeredGeoTIFF(surfaces, graph, coordinate_system, intermediate_layers_path,
-                                            intermediate_cameras_path, intermediate_dsm_path, config, tile_cb);
-
-    USM_DECISION_TABLE(Transition::NEXT, );
-}
-
-Pipeline::Impl::Transition Pipeline::Impl::color_balance()
-{
-    if (!generate_geotiff || geotiff_filename.empty())
-    {
-        USM_DECISION_TABLE(Transition::NEXT, USM_MAKE_DECISION(!generate_geotiff, Transition::NEXT));
-    }
-
-    emit_progress("Solving color balance", 0.f);
-
-    ankerl::unordered_dense::map<size_t, orthomosaic::CameraPosition> camera_positions;
-    for (const auto &corr : correspondences)
-    {
-        for (size_t cam_id : {corr.camera_id_a, corr.camera_id_b})
-        {
-            if (camera_positions.count(cam_id) == 0)
-            {
-                const auto *node = graph.getNode(cam_id);
-                if (node)
-                {
-                    camera_positions[cam_id] = {node->payload.position.x(), node->payload.position.y()};
-                }
-            }
-        }
-    }
-
-    color_balance_result = orthomosaic::solveColorBalance(correspondences, camera_positions);
-    correspondences.clear();
-
-    emit_progress("Solving color balance", 1.f);
+    orthomosaic::generateLayeredGeoTIFF(surfaces, graph, coordinate_system, intermediate_layers_path,
+                                        intermediate_cameras_path, intermediate_dsm_path, config, tile_cb);
 
     USM_DECISION_TABLE(Transition::NEXT, );
 }
@@ -1072,10 +1039,13 @@ Pipeline::Impl::Transition Pipeline::Impl::blend_layers()
         emit_progress("Blending layers", local, false, tu);
     };
 
+    if (color_balance_result.per_image_params.empty())
+    {
+        spdlog::warn("No color balance available, resume from GENERATE_THUMBNAIL to compute one");
+    }
+
     orthomosaic::blendLayeredGeoTIFF(intermediate_layers_path, intermediate_cameras_path, intermediate_dsm_path,
                                      geotiff_filename, color_balance_result, graph, coordinate_system, config, tile_cb);
-
-    color_balance_result = {};
 
     if (dsm_filename.empty() && !intermediate_dsm_path.empty())
     {

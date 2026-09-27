@@ -1,6 +1,8 @@
 #include <opencalibration/io/cv_raster_conversion.hpp>
 #include <opencv2/core.hpp>
 
+#include <numeric>
+
 using namespace opencalibration;
 namespace
 {
@@ -64,18 +66,12 @@ template <typename T> cv::Mat rasterToCvImpl(const MultiLayerRaster<T> &raster)
         channels.emplace_back(dims, cvType);
     }
 
-    std::vector<size_t> channel_map;
-    if (raster.layers.size() == 3 && raster.layers[0].band == Band::RED && raster.layers[1].band == Band::GREEN &&
+    std::vector<size_t> channel_map(raster.layers.size());
+    std::iota(channel_map.begin(), channel_map.end(), 0);
+    if (raster.layers.size() >= 3 && raster.layers[0].band == Band::RED && raster.layers[1].band == Band::GREEN &&
         raster.layers[2].band == Band::BLUE)
     {
-        channel_map = {2, 1, 0};
-    }
-    else
-    {
-        for (size_t i = 0; i < raster.layers.size(); i++)
-        {
-            channel_map.push_back(i);
-        }
+        std::swap(channel_map[0], channel_map[2]);
     }
 
     for (size_t channel = 0; channel < channel_map.size(); channel++)

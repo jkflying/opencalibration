@@ -1,5 +1,7 @@
 #pragma once
 
+#include <opencalibration/ortho/color_balance.hpp>
+
 #include <opencv2/core.hpp>
 
 #include <cstddef>
@@ -14,10 +16,7 @@ struct PixelSample
     cv::Vec3b color_bgr;
     size_t camera_id = 0;
     uint32_t model_id = 0;
-    float normalized_radius = 0; // distance from image center, normalized to [0,1]
-    float view_angle = 0;        // angle between camera direction and surface normal (radians)
-    float normalized_x = 0;      // pixel position in image, [-1,1] from center
-    float normalized_y = 0;
+    SampleGeometry geometry;
     float weight = 0;
     bool valid = false;
 };

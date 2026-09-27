@@ -181,3 +181,21 @@ TEST(cv_raster_conversion, cvToRaster_3channel_bgr_labels)
     EXPECT_EQ(Band::GREEN, r->layers[1].band);
     EXPECT_EQ(Band::RED, r->layers[2].band);
 }
+
+TEST(cv_raster_conversion, rasterToCv_rgba_writes_bgra)
+{
+    // GIVEN: an RGBA raster with distinct values per band
+    MultiLayerRaster<uint8_t> rgba(1, 1, 4);
+    const Band bands[] = {Band::RED, Band::GREEN, Band::BLUE, Band::ALPHA};
+    for (size_t i = 0; i < 4; i++)
+    {
+        rgba.layers[i].band = bands[i];
+        rgba.layers[i].pixels(0, 0) = static_cast<uint8_t>(10 * (i + 1));
+    }
+
+    // WHEN: converting to OpenCV
+    cv::Mat mat = rasterToCv(GenericRaster(rgba));
+
+    // THEN: channels are in OpenCV's BGRA order
+    EXPECT_EQ(cv::Vec4b(30, 20, 10, 40), mat.at<cv::Vec4b>(0, 0));
+}

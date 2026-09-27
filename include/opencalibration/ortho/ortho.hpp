@@ -1,5 +1,6 @@
 #pragma once
 
+#include <opencalibration/ortho/color_balance.hpp>
 #include <opencalibration/pipeline/progress.hpp>
 #include <opencalibration/surface/intersect.hpp>
 #include <opencalibration/types/measurement_graph.hpp>
@@ -16,12 +17,6 @@ namespace opencalibration
 {
 class GeoCoord;
 }
-
-namespace opencalibration::orthomosaic
-{
-struct ColorCorrespondence;
-struct ColorBalanceResult;
-} // namespace opencalibration::orthomosaic
 
 namespace opencalibration::orthomosaic
 {
@@ -55,6 +50,7 @@ struct OrthoMosaic
     RasterLayer<uint8_t> overlap;
     RasterLayer<int32_t> cameraUUID;
     double gsd;
+    ColorBalanceResult color_balance;
 };
 
 struct OrthoMosaicBounds
@@ -101,18 +97,18 @@ struct OrthoMosaicConfig
     int num_layers = 2;
     int tile_size = 1024;
     int pyramid_levels = 4;
-    int correspondence_kernel_radius = 2; // average NxN kernel (N = 2*radius+1) around each sample point
-    int correspondence_subsample = 10 * (2 * correspondence_kernel_radius + 1); // one sample per kernel area
+    int color_sample_spacing_full_res_px = 50;
     int blend_transition_radius = 64;
     double max_output_megapixels = 0.0; // 0 = unlimited
 };
 
-OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph);
+OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph,
+                                const OrthoMosaicConfig &config = {});
 
-std::vector<ColorCorrespondence> generateLayeredGeoTIFF(
-    const std::vector<surface_model> &surfaces, const MeasurementGraph &graph,
-    const opencalibration::GeoCoord &coord_system, const std::string &layers_path, const std::string &cameras_path,
-    const std::string &dsm_output_path, const OrthoMosaicConfig &config = {}, TileProgressCallback tile_progress = {});
+void generateLayeredGeoTIFF(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph,
+                            const opencalibration::GeoCoord &coord_system, const std::string &layers_path,
+                            const std::string &cameras_path, const std::string &dsm_output_path,
+                            const OrthoMosaicConfig &config = {}, TileProgressCallback tile_progress = {});
 
 void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &cameras_path, const std::string &dsm_path,
                          const std::string &output_path, const ColorBalanceResult &color_balance,
