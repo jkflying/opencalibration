@@ -134,8 +134,7 @@ class RelaxProblem
 
     ceres::Problem::Options _problemOptions;
     ceres::ProductManifold<ceres::EigenQuaternionManifold, ceres::EuclideanManifold<3>> _pose_parameterization;
-    ceres::ProductManifold<ceres::EigenQuaternionManifold, ceres::SubsetManifold>
-        _pose_fixed_position_parameterization;
+    ceres::ProductManifold<ceres::EigenQuaternionManifold, ceres::SubsetManifold> _pose_fixed_position_parameterization;
     ceres::EigenQuaternionManifold _orientation_parameterization;
 
     ceres::SubsetManifold _brown2_parameterization;

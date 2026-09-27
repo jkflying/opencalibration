@@ -5,10 +5,13 @@
 
 namespace opencalibration
 {
-ceres::CostFunction *newAutoDiffPixelErrorCost_OrientationFocal(const CameraModel &camera_model, const Eigen::Vector2d &camera_pixel)
+ceres::CostFunction *newAutoDiffPixelErrorCost_OrientationFocal(const CameraModel &camera_model,
+                                                                const Eigen::Vector2d &camera_pixel)
 {
     using Functor = PixelErrorCost_OrientationFocal;
-    using CostFunction = ceres::AutoDiffCostFunction<Functor, Functor::NUM_RESIDUALS, Functor::NUM_PARAMETERS_1, Functor::NUM_PARAMETERS_2, Functor::NUM_PARAMETERS_3, Functor::NUM_PARAMETERS_4>;
+    using CostFunction =
+        ceres::AutoDiffCostFunction<Functor, Functor::NUM_RESIDUALS, Functor::NUM_PARAMETERS_1,
+                                    Functor::NUM_PARAMETERS_2, Functor::NUM_PARAMETERS_3, Functor::NUM_PARAMETERS_4>;
     return new CostFunction(new Functor(camera_model, camera_pixel));
 }
 } // namespace opencalibration

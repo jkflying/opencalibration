@@ -197,7 +197,7 @@ template <int N> void checkTriangulatedReprojectionNView()
     {
         auto tilted_poses = poses;
         const Eigen::Quaterniond tilted = down * Eigen::Quaterniond(Eigen::AngleAxisd(0.1 * M_PI / 180, axis));
-        tilted_poses[N - 1] = {tilted.x(),         tilted.y(),         tilted.z(),        tilted.w(),
+        tilted_poses[N - 1] = {tilted.x(),          tilted.y(),          tilted.z(),         tilted.w(),
                                all_cams[N - 1].x(), all_cams[N - 1].y(), all_cams[N - 1].z()};
         EXPECT_GT(residualNorm(tilted_poses), 1e-4) << N << " " << axis.transpose();
     }

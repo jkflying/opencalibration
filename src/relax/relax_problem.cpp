@@ -399,8 +399,7 @@ OptimizationPackage::PoseOpt RelaxProblem::nodeid2poseopt(const MeasurementGraph
     return po;
 }
 
-double *RelaxProblem::poseBlock(size_t node_id, const Eigen::Quaterniond &orientation,
-                                const Eigen::Vector3d &position)
+double *RelaxProblem::poseBlock(size_t node_id, const Eigen::Quaterniond &orientation, const Eigen::Vector3d &position)
 {
     auto [iter, inserted] = _pose_blocks.try_emplace(node_id);
     if (inserted)
@@ -584,9 +583,8 @@ uint64_t RelaxProblem::trackCellKey(const Eigen::Vector2d &pixel, const CameraMo
     return gridCellKey(gi, gj);
 }
 
-bool RelaxProblem::coveredByMultiRayTracks(const MeasurementGraph::Edge &edge,
-                                           const feature_match_denormalized &inlier, const CameraModel &source_model,
-                                           const CameraModel &dest_model) const
+bool RelaxProblem::coveredByMultiRayTracks(const MeasurementGraph::Edge &edge, const feature_match_denormalized &inlier,
+                                           const CameraModel &source_model, const CameraModel &dest_model) const
 {
     if (_multi_ray_measurements.contains(NodeIdFeatureIndex{edge.getSource(), inlier.feature_index_1}) ||
         _multi_ray_measurements.contains(NodeIdFeatureIndex{edge.getDest(), inlier.feature_index_2}))
@@ -1194,23 +1192,19 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
             options.hasAll(
                 {Option::LENS_DISTORTIONS_RADIAL, Option::FOCAL_LENGTH, Option::ORIENTATION, Option::POINTS_3D}))
         {
-            func[0].reset(newAutoDiffPixelErrorCost_OrientationFocalRadialTangential(source_model,
-                                                                                     inlier.pixel_1));
-            func[1].reset(newAutoDiffPixelErrorCost_OrientationFocalRadialTangential(dest_model,
-                                                                                     inlier.pixel_2));
+            func[0].reset(newAutoDiffPixelErrorCost_OrientationFocalRadialTangential(source_model, inlier.pixel_1));
+            func[1].reset(newAutoDiffPixelErrorCost_OrientationFocalRadialTangential(dest_model, inlier.pixel_2));
             for (int i = 0; i < 2; i++)
             {
-                args[i] = {pose_ptrs[i], points.back().point.data(), focals[i], principals[i], radials[i],
+                args[i] = {pose_ptrs[i],  points.back().point.data(), focals[i], principals[i], radials[i],
                            tangentials[i]};
             }
         }
         else if (options.hasAny({Option::LENS_DISTORTIONS_RADIAL}) &&
                  options.hasAll({Option::FOCAL_LENGTH, Option::ORIENTATION, Option::POINTS_3D}))
         {
-            func[0].reset(
-                newAutoDiffPixelErrorCost_OrientationFocalRadial(source_model, inlier.pixel_1));
-            func[1].reset(
-                newAutoDiffPixelErrorCost_OrientationFocalRadial(dest_model, inlier.pixel_2));
+            func[0].reset(newAutoDiffPixelErrorCost_OrientationFocalRadial(source_model, inlier.pixel_1));
+            func[1].reset(newAutoDiffPixelErrorCost_OrientationFocalRadial(dest_model, inlier.pixel_2));
             for (int i = 0; i < 2; i++)
             {
                 args[i] = {pose_ptrs[i], points.back().point.data(), focals[i], principals[i], radials[i]};
@@ -1219,8 +1213,7 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
         else if (options.hasAny({Option::FOCAL_LENGTH, Option::PRINCIPAL_POINT}) &&
                  options.hasAll({Option::ORIENTATION, Option::POINTS_3D}))
         {
-            func[0].reset(
-                newAutoDiffPixelErrorCost_OrientationFocal(source_model, inlier.pixel_1));
+            func[0].reset(newAutoDiffPixelErrorCost_OrientationFocal(source_model, inlier.pixel_1));
             func[1].reset(newAutoDiffPixelErrorCost_OrientationFocal(dest_model, inlier.pixel_2));
 
             for (int i = 0; i < 2; i++)

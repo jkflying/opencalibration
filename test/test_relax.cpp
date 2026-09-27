@@ -321,8 +321,7 @@ TEST_F(relax_group, rel_rot_cost_function)
         // WHEN: we move the second camera perpendicular to the baseline
         const Eigen::Vector3d side_pos = ground_pos[1] + Eigen::Vector3d(0, 2, 0);
         double r[3]{NAN, NAN, NAN};
-        bool success =
-            cost(packPose(ground_ori[0], ground_pos[0]).data(), packPose(ground_ori[1], side_pos).data(), r);
+        bool success = cost(packPose(ground_ori[0], ground_pos[0]).data(), packPose(ground_ori[1], side_pos).data(), r);
 
         // THEN: the translation direction residuals should pick it up
         EXPECT_TRUE(success);
@@ -563,18 +562,15 @@ TEST_F(relax_group, measurement_3_images_plane_position)
         EXPECT_LT(Eigen::AngleAxisd(rel_ori.inverse() * ground_rel_ori).angle(), 1e-3) << i;
 
         const Eigen::Vector3d rel_dir = (np[0].orientation.inverse() * (np[i].position - np[0].position)).normalized();
-        const Eigen::Vector3d ground_rel_dir =
-            (ground_ori[0].inverse() * (ground_pos[i] - ground_pos[0])).normalized();
-        EXPECT_LT((rel_dir - ground_rel_dir).norm(), 1e-3)
-            << i << ": " << rel_dir.transpose() << std::endl
-            << "g: " << ground_rel_dir.transpose();
+        const Eigen::Vector3d ground_rel_dir = (ground_ori[0].inverse() * (ground_pos[i] - ground_pos[0])).normalized();
+        EXPECT_LT((rel_dir - ground_rel_dir).norm(), 1e-3) << i << ": " << rel_dir.transpose() << std::endl
+                                                           << "g: " << ground_rel_dir.transpose();
     }
 
     // AND: the positions should stay within the GPS uncertainty
     for (int i = 0; i < 3; i++)
-        EXPECT_LT((np[i].position - ground_pos[i]).norm(), 0.5)
-            << i << ": " << np[i].position.transpose() << std::endl
-            << "g: " << ground_pos[i].transpose();
+        EXPECT_LT((np[i].position - ground_pos[i]).norm(), 0.5) << i << ": " << np[i].position.transpose() << std::endl
+                                                                << "g: " << ground_pos[i].transpose();
 }
 
 TEST_F(relax_group, measurement_3_images_mesh_radial)

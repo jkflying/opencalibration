@@ -17,7 +17,6 @@ ceres::CostFunction *newAutoDiffPlaneIntersectionAngleCost_FocalRadial(
                                     Functor::NUM_PARAMETERS_5, Functor::NUM_PARAMETERS_6, Functor::NUM_PARAMETERS_7,
                                     Functor::NUM_PARAMETERS_8>;
 
-    return new CostFunction(
-        new Functor(camera_pixel1, camera_pixel2, plane_point1, plane_point2, plane_point3, model));
+    return new CostFunction(new Functor(camera_pixel1, camera_pixel2, plane_point1, plane_point2, plane_point3, model));
 }
 } // namespace opencalibration

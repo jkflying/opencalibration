@@ -7,8 +7,8 @@
 #define RAPIDJSON_WRITE_DEFAULT_FLAGS kWriteNanAndInfFlag
 #include <rapidjson/document.h>
 #include <rapidjson/prettywriter.h>
-#include <rapidjson/writer.h>
 #include <rapidjson/stringbuffer.h>
+#include <rapidjson/writer.h>
 
 #include <unordered_set>
 

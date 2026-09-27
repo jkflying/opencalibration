@@ -462,8 +462,7 @@ template <int N> struct TriangulatedReprojectionCost
         return eval(poses, res);
     }
 
-    template <typename T>
-    bool operator()(const T *p0, const T *p1, const T *p2, const T *p3, const T *p4, T *res) const
+    template <typename T> bool operator()(const T *p0, const T *p1, const T *p2, const T *p3, const T *p4, T *res) const
     {
         static_assert(N == 5);
         const T *poses[]{p0, p1, p2, p3, p4};
@@ -621,7 +620,8 @@ struct PixelErrorCost_OrientationFocalRadialTangential
     static const int NUM_PARAMETERS_5 = 3;
     static const int NUM_PARAMETERS_6 = 2;
 
-    PixelErrorCost_OrientationFocalRadialTangential(const CameraModel &camera_model, const Eigen::Vector2d &camera_pixel)
+    PixelErrorCost_OrientationFocalRadialTangential(const CameraModel &camera_model,
+                                                    const Eigen::Vector2d &camera_pixel)
         : model(camera_model), pixel(camera_pixel)
     {
     }
@@ -749,12 +749,12 @@ struct PlaneIntersectionAngleCost_OrientationFocalRadial_SharedModel
     static const int NUM_RESIDUALS = MultiRayPlaneIntersectionAngleCost_FocalRadial<2>::NUM_RESIDUALS;
     static const int NUM_PARAMETERS_1 = POSE_PARAMETERS; // pose 0
     static const int NUM_PARAMETERS_2 = POSE_PARAMETERS; // pose 1
-    static const int NUM_PARAMETERS_3 = 1; // z 0
-    static const int NUM_PARAMETERS_4 = 1; // z 1
-    static const int NUM_PARAMETERS_5 = 1; // z 2
-    static const int NUM_PARAMETERS_6 = 1; // focal
-    static const int NUM_PARAMETERS_7 = 2; // principal
-    static const int NUM_PARAMETERS_8 = 3; // radial
+    static const int NUM_PARAMETERS_3 = 1;               // z 0
+    static const int NUM_PARAMETERS_4 = 1;               // z 1
+    static const int NUM_PARAMETERS_5 = 1;               // z 2
+    static const int NUM_PARAMETERS_6 = 1;               // focal
+    static const int NUM_PARAMETERS_7 = 2;               // principal
+    static const int NUM_PARAMETERS_8 = 3;               // radial
 
     PlaneIntersectionAngleCost_OrientationFocalRadial_SharedModel(
         const Eigen::Vector2d &camera_pixel1, const Eigen::Vector2d &camera_pixel2, const Eigen::Vector2d &plane_point1,
