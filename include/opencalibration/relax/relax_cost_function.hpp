@@ -18,6 +18,16 @@ template <typename T> T angleBetweenUnitVectors(const Eigen::Matrix<T, 3, 1> &n1
     return acos(std::clamp<T>(n1.dot(n2), T(-1 + 1e-12), T(1 - 1e-12)));
 }
 
+template <typename T>
+T signedDihedralAngle(const Eigen::Matrix<T, 3, 1> &A, const Eigen::Matrix<T, 3, 1> &B, const Eigen::Matrix<T, 3, 1> &C,
+                      const Eigen::Matrix<T, 3, 1> &D)
+{
+    const Eigen::Matrix<T, 3, 1> AB = B - A;
+    const Eigen::Matrix<T, 3, 1> n1 = AB.cross(C - A);
+    const Eigen::Matrix<T, 3, 1> n2 = (D - A).cross(AB);
+    return atan2(n1.cross(n2).dot(AB), n1.dot(n2) * AB.norm());
+}
+
 static constexpr int POSE_PARAMETERS = 7;
 
 constexpr double RAY_PIXEL_SIGMA = 1.0;
@@ -178,12 +188,7 @@ struct AdjacentTriangleNormalCost
         const Vector3T C(T(_xyC.x()), T(_xyC.y()), *zC);
         const Vector3T D(T(_xyD.x()), T(_xyD.y()), *zD);
 
-        const Vector3T AB = B - A;
-        const Vector3T n1 = AB.cross(C - A).normalized();
-        const Vector3T n2 = (D - A).cross(AB).normalized();
-
-        const T signedDihedralAngle = atan2(n1.cross(n2).dot(AB.normalized()), n1.dot(n2));
-        residuals[0] = T(_weight) * signedDihedralAngle;
+        residuals[0] = T(_weight) * signedDihedralAngle<T>(A, B, C, D);
         return true;
     }
 

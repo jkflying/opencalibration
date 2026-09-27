@@ -107,6 +107,15 @@ TEST(cost_functions, angle_between_unit_vectors)
     EXPECT_NEAR(0.0, zero_angle, 1e-5);
 }
 
+TEST(cost_functions, signed_dihedral_angle)
+{
+    const Eigen::Vector3d A(0, 0, 0), B(2, 0, 0), C(1, 1, 0);
+    EXPECT_NEAR(0.0, signedDihedralAngle<double>(A, B, C, Eigen::Vector3d(1, -1, 0)), 1e-12);
+    EXPECT_NEAR(-M_PI / 4, signedDihedralAngle<double>(A, B, C, Eigen::Vector3d(1, -1, 1)), 1e-12);
+    EXPECT_NEAR(M_PI / 4, signedDihedralAngle<double>(A, B, C, Eigen::Vector3d(1, -1, -1)), 1e-12);
+    EXPECT_NEAR(M_PI / 4, signedDihedralAngle<double>(A, B, C, Eigen::Vector3d(1, -3, -3)), 1e-12);
+}
+
 TEST(cost_functions, plane_intersection_focal_radial_residual_not_reduced_by_larger_focal)
 {
     InverseDifferentiableCameraModel<double> model;

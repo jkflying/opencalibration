@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <mutex>
 #include <numeric>
+#include <optional>
 
 namespace
 {
@@ -53,9 +54,126 @@ constexpr int MAX_CANDIDATE_IMAGES = 10;
 constexpr double MAX_ABSOLUTE_DESCRIPTOR_DISTANCE = 0.35;
 constexpr double MAX_REPROJECTION_ERROR_PIXELS = 8.0;
 
+constexpr int TRIANGULATION_REFINE_ITERATIONS = 10;
+
 double descriptor_distance(const opencalibration::feature_2d &f1, const opencalibration::feature_2d &f2)
 {
     return (f1.descriptor ^ f2.descriptor).count() * (1.0 / opencalibration::feature_2d::DESCRIPTOR_BITS);
+}
+
+// Best descriptor match to `query` among the dense features of `img` within SEARCH_RADIUS_PIXELS of `center`,
+// accepted only if it passes the ratio test (or an absolute threshold when there is no second candidate)
+std::optional<size_t> ratioTestMatch(const opencalibration::feature_2d &query, const opencalibration::image &img,
+                                     const jk::tree::KDTree<size_t, 2, 8> &tree, const Eigen::Vector2d &center)
+{
+    auto searcher = tree.searcher();
+    const auto &nearby = searcher.search({center.x(), center.y()}, SEARCH_RADIUS_PIXELS * SEARCH_RADIUS_PIXELS,
+                                         std::numeric_limits<size_t>::max());
+    if (nearby.empty())
+        return std::nullopt;
+
+    double best_dist = std::numeric_limits<double>::infinity();
+    double second_best_dist = std::numeric_limits<double>::infinity();
+    size_t best_feat_idx = 0;
+
+    for (const auto &n : nearby)
+    {
+        double d = descriptor_distance(query, img.features[n.payload]);
+        if (d < second_best_dist)
+        {
+            if (d < best_dist)
+            {
+                second_best_dist = best_dist;
+                best_dist = d;
+                best_feat_idx = n.payload;
+            }
+            else
+            {
+                second_best_dist = d;
+            }
+        }
+    }
+
+    bool good_match = nearby.size() >= 2 ? best_dist < RATIO_THRESHOLD * second_best_dist
+                                         : best_dist < MAX_ABSOLUTE_DESCRIPTOR_DISTANCE;
+    if (!good_match)
+        return std::nullopt;
+    return best_feat_idx;
+}
+
+struct RayMeasurement
+{
+    opencalibration::ray_d ray;
+    Eigen::Vector2d pixel;
+    const opencalibration::CameraModel *model;
+    const Eigen::Vector3d *position;
+    const Eigen::Quaterniond *orientation;
+};
+
+Eigen::Vector2d reprojectionResidual(const Eigen::Vector3d &point, const RayMeasurement &m)
+{
+    return opencalibration::image_from_3d(point, *m.model, *m.position, *m.orientation) - m.pixel;
+}
+
+// Gauss-Newton on pixel reprojection error, starting from the algebraic ray-midpoint solution.
+// Jacobians are central differences; a step is only taken if it lowers the cost.
+Eigen::Vector3d refineTriangulation(Eigen::Vector3d point, const std::vector<RayMeasurement> &measurements,
+                                    const std::vector<size_t> &use)
+{
+    auto cost = [&](const Eigen::Vector3d &p) {
+        double c = 0;
+        for (size_t i : use)
+            c += reprojectionResidual(p, measurements[i]).squaredNorm();
+        return c;
+    };
+
+    double current_cost = cost(point);
+    for (int iter = 0; iter < TRIANGULATION_REFINE_ITERATIONS; iter++)
+    {
+        Eigen::Matrix3d JtJ = Eigen::Matrix3d::Zero();
+        Eigen::Vector3d Jtr = Eigen::Vector3d::Zero();
+        for (size_t i : use)
+        {
+            const auto &m = measurements[i];
+            const double h = 1e-6 * std::max(1.0, (point - *m.position).norm());
+            Eigen::Matrix<double, 2, 3> J;
+            for (int k = 0; k < 3; k++)
+            {
+                Eigen::Vector3d dp = Eigen::Vector3d::Zero();
+                dp[k] = h;
+                J.col(k) = (reprojectionResidual(point + dp, m) - reprojectionResidual(point - dp, m)) / (2 * h);
+            }
+            const Eigen::Vector2d r = reprojectionResidual(point, m);
+            JtJ += J.transpose() * J;
+            Jtr += J.transpose() * r;
+        }
+
+        const Eigen::Vector3d step = JtJ.ldlt().solve(-Jtr);
+        if (!step.allFinite())
+            break;
+        const Eigen::Vector3d candidate = point + step;
+        const double candidate_cost = cost(candidate);
+        if (!(candidate_cost < current_cost))
+            break;
+        const double improvement = current_cost - candidate_cost;
+        point = candidate;
+        current_cost = candidate_cost;
+        if (improvement < 1e-6 * current_cost)
+            break;
+    }
+    return point;
+}
+
+bool inFrontOfCameras(const Eigen::Vector3d &point, const std::vector<RayMeasurement> &measurements,
+                      const std::vector<size_t> &use)
+{
+    for (size_t i : use)
+    {
+        const auto &m = measurements[i];
+        if ((m.orientation->inverse() * (point - *m.position)).z() <= 0)
+            return false;
+    }
+    return true;
 }
 
 } // namespace
@@ -200,6 +318,7 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
         std::vector<LocalMatch> local_matches;
 
         auto camera_searcher = camera_tree.searcher();
+        const auto &src_tree = feature_trees.at(src_nid).tree;
 
         for (size_t fi : order)
         {
@@ -242,41 +361,18 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
                 if (ft_it == feature_trees.end())
                     continue;
 
-                auto ft_searcher = ft_it->second.tree.searcher();
-                const auto &nearby =
-                    ft_searcher.search({predicted.x(), predicted.y()}, SEARCH_RADIUS_PIXELS * SEARCH_RADIUS_PIXELS,
-                                       std::numeric_limits<size_t>::max());
-
-                if (nearby.empty())
+                auto forward = ratioTestMatch(feat, cand_img, ft_it->second.tree, predicted);
+                if (!forward)
                     continue;
 
-                double best_dist = std::numeric_limits<double>::infinity();
-                double second_best_dist = std::numeric_limits<double>::infinity();
-                size_t best_feat_idx = 0;
-
-                for (const auto &n : nearby)
+                // Mutual check: the candidate's best match back in the source image must be this feature. Centre the
+                // reverse search where the candidate maps to, assuming the local src->cand offset is a translation.
+                const auto &cand_feat = cand_img.features[*forward];
+                const Eigen::Vector2d reverse_center = feat.location + (cand_feat.location - predicted);
+                auto reverse = ratioTestMatch(cand_feat, src_img, src_tree, reverse_center);
+                if (reverse && *reverse == global_fi)
                 {
-                    double d = descriptor_distance(feat, cand_img.features[n.payload]);
-                    if (d < second_best_dist)
-                    {
-                        if (d < best_dist)
-                        {
-                            second_best_dist = best_dist;
-                            best_dist = d;
-                            best_feat_idx = n.payload;
-                        }
-                        else
-                        {
-                            second_best_dist = d;
-                        }
-                    }
-                }
-
-                bool good_match = nearby.size() >= 2 ? best_dist < RATIO_THRESHOLD * second_best_dist
-                                                     : best_dist < MAX_ABSOLUTE_DESCRIPTOR_DISTANCE;
-                if (good_match)
-                {
-                    local_matches.push_back({src_id, measurementId(cand_nid, best_feat_idx)});
+                    local_matches.push_back({src_id, measurementId(cand_nid, *forward)});
                 }
             }
         }
@@ -309,15 +405,6 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
     }
 
     const double max_reproj_err_sq = MAX_REPROJECTION_ERROR_PIXELS * MAX_REPROJECTION_ERROR_PIXELS;
-
-    struct RayMeasurement
-    {
-        ray_d ray;
-        Eigen::Vector2d pixel;
-        const CameraModel *model;
-        const Eigen::Vector3d *position;
-        const Eigen::Quaterniond *orientation;
-    };
 
     auto hasMultipleFeaturesFromOneImage = [&id_to_measurement](const std::vector<size_t> &ids) {
         ankerl::unordered_dense::set<size_t> track_nodes;
@@ -364,13 +451,14 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
         if (!triangulated.first.allFinite() || triangulated.second < 0)
             continue;
 
+        std::vector<size_t> all_indices(measurements.size());
+        std::iota(all_indices.begin(), all_indices.end(), 0);
+        Eigen::Vector3d point = refineTriangulation(triangulated.first, measurements, all_indices);
+
         std::vector<size_t> inlier_indices;
         for (size_t i = 0; i < measurements.size(); i++)
         {
-            const auto &rm = measurements[i];
-            Eigen::Vector2d reproj = image_from_3d(triangulated.first, *rm.model, *rm.position, *rm.orientation);
-            double err_sq = (reproj - rm.pixel).squaredNorm();
-            if (err_sq <= max_reproj_err_sq)
+            if (reprojectionResidual(point, measurements[i]).squaredNorm() <= max_reproj_err_sq)
                 inlier_indices.push_back(i);
         }
 
@@ -379,15 +467,26 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
 
         if (inlier_indices.size() < measurements.size())
         {
+            // Restart from the inliers' algebraic solution so outliers don't bias the initial guess
             rays.clear();
             for (size_t i : inlier_indices)
                 rays.push_back(measurements[i].ray);
             triangulated = rayIntersection(rays);
             if (!triangulated.first.allFinite() || triangulated.second < 0)
                 continue;
+            point = refineTriangulation(triangulated.first, measurements, inlier_indices);
+
+            bool all_inliers = std::all_of(inlier_indices.begin(), inlier_indices.end(), [&](size_t i) {
+                return reprojectionResidual(point, measurements[i]).squaredNorm() <= max_reproj_err_sq;
+            });
+            if (!all_inliers)
+                continue;
         }
 
-        track_results[ti] = triangulated.first;
+        if (!point.allFinite() || !inFrontOfCameras(point, measurements, inlier_indices))
+            continue;
+
+        track_results[ti] = point;
         track_valid[ti] = true;
     }
 
