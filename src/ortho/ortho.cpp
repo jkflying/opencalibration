@@ -24,10 +24,13 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <fstream>
 #include <future>
 #include <mutex>
+#include <numeric>
 #include <omp.h>
+#include <thread>
 
 namespace
 {
@@ -70,18 +73,11 @@ class PatchSampler
 {
   public:
     static constexpr int MAX_PATCH_RADIUS = 16;
-    static constexpr int MAX_PATCH_SIZE = 2 * MAX_PATCH_RADIUS + 1;
 
-    PatchSampler() : _lab_pixel(1, 1, CV_8UC3), _bgr_pixel(1, 1, CV_8UC3)
-    {
-        _patch_buffer.create(MAX_PATCH_SIZE, MAX_PATCH_SIZE, CV_8UC3);
-        _lab_buffer.create(MAX_PATCH_SIZE, MAX_PATCH_SIZE, CV_8UC3);
-    }
-
-    Eigen::Matrix2d computeJacobian(const Eigen::Vector3d &world_point,
-                                    const opencalibration::DifferentiableCameraModel<double> &model,
-                                    const Eigen::Vector3d &camera_position,
-                                    const Eigen::Matrix3d &camera_orientation_inverse) const
+    static Eigen::Matrix2d computeJacobian(const Eigen::Vector3d &world_point,
+                                           const opencalibration::DifferentiableCameraModel<double> &model,
+                                           const Eigen::Vector3d &camera_position,
+                                           const Eigen::Matrix3d &camera_orientation_inverse)
     {
         using JetT = ceres::Jet<double, 2>;
 
@@ -114,109 +110,102 @@ class PatchSampler
         return J;
     }
 
-    bool sampleWithJacobian(const cv::Mat &bgr_image, const Eigen::Vector3d &world_point,
-                            const opencalibration::DifferentiableCameraModel<double> &model,
-                            const Eigen::Vector3d &camera_position, const Eigen::Matrix3d &camera_orientation_inverse,
-                            double output_gsd, const Eigen::Vector2d &pixel, cv::Vec3b &result)
+    struct BlockSample
     {
-        if (pixel.x() < 0 || pixel.x() >= bgr_image.cols || pixel.y() < 0 || pixel.y() >= bgr_image.rows)
-        {
-            return false;
-        }
+        Eigen::Vector2d pixel;
+        cv::Vec3b *out;
+    };
 
-        Eigen::Matrix2d J = computeJacobian(world_point, model, camera_position, camera_orientation_inverse);
+    void sampleBlock(const cv::Mat &bgr_image, const Eigen::Vector3d &reference_point,
+                     const opencalibration::DifferentiableCameraModel<double> &model,
+                     const Eigen::Vector3d &camera_position, const Eigen::Matrix3d &camera_orientation_inverse,
+                     double output_gsd, const std::vector<BlockSample> &samples)
+    {
+        auto nearest = [&](const Eigen::Vector2d &pixel) {
+            return bgr_image.at<cv::Vec3b>(static_cast<int>(pixel.y()), static_cast<int>(pixel.x()));
+        };
 
-        // World-space gsd*gsd square maps to pixel-space ellipse: M = gsd^2 * J * J^T
+        Eigen::Matrix2d J = computeJacobian(reference_point, model, camera_position, camera_orientation_inverse);
         Eigen::Matrix2d M = output_gsd * output_gsd * J * J.transpose();
 
         Eigen::SelfAdjointEigenSolver<Eigen::Matrix2d> solver(M);
-        Eigen::Vector2d eigenvalues = solver.eigenvalues();
+        const double a = std::sqrt(std::max(solver.eigenvalues()(1), 1e-6));
+        const double b = std::sqrt(std::max(solver.eigenvalues()(0), 1e-6));
 
-        double a = std::sqrt(std::max(eigenvalues(1), 1e-6));
-        double b = std::sqrt(std::max(eigenvalues(0), 1e-6));
-
-        if (a < 1.0 && b < 1.0)
+        if ((a < 1.0 && b < 1.0) || M.determinant() < 1e-12)
         {
-            int px = static_cast<int>(pixel.x());
-            int py = static_cast<int>(pixel.y());
-            if (px >= 0 && px < bgr_image.cols && py >= 0 && py < bgr_image.rows)
+            for (const auto &sample : samples)
+                *sample.out = nearest(sample.pixel);
+            return;
+        }
+
+        const int radius = std::min(static_cast<int>(std::ceil(a)), MAX_PATCH_RADIUS);
+        const Eigen::Matrix2d M_inv = M.inverse();
+
+        int x_min = bgr_image.cols - 1, y_min = bgr_image.rows - 1, x_max = 0, y_max = 0;
+        for (const auto &sample : samples)
+        {
+            x_min = std::min(x_min, static_cast<int>(sample.pixel.x()) - radius);
+            y_min = std::min(y_min, static_cast<int>(sample.pixel.y()) - radius);
+            x_max = std::max(x_max, static_cast<int>(sample.pixel.x()) + radius);
+            y_max = std::max(y_max, static_cast<int>(sample.pixel.y()) + radius);
+        }
+        x_min = std::max(0, x_min);
+        y_min = std::max(0, y_min);
+        x_max = std::min(bgr_image.cols - 1, x_max);
+        y_max = std::min(bgr_image.rows - 1, y_max);
+
+        cv::cvtColor(bgr_image(cv::Rect(x_min, y_min, x_max - x_min + 1, y_max - y_min + 1)), _lab_roi,
+                     cv::COLOR_BGR2Lab);
+
+        _lab_avg.create(1, static_cast<int>(samples.size()), CV_8UC3);
+        _averaged.assign(samples.size(), false);
+        for (size_t i = 0; i < samples.size(); i++)
+        {
+            const Eigen::Vector2d &pixel = samples[i].pixel;
+            const int cx = static_cast<int>(pixel.x());
+            const int cy = static_cast<int>(pixel.y());
+
+            double sum_L = 0, sum_a = 0, sum_b = 0;
+            int count = 0;
+            for (int py = std::max(y_min, cy - radius); py <= std::min(y_max, cy + radius); py++)
             {
-                result = bgr_image.at<cv::Vec3b>(py, px);
-                return true;
-            }
-            return false;
-        }
-
-        int radius = std::min(static_cast<int>(std::ceil(a)), MAX_PATCH_RADIUS);
-
-        int x_min = std::max(0, static_cast<int>(pixel.x()) - radius);
-        int y_min = std::max(0, static_cast<int>(pixel.y()) - radius);
-        int x_max = std::min(bgr_image.cols - 1, static_cast<int>(pixel.x()) + radius);
-        int y_max = std::min(bgr_image.rows - 1, static_cast<int>(pixel.y()) + radius);
-
-        if (x_min > x_max || y_min > y_max)
-        {
-            return false;
-        }
-
-        double det = M.determinant();
-        if (det < 1e-12)
-        {
-            int px = static_cast<int>(pixel.x());
-            int py = static_cast<int>(pixel.y());
-            result = bgr_image.at<cv::Vec3b>(py, px);
-            return true;
-        }
-        Eigen::Matrix2d M_inv = M.inverse();
-
-        double sum_L = 0, sum_a = 0, sum_b = 0;
-        int count = 0;
-
-        for (int py = y_min; py <= y_max; py++)
-        {
-            for (int px = x_min; px <= x_max; px++)
-            {
-                Eigen::Vector2d diff(px - pixel.x(), py - pixel.y());
-                double ellipse_dist = diff.transpose() * M_inv * diff;
-
-                if (ellipse_dist <= 1.0)
+                for (int px = std::max(x_min, cx - radius); px <= std::min(x_max, cx + radius); px++)
                 {
-                    const cv::Vec3b &bgr = bgr_image.at<cv::Vec3b>(py, px);
-
-                    _lab_pixel.at<cv::Vec3b>(0, 0) = bgr;
-                    cv::cvtColor(_lab_pixel, _bgr_pixel, cv::COLOR_BGR2Lab);
-                    cv::Vec3b lab = _bgr_pixel.at<cv::Vec3b>(0, 0);
-
-                    sum_L += lab[0];
-                    sum_a += lab[1];
-                    sum_b += lab[2];
-                    count++;
+                    Eigen::Vector2d diff(px - pixel.x(), py - pixel.y());
+                    if (diff.transpose() * M_inv * diff <= 1.0)
+                    {
+                        const cv::Vec3b &lab = _lab_roi.at<cv::Vec3b>(py - y_min, px - x_min);
+                        sum_L += lab[0];
+                        sum_a += lab[1];
+                        sum_b += lab[2];
+                        count++;
+                    }
                 }
             }
+
+            if (count == 0)
+            {
+                *samples[i].out = nearest(pixel);
+                continue;
+            }
+            _lab_avg.at<cv::Vec3b>(0, static_cast<int>(i)) =
+                cv::Vec3b(static_cast<uint8_t>(sum_L / count), static_cast<uint8_t>(sum_a / count),
+                          static_cast<uint8_t>(sum_b / count));
+            _averaged[i] = true;
         }
 
-        if (count == 0)
-        {
-            int px = static_cast<int>(pixel.x());
-            int py = static_cast<int>(pixel.y());
-            result = bgr_image.at<cv::Vec3b>(py, px);
-            return true;
-        }
-
-        _lab_pixel.at<cv::Vec3b>(0, 0) =
-            cv::Vec3b(static_cast<uint8_t>(sum_L / count), static_cast<uint8_t>(sum_a / count),
-                      static_cast<uint8_t>(sum_b / count));
-        cv::cvtColor(_lab_pixel, _bgr_pixel, cv::COLOR_Lab2BGR);
-        result = _bgr_pixel.at<cv::Vec3b>(0, 0);
-
-        return true;
+        cv::cvtColor(_lab_avg, _bgr_avg, cv::COLOR_Lab2BGR);
+        for (size_t i = 0; i < samples.size(); i++)
+            if (_averaged[i])
+                *samples[i].out = _bgr_avg.at<cv::Vec3b>(0, static_cast<int>(i));
     }
 
   private:
-    cv::Mat _patch_buffer;
-    cv::Mat _lab_buffer;
-    mutable cv::Mat _lab_pixel;
-    mutable cv::Mat _bgr_pixel;
+    cv::Mat _lab_roi;
+    cv::Mat _lab_avg;
+    cv::Mat _bgr_avg;
+    std::vector<bool> _averaged;
 };
 
 } // namespace
@@ -590,8 +579,9 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
                 uint32_t pixelSource = noSource;
 
                 const auto &nearestCameras =
-                    std::isnan(z) ? noCameras
-                                  : cameraSearcher.search({x, y}, std::numeric_limits<double>::max(), maxOverlapCameras);
+                    std::isnan(z)
+                        ? noCameras
+                        : cameraSearcher.search({x, y}, std::numeric_limits<double>::max(), maxOverlapCameras);
                 uint8_t overlapCount = 0;
 
                 for (size_t i = 0; i < nearestCameras.size(); i++)
@@ -900,6 +890,8 @@ GDALDatasetPtr createMultiBandGeoTIFF(const std::string &path, int width, int he
     options = CSLSetNameValue(options, "BLOCKYSIZE", "512");
     options = CSLSetNameValue(options, "COMPRESS", "DEFLATE");
     options = CSLSetNameValue(options, "PREDICTOR", "2");
+    options = CSLSetNameValue(options, "ZLEVEL", "1");
+    options = CSLSetNameValue(options, "NUM_THREADS", "ALL_CPUS");
     options = CSLSetNameValue(options, "BIGTIFF", "IF_SAFER");
     options = CSLSetNameValue(options, "SPARSE_OK", "YES");
 
@@ -927,7 +919,8 @@ GDALDatasetPtr createMultiBandGeoTIFF(const std::string &path, int width, int he
 ankerl::unordered_dense::set<size_t> findTileCameras(int tile_x, int tile_y, int tile_size,
                                                      const opencalibration::orthomosaic::OrthoMosaicBounds &bounds,
                                                      double gsd, int output_width, int output_height,
-                                                     const jk::tree::KDTree<size_t, 2> &imageGPSLocations)
+                                                     const jk::tree::KDTree<size_t, 2> &imageGPSLocations,
+                                                     int num_neighbors)
 {
     PerformanceMeasure thread_perf("Ortho Stage 1 - read");
 
@@ -955,32 +948,109 @@ ankerl::unordered_dense::set<size_t> findTileCameras(int tile_x, int tile_y, int
             double x = global_col * gsd + bounds.min_x;
             double y = bounds.max_y - global_row * gsd;
 
-            const auto &closest5 = searcher.search({x, y}, INFINITY, 5);
-            for (const auto &closest : closest5)
-            {
+            for (const auto &closest : searcher.search({x, y}, INFINITY, num_neighbors))
                 camera_ids.insert(closest.payload);
-            }
         }
     }
 
     return camera_ids;
 }
 
-void prefetchImages(const ankerl::unordered_dense::set<size_t> &camera_ids,
-                    const opencalibration::MeasurementGraph &graph,
-                    opencalibration::orthomosaic::FullResolutionImageCache &image_cache)
+void loadImages(const ankerl::unordered_dense::set<size_t> &camera_ids, const opencalibration::MeasurementGraph &graph,
+                opencalibration::orthomosaic::FullResolutionImageCache &image_cache)
 {
     PerformanceMeasure thread_perf("Ortho Stage 1 - read");
 
-    for (size_t cam_id : camera_ids)
+    std::vector<size_t> ids(camera_ids.begin(), camera_ids.end());
+#pragma omp parallel for schedule(dynamic)
+    for (size_t i = 0; i < ids.size(); i++) // NOLINT(modernize-loop-convert)
     {
-        const auto *node = graph.getNode(cam_id);
+        const auto *node = graph.getNode(ids[i]);
         if (node)
-        {
-            image_cache.getImage(cam_id, node->payload.path);
-        }
+            image_cache.getImage(ids[i], node->payload.path);
     }
 }
+
+class LookaheadPrefetcher
+{
+  public:
+    LookaheadPrefetcher(const std::vector<std::pair<int, int>> &tile_order,
+                        const opencalibration::TileCameraMap &tile_cameras, int num_tiles_x,
+                        const opencalibration::MeasurementGraph &graph,
+                        opencalibration::orthomosaic::FullResolutionImageCache &image_cache)
+        : tile_order_(tile_order), tile_cameras_(tile_cameras), num_tiles_x_(num_tiles_x), graph_(graph),
+          image_cache_(image_cache), thread_([this] { run(); })
+    {
+    }
+
+    LookaheadPrefetcher(const LookaheadPrefetcher &) = delete;
+    LookaheadPrefetcher &operator=(const LookaheadPrefetcher &) = delete;
+
+    ~LookaheadPrefetcher()
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            stop_ = true;
+        }
+        cv_.notify_one();
+        thread_.join();
+    }
+
+    void startFrom(size_t position)
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            position_ = position;
+        }
+        cv_.notify_one();
+    }
+
+  private:
+    void run()
+    {
+        size_t scanned_from = SIZE_MAX;
+        std::unique_lock<std::mutex> lock(mutex_);
+        while (true)
+        {
+            cv_.wait(lock, [&] { return stop_ || position_ != scanned_from; });
+            if (stop_)
+                return;
+            scanned_from = position_;
+            lock.unlock();
+            scan(scanned_from);
+            lock.lock();
+        }
+    }
+
+    void scan(size_t start)
+    {
+        PerformanceMeasure thread_perf("Ortho Stage 1 - prefetch");
+        for (size_t j = start; j < tile_order_.size(); j++)
+        {
+            size_t tile_idx = static_cast<size_t>(tile_order_[j].second) * num_tiles_x_ + tile_order_[j].first;
+            for (size_t cam : tile_cameras_.at(tile_idx))
+            {
+                if (stop_ || position_ != start)
+                    return;
+                const auto *node = graph_.getNode(cam);
+                if (node && !image_cache_.tryPrefetch(cam, node->payload.path))
+                    return;
+            }
+        }
+    }
+
+    const std::vector<std::pair<int, int>> &tile_order_;
+    const opencalibration::TileCameraMap &tile_cameras_;
+    int num_tiles_x_;
+    const opencalibration::MeasurementGraph &graph_;
+    opencalibration::orthomosaic::FullResolutionImageCache &image_cache_;
+
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    std::atomic<bool> stop_{false};
+    std::atomic<size_t> position_{SIZE_MAX};
+    std::thread thread_;
+};
 
 void writeLayeredTileToGeoTIFF(GDALDatasetH layers_ds, GDALDatasetH cameras_ds,
                                const opencalibration::orthomosaic::LayeredTileBuffer &tile, int x_offset, int y_offset)
@@ -1118,6 +1188,44 @@ void readLayeredTileFromGeoTIFF(GDALDatasetH layers_ds, GDALDatasetH cameras_ds,
     }
 }
 
+bool projectIntoImage(const image &payload, const Eigen::Matrix3d &inv_rotation, const Eigen::Vector3d &world_point,
+                      Eigen::Vector2d &pixel)
+{
+    if ((inv_rotation * (world_point - payload.position)).z() <= 0)
+        return false;
+
+    pixel = image_from_3d(world_point, *payload.model, payload.position, inv_rotation);
+    return pixel.x() >= 0 && pixel.x() < payload.model->pixels_cols && pixel.y() >= 0 &&
+           pixel.y() < payload.model->pixels_rows;
+}
+
+void setSampleGeometry(PixelSample &sample, const image &payload, const Eigen::Vector3d &world_point,
+                       const Eigen::Vector2d &pixel)
+{
+    const int cols = payload.model->pixels_cols;
+    const int rows = payload.model->pixels_rows;
+    sample.normalized_radius = normalizedImageRadius(pixel.x(), pixel.y(), cols, rows);
+    std::tie(sample.normalized_x, sample.normalized_y) = normalizedImagePosition(pixel.x(), pixel.y(), cols, rows);
+
+    const Eigen::Vector3d to_point = world_point - payload.position;
+    const Eigen::Vector3d camera_down = payload.orientation.inverse() * Eigen::Vector3d(0, 0, 1);
+    const double cos_angle = camera_down.dot(to_point.normalized());
+    sample.view_angle = static_cast<float>(std::acos(std::clamp(cos_angle, -1.0, 1.0)));
+    sample.weight = computeBlendWeight(static_cast<float>(pixel.x()), static_cast<float>(pixel.y()), cols, rows,
+                                       static_cast<float>(to_point.norm()));
+}
+
+struct BlockCamera
+{
+    size_t id = 0;
+    const image *payload = nullptr;
+    const Eigen::Matrix3d *inv_rotation = nullptr;
+    cv::Mat full_image;
+    bool image_fetched = false;
+    Eigen::Vector3d reference_point;
+    std::vector<PatchSampler::BlockSample> samples;
+};
+
 } // namespace
 
 void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaicBounds &bounds, double gsd,
@@ -1135,6 +1243,15 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
 
     tile_out.resize(tile_width, tile_height, num_layers);
 
+    constexpr int kBlockSize = 8;
+    constexpr size_t kBlockCandidates = 8;
+    constexpr size_t kPixelCandidates = 5;
+    const int blocks_x = (tile_width + kBlockSize - 1) / kBlockSize;
+    const int blocks_y = (tile_height + kBlockSize - 1) / kBlockSize;
+
+    auto world_x = [&](double local_col) { return (x_offset + local_col) * gsd + bounds.min_x; };
+    auto world_y = [&](double local_row) { return bounds.max_y - (y_offset + local_row) * gsd; };
+
 #pragma omp parallel
     {
         PerformanceMeasure thread_perf("Ortho Stage 1 - process");
@@ -1143,100 +1260,109 @@ void processLayeredTile(int tile_x, int tile_y, int tile_size, const OrthoMosaic
 
         jk::tree::KDTree<size_t, 2>::Searcher tree_searcher(imageGPSLocations);
         ankerl::unordered_dense::map<uint64_t, cv::Mat> local_image_cache;
+        auto fetchImage = [&](const BlockCamera &cam) {
+            auto it = local_image_cache.find(cam.id);
+            if (it != local_image_cache.end())
+                return it->second;
+            cv::Mat full_image = image_cache.getImage(cam.id, cam.payload->path);
+            if (!full_image.empty())
+                local_image_cache.emplace(cam.id, full_image);
+            return full_image;
+        };
 
         std::vector<ColorCorrespondence> local_correspondences;
+        std::vector<BlockCamera> cameras;
+        std::vector<size_t> rank;
+
+#pragma omp for schedule(dynamic)
+        for (int block = 0; block < blocks_x * blocks_y; block++)
+        {
+            const int row_begin = (block / blocks_x) * kBlockSize;
+            const int col_begin = (block % blocks_x) * kBlockSize;
+            const int row_end = std::min(row_begin + kBlockSize, tile_height);
+            const int col_end = std::min(col_begin + kBlockSize, tile_width);
+
+            cameras.clear();
+            const auto &candidates = tree_searcher.search(
+                {world_x(0.5 * (col_begin + col_end - 1)), world_y(0.5 * (row_begin + row_end - 1))}, INFINITY,
+                kBlockCandidates);
+            for (const auto &candidate : candidates)
+            {
+                auto &cam = cameras.emplace_back();
+                cam.id = candidate.payload;
+                cam.payload = &graph.getNode(candidate.payload)->payload;
+                auto inv_rot_it = inv_rotation_cache.find(candidate.payload);
+                if (inv_rot_it != inv_rotation_cache.end())
+                    cam.inv_rotation = &inv_rot_it->second;
+            }
+
+            for (int local_row = row_begin; local_row < row_end; local_row++)
+            {
+                for (int local_col = col_begin; local_col < col_end; local_col++)
+                {
+                    const float z = dsm_tile[local_row * tile_width + local_col];
+                    if (std::isnan(z))
+                        continue;
+                    const Eigen::Vector3d sample_point(world_x(local_col), world_y(local_row), z);
+
+                    rank.resize(cameras.size());
+                    std::iota(rank.begin(), rank.end(), 0);
+                    auto distance2 = [&](size_t i) {
+                        return (cameras[i].payload->position.head<2>() - sample_point.head<2>()).squaredNorm();
+                    };
+                    std::sort(rank.begin(), rank.end(),
+                              [&](size_t l, size_t r) { return distance2(l) < distance2(r); });
+
+                    int layer_idx = 0;
+                    for (size_t r = 0; r < std::min(rank.size(), kPixelCandidates) && layer_idx < num_layers; r++)
+                    {
+                        auto &cam = cameras[rank[r]];
+                        if (cam.inv_rotation == nullptr)
+                            continue;
+
+                        Eigen::Vector2d pixel;
+                        if (!projectIntoImage(*cam.payload, *cam.inv_rotation, sample_point, pixel))
+                            continue;
+
+                        if (!cam.image_fetched)
+                        {
+                            cam.full_image = fetchImage(cam);
+                            cam.image_fetched = true;
+                        }
+                        if (cam.full_image.empty() || pixel.x() >= cam.full_image.cols ||
+                            pixel.y() >= cam.full_image.rows)
+                            continue;
+
+                        auto &sample = tile_out.at(layer_idx, local_row, local_col);
+                        sample.camera_id = cam.id;
+                        sample.model_id = cam.payload->model->id;
+                        sample.valid = true;
+                        setSampleGeometry(sample, *cam.payload, sample_point, pixel);
+
+                        if (cam.samples.empty())
+                            cam.reference_point = sample_point;
+                        cam.samples.push_back({pixel, &sample.color_bgr});
+                        layer_idx++;
+                    }
+                }
+            }
+
+            for (const auto &cam : cameras)
+            {
+                if (!cam.samples.empty())
+                    sampler.sampleBlock(cam.full_image, cam.reference_point, *cam.payload->model, cam.payload->position,
+                                        *cam.inv_rotation, gsd, cam.samples);
+            }
+        }
 
 #pragma omp for schedule(dynamic)
         for (int local_row = 0; local_row < tile_height; local_row++)
         {
             for (int local_col = 0; local_col < tile_width; local_col++)
             {
-                int global_col = x_offset + local_col;
-                int global_row = y_offset + local_row;
-
-                const double x = global_col * gsd + bounds.min_x;
-                const double y = bounds.max_y - global_row * gsd;
-
-                float z_f = dsm_tile[local_row * tile_width + local_col];
-                if (std::isnan(z_f))
-                    continue;
-                double z = z_f;
-
-                Eigen::Vector3d sample_point(x, y, z);
-                const auto &closest5 = tree_searcher.search({x, y}, INFINITY, 5);
-
                 int layer_idx = 0;
-                for (const auto &closest : closest5)
-                {
-                    if (layer_idx >= num_layers)
-                        break;
-
-                    const auto *closestNode = graph.getNode(closest.payload);
-                    const auto &payload = closestNode->payload;
-
-                    auto inv_rot_it = inv_rotation_cache.find(closest.payload);
-                    if (inv_rot_it == inv_rotation_cache.end())
-                        continue;
-                    const Eigen::Matrix3d &inv_rotation = inv_rot_it->second;
-
-                    Eigen::Vector3d camera_ray = inv_rotation * (sample_point - payload.position);
-                    if (camera_ray.z() <= 0)
-                        continue;
-
-                    Eigen::Vector2d pixel = image_from_3d(sample_point, *payload.model, payload.position, inv_rotation);
-
-                    if (pixel.x() < 0 || pixel.x() >= payload.model->pixels_cols || pixel.y() < 0 ||
-                        pixel.y() >= payload.model->pixels_rows)
-                        continue;
-
-                    cv::Mat full_image;
-                    auto img_cache_iter = local_image_cache.find(closest.payload);
-                    if (img_cache_iter != local_image_cache.end())
-                    {
-                        full_image = img_cache_iter->second;
-                    }
-                    else
-                    {
-                        full_image = image_cache.getImage(closest.payload, payload.path);
-                        if (!full_image.empty())
-                        {
-                            local_image_cache.emplace(closest.payload, full_image);
-                        }
-                    }
-                    if (full_image.empty())
-                        continue;
-
-                    cv::Vec3b color_bgr;
-                    if (!sampler.sampleWithJacobian(full_image, sample_point, *payload.model, payload.position,
-                                                    inv_rotation, gsd, pixel, color_bgr))
-                        continue;
-
-                    auto &sample = tile_out.at(layer_idx, local_row, local_col);
-                    sample.color_bgr = color_bgr;
-                    sample.camera_id = closest.payload;
-                    sample.model_id = payload.model->id;
-                    sample.valid = true;
-
-                    sample.normalized_radius = normalizedImageRadius(pixel.x(), pixel.y(), payload.model->pixels_cols,
-                                                                     payload.model->pixels_rows);
-
-                    auto [nx, ny] = normalizedImagePosition(pixel.x(), pixel.y(), payload.model->pixels_cols,
-                                                            payload.model->pixels_rows);
-                    sample.normalized_x = nx;
-                    sample.normalized_y = ny;
-
-                    Eigen::Vector3d to_point = sample_point - payload.position;
-                    Eigen::Vector3d camera_down = payload.orientation.inverse() * Eigen::Vector3d(0, 0, 1);
-                    double cos_angle = camera_down.dot(to_point.normalized());
-                    sample.view_angle = static_cast<float>(std::acos(std::clamp(cos_angle, -1.0, 1.0)));
-
-                    float camera_dist = static_cast<float>(to_point.norm());
-                    sample.weight =
-                        computeBlendWeight(static_cast<float>(pixel.x()), static_cast<float>(pixel.y()),
-                                           payload.model->pixels_cols, payload.model->pixels_rows, camera_dist);
-
+                while (layer_idx < num_layers && tile_out.at(layer_idx, local_row, local_col).valid)
                     layer_idx++;
-                }
 
                 // Voronoi boundary detection: check if rank-1 camera differs from neighbors
                 if (layer_idx > 0 && correspondence_subsample > 0)
@@ -1415,54 +1541,56 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
 
     p.reset("");
 
-    FullResolutionImageCache image_cache(config.num_layers * 10);
-
     TileCameraMap tile_camera_map;
     for (int ty = 0; ty < num_tiles_y; ty++)
         for (int tx = 0; tx < num_tiles_x; tx++)
         {
             size_t tile_idx = static_cast<size_t>(ty) * num_tiles_x + tx;
-            tile_camera_map[tile_idx] =
-                findTileCameras(tx, ty, tile_size, bounds, gsd, width, height, context.imageGPSLocations);
+            tile_camera_map[tile_idx] = findTileCameras(tx, ty, tile_size, bounds, gsd, width, height,
+                                                        context.imageGPSLocations, config.num_layers + 1);
         }
 
-    auto tile_order = computeCacheAwareTileOrder(
-        tile_camera_map, {num_tiles_x, num_tiles_y, static_cast<size_t>(config.num_layers * 10)});
+    const size_t image_cache_size = computeImageCacheSize(tile_camera_map);
+    FullResolutionImageCache image_cache(image_cache_size);
+    constexpr size_t kFreeLoadsPerTile = 1;
+    auto tile_order =
+        computeCacheAwareTileOrder(tile_camera_map, {num_tiles_x, num_tiles_y, image_cache_size, kFreeLoadsPerTile});
 
-    if (!tile_order.empty())
-    {
-        size_t idx = static_cast<size_t>(tile_order[0].second) * num_tiles_x + tile_order[0].first;
-        prefetchImages(tile_camera_map.at(idx), graph, image_cache);
-    }
+    const ImageUseSchedule image_schedule(tile_order, tile_camera_map, num_tiles_x);
+    std::atomic<size_t> current_tile_position{0};
+    image_cache.setNextUse([&](size_t node_id) { return image_schedule.nextUse(node_id, current_tile_position); });
+
+    LookaheadPrefetcher prefetcher(tile_order, tile_camera_map, num_tiles_x, graph, image_cache);
 
     std::future<void> write_future;
-    std::future<void> prefetch_future;
+
+    double dsm_s = 0, load_s = 0, process_s = 0, write_wait_s = 0;
+    auto lap = [t = std::chrono::steady_clock::now()](double &total) mutable {
+        auto now = std::chrono::steady_clock::now();
+        total += std::chrono::duration<double>(now - t).count();
+        t = now;
+    };
 
     for (size_t i = 0; i < tile_order.size(); i++)
     {
         const auto tile_x = tile_order[i].first;
         const auto tile_y = tile_order[i].second;
-
-        if (i + 1 < tile_order.size())
-        {
-            if (prefetch_future.valid())
-                prefetch_future.wait();
-            const auto next_tx = tile_order[i + 1].first;
-            const auto next_ty = tile_order[i + 1].second;
-            prefetch_future = std::async(std::launch::async, [&, next_tx, next_ty] {
-                size_t idx = static_cast<size_t>(next_ty) * num_tiles_x + next_tx;
-                prefetchImages(tile_camera_map.at(idx), graph, image_cache);
-            });
-        }
+        current_tile_position = i;
+        prefetcher.startFrom(i);
 
         std::vector<float> dsm_tile =
             computeDSMTile(tile_x, tile_y, tile_size, bounds, gsd, width, height, surfaces, context.mean_camera_z);
+        lap(dsm_s);
+
+        loadImages(tile_camera_map.at(static_cast<size_t>(tile_y) * num_tiles_x + tile_x), graph, image_cache);
+        lap(load_s);
 
         LayeredTileBuffer tile_buf;
         processLayeredTile(tile_x, tile_y, tile_size, bounds, gsd, width, height, dsm_tile, graph,
                            context.imageGPSLocations, inv_rotation_cache, image_cache, config.num_layers, tile_buf,
                            all_correspondences, config.correspondence_subsample, config.correspondence_kernel_radius,
                            correspondences_mutex);
+        lap(process_s);
 
         int x_off = tile_x * tile_size;
         int y_off = tile_y * tile_size;
@@ -1530,8 +1658,10 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
             tile_progress(tu);
         }
 
+        lap(process_s);
         if (write_future.valid())
             write_future.wait();
+        lap(write_wait_s);
 
         auto tile_buf_ptr = std::make_shared<LayeredTileBuffer>(std::move(tile_buf));
         auto dsm_tile_ptr = std::make_shared<std::vector<float>>(std::move(dsm_tile));
@@ -1547,8 +1677,10 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
             completed_tiles == total_tiles)
         {
             double progress = 100.0 * completed_tiles / total_tiles;
-            spdlog::info("Pass 1 Progress: {:.1f}% ({}/{} tiles, {} seconds, {} correspondences)", progress,
-                         completed_tiles, total_tiles, elapsed, all_correspondences.size());
+            spdlog::info("Pass 1 Progress: {:.1f}% ({}/{} tiles, {} seconds, {} correspondences), time in dsm {:.0f}s, "
+                         "image load {:.0f}s, process {:.0f}s, write wait {:.0f}s",
+                         progress, completed_tiles, total_tiles, elapsed, all_correspondences.size(), dsm_s, load_s,
+                         process_s, write_wait_s);
             last_log_time = now;
         }
     }
@@ -1720,24 +1852,7 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
 
                         Eigen::Vector2d pixel =
                             image_from_3d(world_pt, *payload.model, payload.position, inv_rot_it->second);
-
-                        sample.normalized_radius = normalizedImageRadius(
-                            pixel.x(), pixel.y(), payload.model->pixels_cols, payload.model->pixels_rows);
-
-                        auto [nx, ny] = normalizedImagePosition(pixel.x(), pixel.y(), payload.model->pixels_cols,
-                                                                payload.model->pixels_rows);
-                        sample.normalized_x = nx;
-                        sample.normalized_y = ny;
-
-                        Eigen::Vector3d to_point = world_pt - payload.position;
-                        Eigen::Vector3d cam_down = payload.orientation.inverse() * Eigen::Vector3d(0, 0, 1);
-                        double cos_angle = cam_down.dot(to_point.normalized());
-                        sample.view_angle = static_cast<float>(std::acos(std::clamp(cos_angle, -1.0, 1.0)));
-
-                        float camera_dist = static_cast<float>(to_point.norm());
-                        sample.weight =
-                            computeBlendWeight(static_cast<float>(pixel.x()), static_cast<float>(pixel.y()),
-                                               payload.model->pixels_cols, payload.model->pixels_rows, camera_dist);
+                        setSampleGeometry(sample, payload, world_pt, pixel);
 
                         bgr_layers[layer].at<cv::Vec3b>(local_row, local_col) = sample.color_bgr;
                         weight_maps[layer].at<float>(local_row, local_col) = sample.weight;

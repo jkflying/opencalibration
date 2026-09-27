@@ -5,6 +5,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <tuple>
 
 namespace opencalibration
 {
@@ -44,8 +45,7 @@ struct LRUCache
     }
 };
 
-std::pair<std::vector<std::pair<int, int>>, size_t> cacheAwareSearch(const TileCameraMap &tile_cameras,
-                                                                     const TileOrderingParams &params)
+std::vector<std::pair<int, int>> cacheAwareSearch(const TileCameraMap &tile_cameras, const TileOrderingParams &params)
 {
     int total = params.num_tiles_x * params.num_tiles_y;
 
@@ -70,7 +70,7 @@ std::pair<std::vector<std::pair<int, int>>, size_t> cacheAwareSearch(const TileC
         result.reserve(uncovered_tiles.size());
         for (size_t idx : uncovered_tiles)
             result.push_back({static_cast<int>(idx % params.num_tiles_x), static_cast<int>(idx / params.num_tiles_x)});
-        return {std::move(result), 0};
+        return result;
     }
 
     ankerl::unordered_dense::map<size_t, std::vector<size_t>> camera_to_tiles;
@@ -80,12 +80,11 @@ std::pair<std::vector<std::pair<int, int>>, size_t> cacheAwareSearch(const TileC
             camera_to_tiles[cam].push_back(tile_idx);
     }
 
-    auto greedySearch = [&](size_t start_tile) -> std::pair<std::vector<size_t>, size_t> {
+    auto greedySearch = [&](size_t start_tile) {
         LRUCache cache(params.cache_size);
         std::vector<bool> visited(total, false);
         std::vector<size_t> order;
         order.reserve(covered_tiles.size());
-        size_t total_misses = 0;
         const ankerl::unordered_dense::set<size_t> *last_cams = nullptr;
 
         auto visit = [&](size_t tile_idx) {
@@ -96,11 +95,7 @@ std::pair<std::vector<std::pair<int, int>>, size_t> cacheAwareSearch(const TileC
             {
                 last_cams = &it->second;
                 for (size_t cam : it->second)
-                {
-                    if (!cache.contains(cam))
-                        total_misses++;
                     cache.touch(cam);
-                }
             }
             else
             {
@@ -171,7 +166,7 @@ std::pair<std::vector<std::pair<int, int>>, size_t> cacheAwareSearch(const TileC
             visit(best_tile);
         }
 
-        return {std::move(order), total_misses};
+        return order;
     };
 
     size_t start_tile = covered_tiles[0];
@@ -186,7 +181,7 @@ std::pair<std::vector<std::pair<int, int>>, size_t> cacheAwareSearch(const TileC
         }
     }
 
-    auto [best_order, best_misses] = greedySearch(start_tile);
+    auto best_order = greedySearch(start_tile);
 
     std::vector<std::pair<int, int>> result;
     result.reserve(total);
@@ -197,30 +192,53 @@ std::pair<std::vector<std::pair<int, int>>, size_t> cacheAwareSearch(const TileC
         result.push_back(
             {static_cast<int>(tile_idx % params.num_tiles_x), static_cast<int>(tile_idx / params.num_tiles_x)});
 
-    return {std::move(result), best_misses};
+    return result;
 }
 
-size_t simulateCacheMisses(const std::vector<std::pair<int, int>> &tile_order, const TileCameraMap &tile_cameras,
-                           const TileOrderingParams &params)
+struct LoadCost
 {
-    LRUCache cache(params.cache_size);
-    size_t misses = 0;
+    size_t stalled = 0;
+    size_t total = 0;
 
-    for (const auto &[tx, ty] : tile_order)
+    bool operator<=(const LoadCost &other) const
     {
-        size_t tile_idx = static_cast<size_t>(ty) * params.num_tiles_x + tx;
-        auto it = tile_cameras.find(tile_idx);
+        return std::tie(stalled, total) <= std::tie(other.stalled, other.total);
+    }
+};
+
+LoadCost simulateLoadCost(const std::vector<std::pair<int, int>> &tile_order, const TileCameraMap &tile_cameras,
+                          const TileOrderingParams &params)
+{
+    ImageUseSchedule schedule(tile_order, tile_cameras, params.num_tiles_x);
+    ankerl::unordered_dense::set<size_t> cache;
+    size_t stalled = 0;
+    size_t loads = 0;
+
+    for (size_t i = 0; i < tile_order.size(); i++)
+    {
+        auto it = tile_cameras.find(schedule.tileIndex(tile_order[i]));
         if (it == tile_cameras.end())
             continue;
 
+        size_t misses = 0;
         for (size_t cam : it->second)
         {
-            if (!cache.contains(cam))
-                misses++;
-            cache.touch(cam);
+            if (cache.contains(cam))
+                continue;
+            misses++;
+            if (cache.size() >= params.cache_size)
+            {
+                auto victim = std::max_element(cache.begin(), cache.end(), [&](size_t a, size_t b) {
+                    return schedule.nextUse(a, i) < schedule.nextUse(b, i);
+                });
+                cache.erase(victim);
+            }
+            cache.insert(cam);
         }
+        loads += misses;
+        stalled += misses > params.free_loads_per_tile ? misses - params.free_loads_per_tile : 0;
     }
-    return misses;
+    return {stalled, loads};
 }
 
 } // namespace
@@ -250,6 +268,56 @@ std::vector<std::pair<int, int>> hilbertTileOrder(int num_tiles_x, int num_tiles
     return result;
 }
 
+ImageUseSchedule::ImageUseSchedule(const std::vector<std::pair<int, int>> &tile_order,
+                                   const TileCameraMap &tile_cameras, int num_tiles_x)
+    : num_tiles_x_(num_tiles_x)
+{
+    for (size_t i = 0; i < tile_order.size(); i++)
+    {
+        auto it = tile_cameras.find(tileIndex(tile_order[i]));
+        if (it == tile_cameras.end())
+            continue;
+        for (size_t cam : it->second)
+            uses_[cam].push_back(i);
+    }
+}
+
+size_t ImageUseSchedule::nextUse(size_t cam, size_t position) const
+{
+    auto it = uses_.find(cam);
+    if (it == uses_.end())
+        return SIZE_MAX;
+    auto next = std::lower_bound(it->second.begin(), it->second.end(), position);
+    return next == it->second.end() ? SIZE_MAX : *next;
+}
+
+size_t ImageUseSchedule::tileIndex(const std::pair<int, int> &tile) const
+{
+    return static_cast<size_t>(tile.second) * num_tiles_x_ + tile.first;
+}
+
+size_t computeImageCacheSize(const TileCameraMap &tile_cameras)
+{
+    constexpr size_t kMedianMultiple = 5;
+    constexpr size_t kMinSize = 10;
+    constexpr size_t kMaxSize = 64;
+
+    std::vector<size_t> counts;
+    counts.reserve(tile_cameras.size());
+    for (const auto &[tile, cams] : tile_cameras)
+        if (!cams.empty())
+            counts.push_back(cams.size());
+    if (counts.empty())
+        return kMinSize;
+
+    auto mid = counts.begin() + static_cast<std::ptrdiff_t>(counts.size() / 2);
+    std::nth_element(counts.begin(), mid, counts.end());
+    size_t max_count = *std::max_element(counts.begin(), counts.end());
+
+    size_t size = std::max({kMedianMultiple * *mid, 2 * max_count, kMinSize});
+    return std::min(size, kMaxSize);
+}
+
 std::vector<std::pair<int, int>> computeCacheAwareTileOrder(const TileCameraMap &tile_cameras,
                                                             const TileOrderingParams &params)
 {
@@ -257,13 +325,17 @@ std::vector<std::pair<int, int>> computeCacheAwareTileOrder(const TileCameraMap 
     if (total == 0)
         return {};
 
-    auto [greedy, greedy_misses] = cacheAwareSearch(tile_cameras, params);
+    auto greedy = cacheAwareSearch(tile_cameras, params);
+    auto greedy_cost = simulateLoadCost(greedy, tile_cameras, params);
     auto hilbert = hilbertTileOrder(params.num_tiles_x, params.num_tiles_y);
 
-    size_t hilbert_misses = simulateCacheMisses(hilbert, tile_cameras, params);
+    auto hilbert_cost = simulateLoadCost(hilbert, tile_cameras, params);
 
-    spdlog::debug("tile ordering: greedy={}, hilbert={}", greedy_misses, hilbert_misses);
-    return greedy_misses <= hilbert_misses ? std::move(greedy) : std::move(hilbert);
+    spdlog::info("Tile ordering: cache {} images, {} free loads/tile, simulated stalled/total loads greedy={}/{}, "
+                 "hilbert={}/{}",
+                 params.cache_size, params.free_loads_per_tile, greedy_cost.stalled, greedy_cost.total,
+                 hilbert_cost.stalled, hilbert_cost.total);
+    return greedy_cost <= hilbert_cost ? std::move(greedy) : std::move(hilbert);
 }
 
 } // namespace opencalibration

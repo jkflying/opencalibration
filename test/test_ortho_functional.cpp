@@ -1,3 +1,4 @@
+#include <opencalibration/distort/distort_keypoints.hpp>
 #include <opencalibration/geo_coord/geo_coord.hpp>
 #include <opencalibration/io/serialize.hpp>
 #include <opencalibration/ortho/blending.hpp>
@@ -16,6 +17,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <sstream>
 
 using namespace opencalibration;
@@ -78,6 +80,57 @@ TEST(ImageCache, lru_eviction)
     EXPECT_EQ(cache.getCacheMisses(), 4); // 3 initial loads + 1 reload of evicted image
 
     // Clean up not needed - output directory is for test artifacts
+}
+
+TEST(ImageCache, next_use_eviction_and_prefetch_admission)
+{
+    // GIVEN: a cache of size 2 where image i is next needed at position i, holding images 1 and 3
+    FullResolutionImageCache cache(2);
+    cache.setNextUse([](size_t node_id) { return node_id; });
+    std::vector<std::string> image_paths;
+    for (int i = 0; i < 4; i++)
+    {
+        std::string path = TEST_DATA_OUTPUT_DIR "test_next_use_image_" + std::to_string(i) + ".png";
+        cv::imwrite(path, cv::Mat(10, 10, CV_8UC3, cv::Scalar(i, i, i)));
+        image_paths.push_back(path);
+    }
+    cache.getImage(1, image_paths[1]);
+    cache.getImage(3, image_paths[3]);
+
+    // WHEN: prefetching image 3's successor, which is needed later than everything cached
+    // THEN: it is rejected without loading
+    EXPECT_FALSE(cache.tryPrefetch(4, image_paths[3]));
+    EXPECT_EQ(cache.getCacheMisses(), 2);
+
+    // WHEN: prefetching image 2, needed before image 3
+    // THEN: it is loaded, evicting image 3 rather than the less recently used image 1
+    EXPECT_TRUE(cache.tryPrefetch(2, image_paths[2]));
+    cache.getImage(1, image_paths[1]);
+    cache.getImage(2, image_paths[2]);
+    EXPECT_EQ(cache.getCacheHits(), 2);
+    cache.getImage(3, image_paths[3]);
+    EXPECT_EQ(cache.getCacheMisses(), 3);
+}
+
+TEST(ImageCache, prefetch_without_schedule_only_fills_free_space)
+{
+    // GIVEN: a cache of size 1 with no next-use schedule
+    FullResolutionImageCache cache(1);
+    std::string path = TEST_DATA_OUTPUT_DIR "test_prefetch_no_schedule.png";
+    cv::imwrite(path, cv::Mat(10, 10, CV_8UC3, cv::Scalar(1, 2, 3)));
+
+    // WHEN: prefetching into the empty cache
+    // THEN: the image is loaded
+    EXPECT_TRUE(cache.tryPrefetch(1, path));
+    EXPECT_EQ(cache.getCacheMisses(), 0);
+    cache.getImage(1, path);
+    EXPECT_EQ(cache.getCacheHits(), 1);
+
+    // WHEN: prefetching another image into the full cache
+    // THEN: it is rejected and the cached image is kept
+    EXPECT_FALSE(cache.tryPrefetch(2, path));
+    cache.getImage(1, path);
+    EXPECT_EQ(cache.getCacheHits(), 2);
 }
 
 TEST(ImageCache, clear)
@@ -391,6 +444,99 @@ TEST_F(ortho, geotiff_small_tile_size)
     EXPECT_EQ(ds_wrapper.GetRasterCount(), 4);
 
     // Clean up not needed - output directory is for test artifacts
+}
+
+TEST_F(ortho, layered_geotiff_assigns_nearest_visible_camera_per_pixel)
+{
+    // GIVEN: a scene with images and a surface, split into several tiles and blocks
+    init_cameras();
+
+    surface_model points_surface;
+    points_surface.cloud.push_back(generate_planar_points());
+    point_cloud camera_locations;
+    for (const auto &nodePose : nodePoses)
+        camera_locations.push_back(nodePose.position);
+    surface_model mesh_surface;
+    mesh_surface.mesh = rebuildMesh(camera_locations, {points_surface});
+
+    for (int i = 0; i < 3; i++)
+    {
+        std::string path = TEST_DATA_OUTPUT_DIR "test_nearest_camera_" + std::to_string(i) + ".png";
+        cv::imwrite(path, cv::Mat(100, 100, CV_8UC3, cv::Scalar(i * 80, 100, 200)));
+        graph.getNode(id[i])->payload.path = path;
+    }
+
+    GeoCoord coord_system;
+    coord_system.setOrigin(0, 0);
+    std::string prefix = TEST_DATA_OUTPUT_DIR "test_nearest_camera";
+    OrthoMosaicConfig config;
+    config.tile_size = 64;
+
+    // WHEN: generating the layered GeoTIFF
+    generateLayeredGeoTIFF({mesh_surface}, graph, coord_system, prefix + ".layers.tif", prefix + ".cameras.tif",
+                           prefix + ".dsm.tif", config);
+
+    // THEN: every pixel's first layer comes from the XY-nearest camera that sees it, with no block pattern
+    GDALDatasetPtr cameras_ds(GDALOpen((prefix + ".cameras.tif").c_str(), GA_ReadOnly));
+    GDALDatasetPtr dsm_ds(GDALOpen((prefix + ".dsm.tif").c_str(), GA_ReadOnly));
+    ASSERT_NE(cameras_ds.get(), nullptr);
+    ASSERT_NE(dsm_ds.get(), nullptr);
+
+    GDALDatasetWrapper cameras_wrapper(cameras_ds.get());
+    const int w = cameras_wrapper.GetRasterXSize();
+    const int h = cameras_wrapper.GetRasterYSize();
+    ASSERT_GT(w, config.tile_size);
+    double geotransform[6];
+    ASSERT_EQ(GDALGetGeoTransform(cameras_ds.get(), geotransform), CE_None);
+
+    std::vector<uint32_t> lo(w * h), hi(w * h);
+    std::vector<float> dsm(w * h);
+    ASSERT_EQ(GDALRasterBandWrapper(GDALGetRasterBand(cameras_ds.get(), 1))
+                  .RasterIO(GF_Read, 0, 0, w, h, lo.data(), w, h, GDT_UInt32, 0, 0),
+              CE_None);
+    ASSERT_EQ(GDALRasterBandWrapper(GDALGetRasterBand(cameras_ds.get(), 2))
+                  .RasterIO(GF_Read, 0, 0, w, h, hi.data(), w, h, GDT_UInt32, 0, 0),
+              CE_None);
+    ASSERT_EQ(GDALRasterBandWrapper(GDALGetRasterBand(dsm_ds.get(), 1))
+                  .RasterIO(GF_Read, 0, 0, w, h, dsm.data(), w, h, GDT_Float32, 0, 0),
+              CE_None);
+
+    auto sees = [&](int cam, const Eigen::Vector3d &point) {
+        const Eigen::Matrix3d inv_rotation = ground_ori[cam].inverse().toRotationMatrix();
+        if ((inv_rotation * (point - ground_pos[cam])).z() <= 0)
+            return false;
+        Eigen::Vector2d pixel = image_from_3d(point, *model, ground_pos[cam], inv_rotation);
+        return pixel.x() >= 0 && pixel.x() < model->pixels_cols && pixel.y() >= 0 && pixel.y() < model->pixels_rows;
+    };
+
+    std::set<size_t> assigned_cameras;
+    int mismatches = 0;
+    for (int row = 0; row < h; row++)
+    {
+        for (int col = 0; col < w; col++)
+        {
+            const int i = row * w + col;
+            if (std::isnan(dsm[i]))
+                continue;
+            const Eigen::Vector3d point(geotransform[0] + col * geotransform[1],
+                                        geotransform[3] + row * geotransform[5], dsm[i]);
+
+            std::array<int, 3> order{0, 1, 2};
+            std::sort(order.begin(), order.end(), [&](int l, int r) {
+                return (ground_pos[l] - point).head<2>().squaredNorm() <
+                       (ground_pos[r] - point).head<2>().squaredNorm();
+            });
+            auto nearest = std::find_if(order.begin(), order.end(), [&](int cam) { return sees(cam, point); });
+
+            const size_t actual = static_cast<size_t>(lo[i]) | (static_cast<size_t>(hi[i]) << 32);
+            const size_t expected = nearest == order.end() ? 0 : id[*nearest];
+            assigned_cameras.insert(actual);
+            if (actual != expected)
+                mismatches++;
+        }
+    }
+    EXPECT_EQ(assigned_cameras, (std::set<size_t>{0, id[0], id[1], id[2]}));
+    EXPECT_EQ(mismatches, 0);
 }
 
 TEST_F(ortho, geotiff_respects_max_megapixel_limit)

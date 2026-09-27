@@ -2,6 +2,7 @@
 
 #include <ankerl/unordered_dense.h>
 #include <condition_variable>
+#include <functional>
 #include <mutex>
 #include <opencv2/opencv.hpp>
 #include <string>
@@ -27,12 +28,19 @@ class FullResolutionImageCache
     mutable std::condition_variable cv_;
     size_t cache_hits_ = 0;
     size_t cache_misses_ = 0;
+    std::function<size_t(size_t)> next_use_;
+
+    cv::Mat loadAndInsert(std::unique_lock<std::mutex> &lock, size_t node_id, const std::string &path);
 
   public:
     explicit FullResolutionImageCache(size_t max_size = 10);
 
     // Load image from path (uses cache if available)
     cv::Mat getImage(size_t node_id, const std::string &path);
+
+    bool tryPrefetch(size_t node_id, const std::string &path);
+
+    void setNextUse(std::function<size_t(size_t node_id)> next_use);
 
     // Clear entire cache (between tiles)
     void clear();
