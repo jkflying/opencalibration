@@ -1,5 +1,6 @@
 #include <opencalibration/relax/relax_problem.hpp>
 
+#include <Eigen/Eigenvalues>
 #include <Eigen/SparseCore>
 #include <Eigen/SparseQR>
 #include <opencalibration/relax/autodiff_cost_function.hpp>
@@ -10,15 +11,100 @@
 
 #include "ceres_log_forwarding.cpp.inc"
 
+#include <omp.h>
 #include <opencalibration/distort/invert_distortion.hpp>
 #include <opencalibration/types/union_find.hpp>
+#include <optional>
 #include <thread>
 
 namespace opencalibration
 {
 
-constexpr double GPS_HORIZONTAL_SIGMA_METERS = 2.0;
-constexpr double GPS_VERTICAL_SIGMA_METERS = 4.0;
+constexpr double GPS_HORIZONTAL_SIGMA_METERS = 2.1;
+constexpr double GPS_VERTICAL_SIGMA_METERS = 4.2;
+
+namespace
+{
+double inverseSigma(const CameraModel &model)
+{
+    return model.focal_length_pixels / RAY_PIXEL_SIGMA;
+}
+
+double meanInverseSigma(const MeasurementGraph &graph, const std::vector<NodePose> &nodes)
+{
+    double sum = 0;
+    size_t count = 0;
+    for (const auto &n : nodes)
+        if (const auto *node = graph.getNode(n.node_id); node != nullptr && node->payload.model)
+        {
+            sum += inverseSigma(*node->payload.model);
+            count++;
+        }
+    return count > 0 ? sum / count : 1.0;
+}
+
+struct WorldRay
+{
+    Eigen::Vector3d loc, dir;
+    double inverse_sigma;
+};
+
+double chi2Quantile(int dof, double z)
+{
+    const double a = 2.0 / (9.0 * dof);
+    return dof * std::pow(1 - a + z * std::sqrt(a), 3);
+}
+constexpr double Z_3_SIGMA = 2.782;
+
+std::optional<Eigen::Vector3d> confidentPoint(const std::vector<WorldRay> &rays)
+{
+    constexpr double MAX_EXTENT_FRACTION = 0.1;
+    if (rays.size() < 2)
+        return std::nullopt;
+
+    std::vector<double> range(rays.size(), 1.0);
+    Eigen::Matrix3d info;
+    Eigen::Vector3d p;
+    for (int iter = 0; iter < 2; iter++)
+    {
+        info.setZero();
+        Eigen::Vector3d b = Eigen::Vector3d::Zero();
+        for (size_t i = 0; i < rays.size(); i++)
+        {
+            const auto &r = rays[i];
+            const Eigen::Matrix3d P = (Eigen::Matrix3d::Identity() - r.dir * r.dir.transpose()) *
+                                      (r.inverse_sigma * r.inverse_sigma / (range[i] * range[i]));
+            info += P;
+            b += P * r.loc;
+        }
+        p = info.ldlt().solve(b);
+        for (size_t i = 0; i < rays.size(); i++)
+        {
+            range[i] = rays[i].dir.dot(p - rays[i].loc);
+            if (!(range[i] > 0))
+                return std::nullopt;
+        }
+    }
+
+    double chi2 = 0, mean_range = 0;
+    for (size_t i = 0; i < rays.size(); i++)
+    {
+        const Eigen::Vector3d off = p - rays[i].loc;
+        chi2 += (off - rays[i].dir * range[i]).squaredNorm() * std::pow(rays[i].inverse_sigma / range[i], 2);
+        mean_range += range[i] / rays.size();
+    }
+    const int dof = 2 * static_cast<int>(rays.size()) - 3;
+    if (chi2 > chi2Quantile(dof, Z_3_SIGMA))
+        return std::nullopt;
+
+    const double min_info =
+        Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d>(info, Eigen::EigenvaluesOnly).eigenvalues()(0);
+    const double max_variance = std::max(1.0, chi2 / dof) / min_info;
+    if (!(min_info > 0) || 3 * std::sqrt(max_variance) > MAX_EXTENT_FRACTION * mean_range)
+        return std::nullopt;
+    return p;
+}
+} // namespace
 
 RelaxProblem::RelaxProblem()
     : _loss(new ceres::TrivialLoss(), ceres::TAKE_OWNERSHIP),
@@ -31,7 +117,7 @@ RelaxProblem::RelaxProblem()
     _problemOptions.manifold_ownership = ceres::DO_NOT_TAKE_OWNERSHIP;
     _problem.reset(new ceres::Problem(_problemOptions));
 
-    _solver_options.num_threads = 1;
+    _solver_options.num_threads = std::max(1, omp_get_num_procs() / omp_get_num_threads());
     _solver_options.linear_solver_type = ceres::SPARSE_NORMAL_CHOLESKY;
     _solver_options.max_num_iterations = 100;
     _solver_options.use_nonmonotonic_steps = false;
@@ -69,7 +155,7 @@ void RelaxProblem::setupGroundPlaneProblem(const MeasurementGraph &graph, std::v
 {
     initialize(nodes, cam_models);
     initializeGroundPlane();
-    _loss.Reset(new ceres::HuberLoss(1 * M_PI / 180), ceres::TAKE_OWNERSHIP);
+    _prior_scale = meanInverseSigma(graph, nodes);
     gridFilterMatchesPerImage(graph, edges_to_optimize, 0.15);
 
     for (size_t edge_id : edges_to_optimize)
@@ -82,7 +168,7 @@ void RelaxProblem::setupGroundPlaneProblem(const MeasurementGraph &graph, std::v
     }
 
     addDownwardsPrior(options);
-    addGPSPositionPrior(graph, options, false);
+    addGPSPositionPrior(graph, options);
 }
 
 void RelaxProblem::setupGroundMeshProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
@@ -93,7 +179,7 @@ void RelaxProblem::setupGroundMeshProblem(const MeasurementGraph &graph, std::ve
 {
     initialize(nodes, cam_models);
     initializeGroundMesh(previousSurfaces, options.get(Option::MINIMAL_MESH));
-    _loss.Reset(new ceres::HuberLoss(1 * M_PI / 180), ceres::TAKE_OWNERSHIP);
+    _prior_scale = meanInverseSigma(graph, nodes);
 
     // Phase 1: collect track data from all edges (unfiltered)
     for (size_t edge_id : edges_to_optimize)
@@ -119,7 +205,7 @@ void RelaxProblem::setupGroundMeshProblem(const MeasurementGraph &graph, std::ve
         }
     }
 
-    addGPSPositionPrior(graph, options, false);
+    addGPSPositionPrior(graph, options);
     addMeshFlatPrior();
     addMeshSmoothPrior();
     addMonotonicityCosts();
@@ -144,7 +230,7 @@ void RelaxProblem::setup3dPointProblem(const MeasurementGraph &graph, std::vecto
         }
     }
 
-    addGPSPositionPrior(graph, options, true);
+    addGPSPositionPrior(graph, options);
     addMonotonicityCosts();
 
     _solver_options.max_num_iterations = 1000;
@@ -157,7 +243,7 @@ void RelaxProblem::setupTriangulatedRaysProblem(const MeasurementGraph &graph, s
                                                 const RelaxOptionSet &options)
 {
     initialize(nodes, cam_models);
-    _loss.Reset(new ceres::HuberLoss(0.2 * M_PI / 180), ceres::TAKE_OWNERSHIP);
+    _prior_scale = meanInverseSigma(graph, nodes);
 
     for (size_t edge_id : edges_to_optimize)
     {
@@ -178,7 +264,7 @@ void RelaxProblem::setupTriangulatedRaysProblem(const MeasurementGraph &graph, s
         }
     }
 
-    addGPSPositionPrior(graph, options, false);
+    addGPSPositionPrior(graph, options);
 }
 
 void RelaxProblem::addTriangulatedRaysCost(const MeasurementGraph &graph, size_t edge_id,
@@ -204,13 +290,14 @@ void RelaxProblem::addTriangulatedRaysCost(const MeasurementGraph &graph, size_t
         if (coveredByMultiRayTracks(edge, inlier, *pkg.source.model_ptr, *pkg.dest.model_ptr))
             continue;
 
-        _problem->AddResidualBlock(
+        addRayBlock(
             newAutoDiffTriangulatedReprojectionCost(
                 {image_to_3d(inlier.pixel_1, *pkg.source.model_ptr), image_to_3d(inlier.pixel_2, *pkg.dest.model_ptr)},
                 !options.hasAll({Option::POSITION})
                     ? std::vector<Eigen::Vector3d>{*pkg.source.loc_ptr, *pkg.dest.loc_ptr}
-                    : std::vector<Eigen::Vector3d>{}),
-            &_loss, pkg.source.pose_ptr, pkg.dest.pose_ptr);
+                    : std::vector<Eigen::Vector3d>{},
+                {inverseSigma(*pkg.source.model_ptr), inverseSigma(*pkg.dest.model_ptr)}),
+            1, {pkg.source.pose_ptr, pkg.dest.pose_ptr});
         points_added = true;
     }
 
@@ -485,6 +572,8 @@ void RelaxProblem::collectEdgeTracks(const MeasurementGraph &graph, size_t edge_
         nifi[1].feature_index = inlier.feature_index_2;
         points.emplace_back(
             FeatureTrack{sourceDestIntersection.first, sourceDestIntersection.second, {nifi[0], nifi[1]}});
+        _measurement_rays.try_emplace(nifi[0], MeasurementRay{sourceRay.dir, inverseSigma(source_model)});
+        _measurement_rays.try_emplace(nifi[1], MeasurementRay{destRay.dir, inverseSigma(dest_model)});
     }
 }
 
@@ -594,10 +683,10 @@ void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, 
             std::unique_ptr<ceres::CostFunction> func(newAutoDiffPlaneIntersectionAngleCost_FocalRadial(
                 inlier.pixel_1, inlier.pixel_2, corner2d[0], corner2d[1], corner2d[2], inverse_iter->second));
 
-            _problem->AddResidualBlock(func.release(), &_loss, datas[0], datas[1], zValues[0], zValues[1], zValues[2],
-                                       &inverse_iter->second.focal_length_pixels,
-                                       inverse_iter->second.principle_point.data(),
-                                       inverse_iter->second.radial_distortion.data());
+            addRayBlock(func.release(), 2,
+                        {datas[0], datas[1], zValues[0], zValues[1], zValues[2],
+                         &inverse_iter->second.focal_length_pixels, inverse_iter->second.principle_point.data(),
+                         inverse_iter->second.radial_distortion.data()});
             _problem->SetParameterLowerBound(&inverse_iter->second.focal_length_pixels, 0, 100.0);
             _problem->SetParameterUpperBound(&inverse_iter->second.focal_length_pixels, 0, 20000.0);
             if (!options.hasAny(RelaxOptionSet{Option::FOCAL_LENGTH}))
@@ -615,10 +704,11 @@ void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, 
         }
         else
         {
-            std::unique_ptr<ceres::CostFunction> func(newAutoDiffPlaneIntersectionAngleCost(
-                sourceRay.dir, destRay.dir, corner2d[0], corner2d[1], corner2d[2]));
+            std::unique_ptr<ceres::CostFunction> func(
+                newAutoDiffPlaneIntersectionAngleCost(sourceRay.dir, destRay.dir, corner2d[0], corner2d[1], corner2d[2],
+                                                      {inverseSigma(source_model), inverseSigma(dest_model)}));
 
-            _problem->AddResidualBlock(func.release(), &_loss, datas[0], datas[1], zValues[0], zValues[1], zValues[2]);
+            addRayBlock(func.release(), 2, {datas[0], datas[1], zValues[0], zValues[1], zValues[2]});
             points_added = true;
         }
     }
@@ -699,8 +789,8 @@ void RelaxProblem::addMultiRayTrackCosts(const MeasurementGraph &graph, const Re
             const auto &model = *node->payload.model;
             const auto &pixel = node->payload.features[m.feature_index].location;
 
-            rays.push_back(TrackRay{m.node_id, m.feature_index, model.id, *po.loc_ptr, image_to_3d(pixel, model),
-                                   pixel, *po.rot_ptr, po.pose_ptr, po.optimize});
+            rays.push_back(TrackRay{m.node_id, m.feature_index, model.id, *po.loc_ptr, image_to_3d(pixel, model), pixel,
+                                    *po.rot_ptr, po.pose_ptr, po.optimize, inverseSigma(model)});
         }
     }
 
@@ -889,19 +979,21 @@ std::vector<TrackRay> RelaxProblem::addMeshTrackCost(const MeasurementGraph &gra
         for (int i = 0; i < 3; i++)
             param_blocks.push_back(zValues[i]);
         std::vector<Eigen::Vector3d> camera_rays;
+        std::vector<double> inverse_sigmas;
         for (int i = 0; i < N; i++)
         {
             param_blocks.push_back(good_rays[i].pose_ptr);
             camera_rays.push_back(good_rays[i].camera_ray);
+            inverse_sigmas.push_back(good_rays[i].inverse_sigma);
         }
 
-        cost = newAutoDiffPlaneIntersectionAngleCost_NRay(camera_rays, corner2d);
+        cost = newAutoDiffPlaneIntersectionAngleCost_NRay(camera_rays, corner2d, inverse_sigmas);
     }
 
     if (cost == nullptr)
         return {};
 
-    _problem->AddResidualBlock(cost, nullptr, param_blocks);
+    addRayBlock(cost, 2 * N - 2, param_blocks);
 
     if (inv_model_ptr != nullptr)
     {
@@ -965,16 +1057,18 @@ std::vector<TrackRay> RelaxProblem::addTriangulatedTrackCost(const std::vector<T
         return {};
 
     std::vector<Eigen::Vector3d> camera_rays, camera_positions;
+    std::vector<double> inverse_sigmas;
     std::vector<double *> param_blocks;
     for (const auto &r : good_rays)
     {
         camera_rays.push_back(r.camera_ray);
+        inverse_sigmas.push_back(r.inverse_sigma);
         if (fix_positions)
             camera_positions.push_back(r.camera_loc);
         param_blocks.push_back(r.pose_ptr);
     }
-    _problem->AddResidualBlock(newAutoDiffTriangulatedReprojectionCost(camera_rays, camera_positions), &_loss,
-                               param_blocks);
+    addRayBlock(newAutoDiffTriangulatedReprojectionCost(camera_rays, camera_positions, inverse_sigmas),
+                2 * static_cast<int>(good_rays.size()) - 3, param_blocks);
     return good_rays;
 }
 
@@ -1082,6 +1176,10 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
         nifi[1].node_id = edge.getDest();
         nifi[1].feature_index = inlier.feature_index_2;
         points.emplace_back(FeatureTrack{intersection.first, intersection.second, {nifi[0], nifi[1]}});
+        _measurement_rays.try_emplace(
+            nifi[0], MeasurementRay{image_to_3d(inlier.pixel_1, source_model), inverseSigma(source_model)});
+        _measurement_rays.try_emplace(
+            nifi[1], MeasurementRay{image_to_3d(inlier.pixel_2, dest_model), inverseSigma(dest_model)});
 
         // add cost functions for this 3D point from both the source and dest camera
         std::unique_ptr<ceres::CostFunction> func[2];
@@ -1362,14 +1460,13 @@ void RelaxProblem::addDownwardsPrior(const RelaxOptionSet &options)
         if (!p.second->orientation.coeffs().hasNaN() && !p.second->position.hasNaN())
         {
             double *d = poseBlock(p.first, p.second->orientation, p.second->position);
-            _problem->AddResidualBlock(newAutoDiffPointsDownwardsPrior(1e-3), nullptr, d);
+            _problem->AddResidualBlock(newAutoDiffPointsDownwardsPrior(1e-3 * _prior_scale), nullptr, d);
             setPoseParameterization(d, true, options);
         }
     }
 }
 
-void RelaxProblem::addGPSPositionPrior(const MeasurementGraph &graph, const RelaxOptionSet &options,
-                                       bool pixel_residuals)
+void RelaxProblem::addGPSPositionPrior(const MeasurementGraph &graph, const RelaxOptionSet &options)
 {
     if (!options.hasAll({Option::POSITION}))
         return;
@@ -1388,11 +1485,10 @@ void RelaxProblem::addGPSPositionPrior(const MeasurementGraph &graph, const Rela
         std::vector<ceres::ResidualBlockId> image_measurements;
         _problem->GetResidualBlocksForParameterBlock(pose_block, &image_measurements);
 
-        const double one_pixel = pixel_residuals ? 1.0 : 1.0 / node->payload.model->focal_length_pixels;
-        const double one_pixel_rms = one_pixel * std::sqrt(static_cast<double>(image_measurements.size()));
+        const double weight = std::sqrt(static_cast<double>(image_measurements.size()));
         _problem->AddResidualBlock(newAutoDiffGPSPositionPrior(node->payload.gps_position,
-                                                               one_pixel_rms / GPS_HORIZONTAL_SIGMA_METERS,
-                                                               one_pixel_rms / GPS_VERTICAL_SIGMA_METERS),
+                                                               weight / GPS_HORIZONTAL_SIGMA_METERS,
+                                                               weight / GPS_VERTICAL_SIGMA_METERS),
                                    nullptr, pose_block);
     }
 }
@@ -1410,7 +1506,7 @@ void RelaxProblem::addMeshFlatPrior()
         double *h1 = &sourceNode->payload.location.z();
         double *h2 = &destNode->payload.location.z();
 
-        _problem->AddResidualBlock(newAutoDiffDifferenceCost(1e-4), nullptr, h1, h2);
+        _problem->AddResidualBlock(newAutoDiffDifferenceCost(1e-4 * _prior_scale), nullptr, h1, h2);
     }
 
     // Anchor to initial z to prevent gauge freedom drift
@@ -1424,7 +1520,7 @@ void RelaxProblem::addMeshFlatPrior()
     for (auto iter = _mesh.nodebegin(); iter != _mesh.nodeend(); ++iter, ++i)
     {
         double *h = &iter->second.payload.location.z();
-        _problem->AddResidualBlock(newAutoDiffDifferenceCost(1e-5), nullptr, h, &_mesh_initial_z[i]);
+        _problem->AddResidualBlock(newAutoDiffDifferenceCost(1e-5 * _prior_scale), nullptr, h, &_mesh_initial_z[i]);
         _problem->SetParameterBlockConstant(&_mesh_initial_z[i]);
     }
 }
@@ -1457,8 +1553,8 @@ void RelaxProblem::addMeshSmoothPrior()
         double *zC = &nodeC->payload.location.z();
         double *zD = &nodeD->payload.location.z();
 
-        _problem->AddResidualBlock(newAutoDiffAdjacentTriangleNormalCost(xyA, xyB, xyC, xyD, 1e-4), nullptr, zA, zB, zC,
-                                   zD);
+        _problem->AddResidualBlock(newAutoDiffAdjacentTriangleNormalCost(xyA, xyB, xyC, xyD, 1e-4 * _prior_scale),
+                                   nullptr, zA, zB, zC, zD);
     }
 }
 
@@ -1479,9 +1575,39 @@ void RelaxProblem::addMonotonicityCosts()
 {
     for (auto &[radial_data, info] : _radial_monotonicity_info)
     {
-        double weight = std::sqrt(info.observation_count / 10.0);
+        double weight = std::sqrt(info.observation_count / 10.0) * _prior_scale;
         _problem->AddResidualBlock(newAutoDiffDistortionMonotonicityCost(info.r_max, weight), nullptr, radial_data);
     }
+}
+
+void RelaxProblem::addRayBlock(ceres::CostFunction *cost, int dof, const std::vector<double *> &params)
+{
+    auto &loss = _ray_losses[dof];
+    if (loss == nullptr)
+        loss = std::make_unique<ceres::LossFunctionWrapper>(nullptr, ceres::TAKE_OWNERSHIP);
+    _ray_blocks.emplace_back(_problem->AddResidualBlock(cost, loss.get(), params), dof);
+}
+
+void RelaxProblem::updateRayLossScale()
+{
+    std::vector<double> variances;
+    variances.reserve(_ray_blocks.size());
+    for (const auto &[id, dof] : _ray_blocks)
+    {
+        double cost;
+        if (_problem->EvaluateResidualBlock(id, false, &cost, nullptr, nullptr))
+            variances.push_back(2 * cost / chi2Quantile(dof, 0));
+    }
+    double sigma = 1;
+    if (!variances.empty())
+    {
+        auto mid = variances.begin() + variances.size() / 2;
+        std::nth_element(variances.begin(), mid, variances.end());
+        sigma = std::max(1.0, std::sqrt(*mid));
+    }
+    for (auto &[dof, loss] : _ray_losses)
+        loss->Reset(new ceres::HuberLoss(sigma * std::sqrt(chi2Quantile(dof, Z_3_SIGMA))), ceres::TAKE_OWNERSHIP);
+    spdlog::debug("ray sigma {} from {} blocks", sigma, variances.size());
 }
 
 void RelaxProblem::solve()
@@ -1498,6 +1624,7 @@ void RelaxProblem::solve()
         return;
     }
 
+    updateRayLossScale();
     _solver.Solve(_solver_options, _problem.get(), &_summary);
     spdlog::info("Thread {} end relax: iterations {}, cost ratio {}, time {}s", thread_stream.str(),
                  _summary.iterations.size(), static_cast<float>(_summary.final_cost / _summary.initial_cost),
@@ -1554,49 +1681,36 @@ surface_model RelaxProblem::getSurfaceModel()
         }
     }
 
-    struct MergedTrack
-    {
-        std::vector<Eigen::Vector3d> points;
-        double min_error = std::numeric_limits<double>::infinity();
-        ankerl::unordered_dense::set<size_t> unique_nodes;
-    };
-
-    ankerl::unordered_dense::map<size_t, MergedTrack> merged;
+    ankerl::unordered_dense::map<size_t, ankerl::unordered_dense::map<size_t, const MeasurementRay *>> merged;
     for (size_t i = 0; i < flat_tracks.size(); i++)
     {
         const auto &t = *flat_tracks[i];
         if (!t.point.allFinite())
             continue;
 
-        size_t root = uf.find(i);
-        auto &m = merged[root];
-        m.points.push_back(t.point);
-        if (std::isfinite(t.error))
-            m.min_error = std::min(m.min_error, t.error);
+        auto &m = merged[uf.find(i)];
         for (const auto &meas : t.measurements)
-            m.unique_nodes.insert(meas.node_id);
+            if (auto r = _measurement_rays.find(meas); r != _measurement_rays.end())
+                m.try_emplace(meas.node_id, &r->second);
     }
 
     point_cloud cloud_points;
     cloud_points.reserve(merged.size());
+    std::vector<WorldRay> rays;
     for (const auto &[root, m] : merged)
     {
-        size_t num_views = m.unique_nodes.size();
-        double max_allowed_error = (num_views >= 3) ? 10.0 : 1.0;
-        if (m.min_error > max_allowed_error)
-            continue;
-
-        Eigen::Vector3d pt;
-        if (m.points.size() == 1)
+        rays.clear();
+        for (const auto &[node_id, ray] : m)
         {
-            pt = m.points[0];
+            auto block = _pose_blocks.find(node_id);
+            if (block == _pose_blocks.end())
+                continue;
+            const Eigen::Quaterniond q = Eigen::Map<const Eigen::Quaterniond>(block->second.data()).normalized();
+            rays.push_back(WorldRay{Eigen::Map<const Eigen::Vector3d>(block->second.data() + 4),
+                                    (q * ray->camera_ray).normalized(), ray->inverse_sigma});
         }
-        else
-        {
-            int n = std::min(static_cast<int>(m.points.size()), ROBUST_CENTROID_MAX_POINTS);
-            pt = robustCentroid(m.points.data(), n, 1.0);
-        }
-        cloud_points.push_back(pt);
+        if (auto pt = confidentPoint(rays))
+            cloud_points.push_back(*pt);
     }
 
     if (!cloud_points.empty())

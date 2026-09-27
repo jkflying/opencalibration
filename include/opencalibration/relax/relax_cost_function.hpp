@@ -20,6 +20,15 @@ template <typename T> T angleBetweenUnitVectors(const Eigen::Matrix<T, 3, 1> &n1
 
 static constexpr int POSE_PARAMETERS = 7;
 
+constexpr double RAY_PIXEL_SIGMA = 1.0;
+
+template <int N> std::array<double, N> unitSigmas()
+{
+    std::array<double, N> a;
+    a.fill(1);
+    return a;
+}
+
 struct PointsDownwardsPrior
 {
     static const int NUM_RESIDUALS = 1;
@@ -340,13 +349,16 @@ template <int N> struct TriangulatedReprojectionCost
     static_assert(N >= 2 && N <= 5, "N must be between 2 and 5");
     static const int NUM_RESIDUALS = N * 3;
 
-    TriangulatedReprojectionCost(const std::array<Eigen::Vector3d, N> &camera_rays) : camera_ray(camera_rays)
+    TriangulatedReprojectionCost(const std::array<Eigen::Vector3d, N> &camera_rays,
+                                 const std::array<double, N> &inverse_sigmas = unitSigmas<N>())
+        : camera_ray(camera_rays), inverse_sigma(inverse_sigmas)
     {
     }
 
     TriangulatedReprojectionCost(const std::array<Eigen::Vector3d, N> &camera_rays,
-                                 const std::array<Eigen::Vector3d, N> &camera_positions)
-        : camera_ray(camera_rays), fixed_position(camera_positions), position_fixed(true)
+                                 const std::array<Eigen::Vector3d, N> &camera_positions,
+                                 const std::array<double, N> &inverse_sigmas = unitSigmas<N>())
+        : camera_ray(camera_rays), inverse_sigma(inverse_sigmas), fixed_position(camera_positions), position_fixed(true)
     {
     }
 
@@ -414,7 +426,7 @@ template <int N> struct TriangulatedReprojectionCost
         {
             const Vector3T p_cam = QuaternionTCM(poses[i]).inverse() * (point - positions[i]);
             const Vector3T chord = p_cam.normalized() - camera_ray[i].template cast<T>().normalized();
-            Vector3TM(residuals + i * 3) = chordScaledToAngle(chord);
+            Vector3TM(residuals + i * 3) = chordScaledToAngle(chord) * T(inverse_sigma[i]);
         }
         return true;
     }
@@ -459,6 +471,7 @@ template <int N> struct TriangulatedReprojectionCost
     }
 
     const std::array<Eigen::Vector3d, N> camera_ray;
+    const std::array<double, N> inverse_sigma;
     const std::array<Eigen::Vector3d, N> fixed_position{};
     const bool position_fixed = false;
 };
@@ -705,7 +718,7 @@ template <int N> struct MultiRayPlaneIntersectionAngleCost_FocalRadial
         T huber_threshold = avg_dist * T(0.01);
         Vector3T centroid = robustCentroid(intersection, N, huber_threshold);
 
-        const T focal_scale = *focal / T(sharedModel.focal_length_pixels);
+        const T inverse_sigma = *focal / RAY_PIXEL_SIGMA;
         for (int i = 0; i < N; i++)
         {
             const QuaternionTCM rot(poses[i]);
@@ -714,12 +727,12 @@ template <int N> struct MultiRayPlaneIntersectionAngleCost_FocalRadial
             {
                 Vector2TM(residuals + i * 2) =
                     (p_cam.template head<2>() / p_cam.z() - camera_ray[i].template head<2>() / camera_ray[i].z()) *
-                    focal_scale;
+                    inverse_sigma;
             }
             else
             {
                 Vector2TM(residuals + i * 2) =
-                    (p_cam.normalized() - camera_ray[i].normalized()).template head<2>() * focal_scale;
+                    (p_cam.normalized() - camera_ray[i].normalized()).template head<2>() * inverse_sigma;
             }
         }
 
@@ -769,8 +782,9 @@ template <int N> struct MultiRayPlaneIntersectionAngleCost
     static const int NUM_RESIDUALS = N * 3;
 
     MultiRayPlaneIntersectionAngleCost(const std::array<Eigen::Vector3d, N> &camera_rays,
-                                       const std::array<Eigen::Vector2d, 3> &plane_points)
-        : camera_ray(camera_rays), plane_point(plane_points)
+                                       const std::array<Eigen::Vector2d, 3> &plane_points,
+                                       const std::array<double, N> &inverse_sigmas = unitSigmas<N>())
+        : camera_ray(camera_rays), plane_point(plane_points), inverse_sigma(inverse_sigmas)
     {
     }
 
@@ -809,7 +823,7 @@ template <int N> struct MultiRayPlaneIntersectionAngleCost
 
         for (int i = 0; i < N; i++)
         {
-            Vector3TM(residuals + i * 3) = (intersection[i] - centroid) / avg_dist;
+            Vector3TM(residuals + i * 3) = (intersection[i] - centroid) * (inverse_sigma[i] / avg_dist);
         }
 
         return all_valid;
@@ -817,6 +831,7 @@ template <int N> struct MultiRayPlaneIntersectionAngleCost
 
     const std::array<Eigen::Vector3d, N> camera_ray;
     const std::array<Eigen::Vector2d, 3> plane_point;
+    const std::array<double, N> inverse_sigma;
 };
 
 struct PlaneIntersectionAngleCost
@@ -830,8 +845,9 @@ struct PlaneIntersectionAngleCost
 
     PlaneIntersectionAngleCost(const Eigen::Vector3d &camera_ray1, const Eigen::Vector3d &camera_ray2,
                                const Eigen::Vector2d &plane_point1, const Eigen::Vector2d &plane_point2,
-                               const Eigen::Vector2d &plane_point3)
-        : _impl({camera_ray1, camera_ray2}, {{plane_point1, plane_point2, plane_point3}})
+                               const Eigen::Vector2d &plane_point3,
+                               const std::array<double, 2> &inverse_sigmas = unitSigmas<2>())
+        : _impl({camera_ray1, camera_ray2}, {{plane_point1, plane_point2, plane_point3}}, inverse_sigmas)
     {
     }
 
@@ -852,8 +868,9 @@ template <int N> struct PlaneIntersectionAngleCost_NRay
     static const int NUM_RESIDUALS = N * 3;
 
     PlaneIntersectionAngleCost_NRay(const std::array<Eigen::Vector3d, N> &rays,
-                                    const std::array<Eigen::Vector2d, 3> &plane_points)
-        : _impl(rays, plane_points)
+                                    const std::array<Eigen::Vector2d, 3> &plane_points,
+                                    const std::array<double, N> &inverse_sigmas = unitSigmas<N>())
+        : _impl(rays, plane_points, inverse_sigmas)
     {
     }
 

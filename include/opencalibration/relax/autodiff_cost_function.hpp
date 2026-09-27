@@ -17,7 +17,8 @@ ceres::CostFunction *newAutoDiffPlaneIntersectionAngleCost(const Eigen::Vector3d
                                                            const Eigen::Vector3d &camera_ray2,
                                                            const Eigen::Vector2d &plane_point1,
                                                            const Eigen::Vector2d &plane_point2,
-                                                           const Eigen::Vector2d &plane_point3);
+                                                           const Eigen::Vector2d &plane_point3,
+                                                           const std::array<double, 2> &inverse_sigmas = {1, 1});
 
 ceres::CostFunction *newAutoDiffPlaneIntersectionAngleCost_FocalRadial(
     const Eigen::Vector2d &camera_pixel1, const Eigen::Vector2d &camera_pixel2, const Eigen::Vector2d &plane_point1,
@@ -25,14 +26,16 @@ ceres::CostFunction *newAutoDiffPlaneIntersectionAngleCost_FocalRadial(
     const InverseDifferentiableCameraModel<double> &model);
 
 ceres::CostFunction *newAutoDiffPlaneIntersectionAngleCost_NRay(const std::vector<Eigen::Vector3d> &camera_rays,
-                                                                const std::array<Eigen::Vector2d, 3> &plane_points);
+                                                                const std::array<Eigen::Vector2d, 3> &plane_points,
+                                                                const std::vector<double> &inverse_sigmas = {});
 
 ceres::CostFunction *newAutoDiffPlaneIntersectionAngleCost_NRay_FocalRadial(
     const std::vector<Eigen::Vector2d> &camera_pixels, const std::array<Eigen::Vector2d, 3> &plane_points,
     const InverseDifferentiableCameraModel<double> &model);
 
 ceres::CostFunction *newAutoDiffTriangulatedReprojectionCost(const std::vector<Eigen::Vector3d> &camera_rays,
-                                                             const std::vector<Eigen::Vector3d> &camera_positions = {});
+                                                             const std::vector<Eigen::Vector3d> &camera_positions = {},
+                                                             const std::vector<double> &inverse_sigmas = {});
 
 ceres::CostFunction *newAutoDiffPixelErrorCost_Orientation(const CameraModel &camera_model,
                                                            const Eigen::Vector2d &camera_pixel);

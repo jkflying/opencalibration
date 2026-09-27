@@ -121,7 +121,7 @@ class RelaxProblem
     void initializeGroundMesh(const std::vector<surface_model> &previousSurfaces, bool useMinimalMesh = false);
 
     void addDownwardsPrior(const RelaxOptionSet &options);
-    void addGPSPositionPrior(const MeasurementGraph &graph, const RelaxOptionSet &options, bool pixel_residuals);
+    void addGPSPositionPrior(const MeasurementGraph &graph, const RelaxOptionSet &options);
     void addMeshFlatPrior();
     void addMeshSmoothPrior();
 
@@ -170,7 +170,19 @@ class RelaxProblem
     ankerl::unordered_dense::map<size_t, track_vec> _edge_tracks;
     ankerl::unordered_dense::set<NodeIdFeatureIndex, NodeIdFeatureIndex> _multi_ray_measurements;
     ankerl::unordered_dense::map<size_t, ankerl::unordered_dense::set<uint64_t>> _multi_ray_covered_cells;
+    struct MeasurementRay
+    {
+        Eigen::Vector3d camera_ray;
+        double inverse_sigma;
+    };
+    ankerl::unordered_dense::map<NodeIdFeatureIndex, MeasurementRay, NodeIdFeatureIndex> _measurement_rays;
+
+    std::vector<std::pair<ceres::ResidualBlockId, int>> _ray_blocks;
+    std::map<int, std::unique_ptr<ceres::LossFunctionWrapper>> _ray_losses;
+    void addRayBlock(ceres::CostFunction *cost, int dof, const std::vector<double *> &params);
+    void updateRayLossScale();
     double _track_grid_fraction = 0.1;
+    double _prior_scale = 1;
     MeshGraph _mesh;
     std::vector<double> _mesh_initial_z;
 };

@@ -728,6 +728,15 @@ class TestRelaxProblem : public RelaxProblem
     {
         return _grid_filter[node_id][edge_id].getBestMeasurementsPerCell().size();
     }
+
+    double test_ray_loss_delta(int dof)
+    {
+        updateRayLossScale();
+        double rho[3];
+        const double s = 1e12;
+        _ray_losses.at(dof)->Evaluate(s, rho);
+        return rho[1] * std::sqrt(s);
+    }
 };
 
 TEST_F(relax_group, measurement_3_images_plane_with_uninitialized_image)
@@ -1436,4 +1445,57 @@ TEST(RobustCentroid, single_point)
     EXPECT_NEAR(result.x(), 5.0, 1e-6);
     EXPECT_NEAR(result.y(), 3.0, 1e-6);
     EXPECT_NEAR(result.z(), 1.0, 1e-6);
+}
+
+TEST_F(relax_group, measurement_3_images_triangulated_rays_loss_widens_with_starting_residuals)
+{
+    // GIVEN: a graph, 3 images with edges between them all
+    init_cameras();
+    add_point_measurements(generate_3d_points());
+    ankerl::unordered_dense::set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
+
+    // WHEN: we set up the triangulated rays problem at the true poses, and with one camera rotated by 3 degrees
+    TestRelaxProblem exact;
+    exact.setupTriangulatedRaysProblem(graph, np, cam_models, edges, {Option::ORIENTATION, Option::TRIANGULATED_RAYS});
+    np[0].orientation = np[0].orientation * Eigen::AngleAxisd(3 * M_PI / 180, Eigen::Vector3d::UnitX());
+    TestRelaxProblem rotated;
+    rotated.setupTriangulatedRaysProblem(graph, np, cam_models, edges,
+                                         {Option::ORIENTATION, Option::TRIANGULATED_RAYS});
+
+    // THEN: the exact problem uses a 3 sigma loss for a 1 pixel sigma, and the rotated one a much wider loss
+    const int dof = 3;
+    EXPECT_NEAR(exact.test_ray_loss_delta(dof), std::sqrt(14.16), 0.05);
+    EXPECT_GT(rotated.test_ray_loss_delta(dof), 5 * exact.test_ray_loss_delta(dof));
+}
+
+TEST_F(relax_group, measurement_3_images_surface_model_rejects_inconsistent_rays)
+{
+    // GIVEN: a graph, 3 images with edges between them all
+    init_cameras();
+    auto points = generate_3d_points();
+    add_point_measurements(points);
+    ankerl::unordered_dense::set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
+
+    // WHEN: we take the surface model at the true poses, and with one camera rotated by 3 degrees
+    TestRelaxProblem exact;
+    exact.setupTriangulatedRaysProblem(graph, np, cam_models, edges, {Option::ORIENTATION, Option::TRIANGULATED_RAYS});
+    const surface_model exact_surface = exact.getSurfaceModel();
+    np[0].orientation = np[0].orientation * Eigen::AngleAxisd(3 * M_PI / 180, Eigen::Vector3d::UnitX());
+    TestRelaxProblem rotated;
+    rotated.setupTriangulatedRaysProblem(graph, np, cam_models, edges,
+                                         {Option::ORIENTATION, Option::TRIANGULATED_RAYS});
+    const surface_model rotated_surface = rotated.getSurfaceModel();
+
+    // THEN: the exact points are kept where they were observed, and the inconsistent ones dropped
+    ASSERT_EQ(exact_surface.cloud.size(), 1u);
+    EXPECT_GT(exact_surface.cloud[0].size(), points.size() / 2);
+    for (const auto &p : exact_surface.cloud[0])
+    {
+        double nearest = std::numeric_limits<double>::infinity();
+        for (const auto &q : points)
+            nearest = std::min(nearest, (p - q).norm());
+        EXPECT_LT(nearest, 1e-6);
+    }
+    const size_t rotated_points = rotated_surface.cloud.empty() ? 0 : rotated_surface.cloud[0].size();
+    EXPECT_EQ(rotated_points, 0u);
 }

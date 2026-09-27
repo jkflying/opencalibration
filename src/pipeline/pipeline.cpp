@@ -42,6 +42,7 @@ constexpr int FINAL_RELAX_MAX_ITERATIONS = 3; // final global relax
 
 void run_parallel(fvec &funcs, int parallelism)
 {
+    parallelism = std::max(1, std::min(parallelism, static_cast<int>(funcs.size())));
 #pragma omp parallel for schedule(dynamic, 1) num_threads(parallelism)
     for (int i = 0; i < (int)funcs.size(); i++) // NOLINT(modernize-loop-convert)
     {

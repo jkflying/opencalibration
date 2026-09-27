@@ -16,5 +16,6 @@ struct TrackRay
     Eigen::Quaterniond orientation;
     double *pose_ptr;
     bool optimize;
+    double inverse_sigma;
 };
 } // namespace opencalibration

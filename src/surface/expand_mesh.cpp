@@ -3,6 +3,8 @@
 #include <jk/KDTree.h>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
+
 namespace
 {
 std::array<double, 2> toArray(const Eigen::Vector2d &vec)
@@ -318,7 +320,11 @@ MeshGraph buildMinimalMesh(const point_cloud &cameraLocations, const std::vector
     auto getZ = [&](double x, double y) -> double {
         if (vertexTree.size() > 0)
         {
-            return vertexTree.search(toArray(Eigen::Vector2d(x, y))).payload;
+            std::vector<double> z;
+            for (const auto &n : vertexTree.searchKnn(toArray(Eigen::Vector2d(x, y)), 32))
+                z.push_back(n.payload);
+            std::nth_element(z.begin(), z.begin() + z.size() / 2, z.end());
+            return z[z.size() / 2];
         }
         return cameraTree.search(toArray(Eigen::Vector2d(x, y))).payload - medianHeight;
     };

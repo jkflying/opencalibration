@@ -317,3 +317,31 @@ TEST(cost_functions, triangulated_reprojection_unflips_camera)
         }
     }
 }
+
+TEST(cost_functions, triangulated_reprojection_residuals_scale_with_inverse_sigma)
+{
+    const Eigen::Quaterniond down(Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()));
+    const std::vector<Eigen::Vector3d> cams{Eigen::Vector3d(0, 0, 100), Eigen::Vector3d(20, 0, 100),
+                                            Eigen::Vector3d(0, 20, 100)};
+    const Eigen::Vector3d ground(5, 7, 0);
+
+    std::vector<Eigen::Vector3d> rays;
+    std::array<std::array<double, 7>, 3> poses;
+    for (int i = 0; i < 3; i++)
+    {
+        rays.push_back(down.inverse() * (ground - cams[i]));
+        const Eigen::Quaterniond q = down * Eigen::AngleAxisd(0.01 * (i + 1), Eigen::Vector3d::UnitY());
+        poses[i] = {q.x(), q.y(), q.z(), q.w(), cams[i].x(), cams[i].y(), cams[i].z()};
+    }
+    std::unique_ptr<ceres::CostFunction> unit(newAutoDiffTriangulatedReprojectionCost(rays));
+    std::unique_ptr<ceres::CostFunction> whitened(newAutoDiffTriangulatedReprojectionCost(rays, {}, {2, 3, 5}));
+
+    const std::array<const double *, 3> pose_ptrs{poses[0].data(), poses[1].data(), poses[2].data()};
+    Eigen::Matrix<double, 9, 1> unit_res, whitened_res;
+    ASSERT_TRUE(unit->Evaluate(pose_ptrs.data(), unit_res.data(), nullptr));
+    ASSERT_TRUE(whitened->Evaluate(pose_ptrs.data(), whitened_res.data(), nullptr));
+    EXPECT_GT(unit_res.norm(), 1e-3);
+    const std::array<double, 3> inverse_sigmas{2, 3, 5};
+    for (int i = 0; i < 3; i++)
+        EXPECT_LT((whitened_res.segment<3>(3 * i) - inverse_sigmas[i] * unit_res.segment<3>(3 * i)).norm(), 1e-12);
+}

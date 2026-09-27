@@ -1410,3 +1410,22 @@ TEST(refine_mesh, point_counts_have_one_entry_per_triangle)
         EXPECT_TRUE(triangles.insert(verts).second) << "edge " << tri.edgeId << " side " << tri.side;
     }
 }
+
+TEST(refine_mesh, minimal_mesh_ignores_outlier_heights)
+{
+    point_cloud cameras{Eigen::Vector3d(0, 0, 100), Eigen::Vector3d(50, 0, 100), Eigen::Vector3d(50, 50, 100),
+                        Eigen::Vector3d(0, 50, 100)};
+    point_cloud ground;
+    for (int x = -10; x <= 60; x += 5)
+        for (int y = -10; y <= 60; y += 5)
+            ground.emplace_back(x, y, 0);
+    const MeshGraph clean = buildMinimalMesh(cameras, {surface_model{{ground}, {}}});
+    for (auto iter = clean.cnodebegin(); iter != clean.cnodeend(); ++iter)
+        ground.emplace_back(iter->second.payload.location.x(), iter->second.payload.location.y(), 5000);
+
+    MeshGraph mesh = buildMinimalMesh(cameras, {surface_model{{ground}, {}}});
+
+    ASSERT_GT(mesh.size_nodes(), 0u);
+    for (auto iter = mesh.cnodebegin(); iter != mesh.cnodeend(); ++iter)
+        EXPECT_NEAR(iter->second.payload.location.z(), 0, 1e-9);
+}
