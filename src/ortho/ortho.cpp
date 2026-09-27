@@ -666,6 +666,7 @@ GDALDatasetPtr createGeoTIFF(const std::string &path, int width, int height, dou
     options = CSLSetNameValue(options, "COMPRESS", "DEFLATE");
     options = CSLSetNameValue(options, "PREDICTOR", "2");
     options = CSLSetNameValue(options, "PHOTOMETRIC", "RGB");
+    options = CSLSetNameValue(options, "NUM_THREADS", "ALL_CPUS");
     options = CSLSetNameValue(options, "BIGTIFF", "IF_SAFER");
     options = CSLSetNameValue(options, "SPARSE_OK", "YES");
 
@@ -755,6 +756,7 @@ GDALDatasetPtr createDSMGeoTIFF(const std::string &path, int width, int height, 
     options = CSLSetNameValue(options, "BLOCKYSIZE", "512");
     options = CSLSetNameValue(options, "COMPRESS", "DEFLATE");
     options = CSLSetNameValue(options, "PREDICTOR", "2");
+    options = CSLSetNameValue(options, "NUM_THREADS", "ALL_CPUS");
     options = CSLSetNameValue(options, "BIGTIFF", "IF_SAFER");
     options = CSLSetNameValue(options, "SPARSE_OK", "YES");
 
@@ -1699,8 +1701,10 @@ std::vector<ColorCorrespondence> generateLayeredGeoTIFF(const std::vector<surfac
     if (!overview_levels.empty())
     {
         GDALDatasetWrapper dsm_wrapper(dsm_ds.get());
+        CPLSetThreadLocalConfigOption("GDAL_NUM_THREADS", "ALL_CPUS");
         CPLErr err =
             dsm_wrapper.BuildOverviews("AVERAGE", static_cast<int>(overview_levels.size()), overview_levels.data());
+        CPLSetThreadLocalConfigOption("GDAL_NUM_THREADS", nullptr);
         if (err != CE_None)
         {
             spdlog::warn("Failed to build DSM overviews");
@@ -1990,57 +1994,55 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
                 {
                     std::lock_guard<std::mutex> lock(gdal_write_mutex);
                     writeTileToGeoTIFF(output_ds.get(), x_offset, y_offset, tw, th, rgba_buffer);
+                }
 
-                    if (tile_progress)
+                if (tile_progress)
+                {
+                    int scale = std::max(1, (std::max(tw, th) + 127) / 128);
+                    int thumb_w = (tw + scale - 1) / scale;
+                    int thumb_h = (th + scale - 1) / scale;
+
+                    RGBRaster thumbnail(thumb_h, thumb_w, 3);
+                    thumbnail.layers[0].band = Band::BLUE;
+                    thumbnail.layers[1].band = Band::GREEN;
+                    thumbnail.layers[2].band = Band::RED;
+                    thumbnail.layers[0].pixels.setZero();
+                    thumbnail.layers[1].pixels.setZero();
+                    thumbnail.layers[2].pixels.setZero();
+                    Eigen::Matrix<uint8_t, Eigen::Dynamic, Eigen::Dynamic> alpha(thumb_h, thumb_w);
+                    alpha.setZero();
+
+                    for (int ty = 0; ty < thumb_h; ty++)
                     {
-                        int scale = std::max(1, (std::max(tw, th) + 127) / 128);
-                        int thumb_w = (tw + scale - 1) / scale;
-                        int thumb_h = (th + scale - 1) / scale;
-
-                        RGBRaster thumbnail(thumb_h, thumb_w, 3);
-                        thumbnail.layers[0].band = Band::BLUE;
-                        thumbnail.layers[1].band = Band::GREEN;
-                        thumbnail.layers[2].band = Band::RED;
-                        thumbnail.layers[0].pixels.setZero();
-                        thumbnail.layers[1].pixels.setZero();
-                        thumbnail.layers[2].pixels.setZero();
-                        Eigen::Matrix<uint8_t, Eigen::Dynamic, Eigen::Dynamic> alpha(thumb_h, thumb_w);
-                        alpha.setZero();
-
-                        for (int ty = 0; ty < thumb_h; ty++)
+                        for (int tx = 0; tx < thumb_w; tx++)
                         {
-                            for (int tx = 0; tx < thumb_w; tx++)
+                            int src = std::min(ty * scale, th - 1) * tw + std::min(tx * scale, tw - 1);
+                            if (rgba_buffer[static_cast<size_t>(src) * 4 + 3] > 0)
                             {
-                                int src = std::min(ty * scale, th - 1) * tw + std::min(tx * scale, tw - 1);
-                                if (rgba_buffer[static_cast<size_t>(src) * 4 + 3] > 0)
-                                {
-                                    thumbnail.layers[0].pixels(ty, tx) =
-                                        rgba_buffer[static_cast<size_t>(src) * 4 + 2]; // B from RGBA
-                                    thumbnail.layers[1].pixels(ty, tx) =
-                                        rgba_buffer[static_cast<size_t>(src) * 4 + 1]; // G
-                                    thumbnail.layers[2].pixels(ty, tx) =
-                                        rgba_buffer[static_cast<size_t>(src) * 4 + 0]; // R
-                                    alpha(ty, tx) = 255;
-                                }
+                                thumbnail.layers[0].pixels(ty, tx) =
+                                    rgba_buffer[static_cast<size_t>(src) * 4 + 2]; // B from RGBA
+                                thumbnail.layers[1].pixels(ty, tx) = rgba_buffer[static_cast<size_t>(src) * 4 + 1]; // G
+                                thumbnail.layers[2].pixels(ty, tx) = rgba_buffer[static_cast<size_t>(src) * 4 + 0]; // R
+                                alpha(ty, tx) = 255;
                             }
                         }
-
-                        TileUpdate tu;
-                        tu.pixel_x = x_offset;
-                        tu.pixel_y = y_offset;
-                        tu.pixel_w = tw;
-                        tu.pixel_h = th;
-                        tu.total_output_width = width;
-                        tu.total_output_height = height;
-                        tu.tile_index = done;
-                        tu.total_tiles = total_tiles;
-                        tu.thumbnail.png_base64 = encodeThumbnailToBase64PNG(
-                            thumbnail.layers[0].pixels, thumbnail.layers[1].pixels, thumbnail.layers[2].pixels, alpha);
-                        tu.thumbnail.bounds_min_x = min_x;
-                        tu.thumbnail.bounds_max_y = max_y;
-                        tu.thumbnail.meters_per_pixel = gsd;
-                        tile_progress(tu);
                     }
+
+                    TileUpdate tu;
+                    tu.pixel_x = x_offset;
+                    tu.pixel_y = y_offset;
+                    tu.pixel_w = tw;
+                    tu.pixel_h = th;
+                    tu.total_output_width = width;
+                    tu.total_output_height = height;
+                    tu.tile_index = done;
+                    tu.total_tiles = total_tiles;
+                    tu.thumbnail.png_base64 = encodeThumbnailToBase64PNG(
+                        thumbnail.layers[0].pixels, thumbnail.layers[1].pixels, thumbnail.layers[2].pixels, alpha);
+                    tu.thumbnail.bounds_min_x = min_x;
+                    tu.thumbnail.bounds_max_y = max_y;
+                    tu.thumbnail.meters_per_pixel = gsd;
+                    tile_progress(tu);
                 }
             }
 
@@ -2067,8 +2069,10 @@ void blendLayeredGeoTIFF(const std::string &layers_path, const std::string &came
     if (!overview_levels.empty())
     {
         GDALDatasetWrapper output_wrapper(output_ds.get());
+        CPLSetThreadLocalConfigOption("GDAL_NUM_THREADS", "ALL_CPUS");
         CPLErr err =
             output_wrapper.BuildOverviews("AVERAGE", static_cast<int>(overview_levels.size()), overview_levels.data());
+        CPLSetThreadLocalConfigOption("GDAL_NUM_THREADS", nullptr);
         if (err != CE_None)
         {
             spdlog::warn("Failed to build overviews");

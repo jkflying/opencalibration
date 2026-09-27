@@ -95,6 +95,7 @@ struct Pipeline::Impl : public usm::StateMachine<PipelineState, PipelineTransiti
 
     std::condition_variable queue_condition_variable;
     std::mutex queue_mutex;
+    std::mutex progress_mutex;
     std::deque<std::string> add_queue;
 
     jk::tree::KDTree<size_t, 2> imageGPSLocations;
@@ -534,6 +535,7 @@ void Pipeline::Impl::emit_progress(std::string activity, float local_fraction, b
                             graph.size_nodes(), add_queue.size(),    current,
                             stateRunCount(),    std::move(activity), completed_weight + current_weight * local_fraction,
                             local_fraction,     surfaces_updated,    std::move(tile_update)};
+    std::lock_guard<std::mutex> guard(progress_mutex);
     step_callback(info);
 }
 
