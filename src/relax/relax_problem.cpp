@@ -56,6 +56,45 @@ double chi2Quantile(int dof, double z)
 }
 constexpr double Z_3_SIGMA = 2.782;
 
+double huberThreshold(int dof, double scale)
+{
+    return scale * std::sqrt(chi2Quantile(dof, Z_3_SIGMA));
+}
+
+class MaxStepConvergence : public ceres::IterationCallback
+{
+  public:
+    MaxStepConvergence(std::vector<double *> params, std::function<double()> convergedStepSize,
+                       std::vector<double> &lastStepSizes)
+        : _params(std::move(params)), _previous(_params.size()), _convergedStepSize(std::move(convergedStepSize)),
+          _lastStepSizes(lastStepSizes)
+    {
+        _lastStepSizes.assign(_params.size(), 0);
+        for (size_t i = 0; i < _params.size(); i++)
+            _previous[i] = *_params[i];
+    }
+    ceres::CallbackReturnType operator()(const ceres::IterationSummary &summary) override
+    {
+        if (!summary.step_is_successful)
+            return ceres::SOLVER_CONTINUE;
+        double maxStep = 0;
+        for (size_t i = 0; i < _params.size(); i++)
+        {
+            _lastStepSizes[i] = std::abs(*_params[i] - _previous[i]);
+            maxStep = std::max(maxStep, _lastStepSizes[i]);
+            _previous[i] = *_params[i];
+        }
+        return summary.iteration > 0 && maxStep < _convergedStepSize() ? ceres::SOLVER_TERMINATE_SUCCESSFULLY
+                                                                       : ceres::SOLVER_CONTINUE;
+    }
+
+  private:
+    const std::vector<double *> _params;
+    std::vector<double> _previous;
+    const std::function<double()> _convergedStepSize;
+    std::vector<double> &_lastStepSizes;
+};
+
 std::optional<Eigen::Vector3d> confidentPoint(const std::vector<WorldRay> &rays)
 {
     constexpr double MAX_EXTENT_FRACTION = 0.1;
@@ -267,6 +306,99 @@ void RelaxProblem::setupTriangulatedRaysProblem(const MeasurementGraph &graph, s
     addGPSPositionPrior(graph, options);
 }
 
+void RelaxProblem::setupMeshHeightProblem(const surface_model &surface, double pointSigma, double smoothnessWeight)
+{
+    _mesh = surface.mesh;
+    _mesh_point_sigma = pointSigma;
+    _mesh_heights.clear();
+    std::vector<double *> heights;
+    for (auto it = _mesh.nodebegin(); it != _mesh.nodeend(); ++it)
+    {
+        _mesh_heights.push_back({it->first, &it->second.payload.location.z()});
+        heights.push_back(_mesh_heights.back().z);
+    }
+
+    _mesh_step_convergence = std::make_unique<MaxStepConvergence>(
+        std::move(heights), [this] { return meshHeightConvergedStepSize(); }, _mesh_last_step_sizes);
+    _solver_options.callbacks = {_mesh_step_convergence.get()};
+    _solver_options.update_state_every_iteration = true;
+    _solver_options.function_tolerance = 0;
+    constexpr double NEAR_GAUSS_NEWTON_TRUST_REGION_RADIUS = 1e4;
+    _solver_options.initial_trust_region_radius = NEAR_GAUSS_NEWTON_TRUST_REGION_RADIUS;
+
+    const auto samples = sampleMeshPoints(_mesh, surface.cloud);
+    if (samples.empty())
+        return;
+
+    ankerl::unordered_dense::map<size_t, size_t> pointsAroundVertex;
+    MeshTriangleSet dataTriangles;
+    for (const auto &sample : samples)
+    {
+        for (size_t v : sample.vertices)
+            pointsAroundVertex[v]++;
+        dataTriangles.insert(sortedTriangle(sample.vertices[0], sample.vertices[1], sample.vertices[2]));
+    }
+
+    addMeshPointCosts(samples, pointSigma);
+    addMeshBendPrior(smoothnessWeight / pointSigma, dataTriangles);
+    addMeshAnchorPrior([&pointsAroundVertex, pointSigma](size_t node_id) {
+        auto it = pointsAroundVertex.find(node_id);
+        const double pointCount = it == pointsAroundVertex.end() ? 0.0 : static_cast<double>(it->second);
+        return 1.0 / (pointSigma * (1.0 + pointCount));
+    });
+}
+
+double RelaxProblem::meshHeightConvergedStepSize() const
+{
+    if (_mesh_point_residuals.atNominalScale)
+        return huberThreshold(1, _mesh_point_sigma);
+    return _mesh_converged_step_in_sigmas * _mesh_point_residuals.scale * _mesh_point_sigma;
+}
+
+void RelaxProblem::solveMeshHeights()
+{
+    constexpr double COARSE_STEP_IN_SIGMAS = 0.1, FINE_STEP_IN_SIGMAS = 0.01;
+    _mesh_converged_step_in_sigmas = COARSE_STEP_IN_SIGMAS;
+    do
+        solve();
+    while (_mesh_point_residuals.atNominalScale);
+    _mesh_converged_step_in_sigmas = FINE_STEP_IN_SIGMAS;
+    solveUnsettledMeshHeights();
+}
+
+ankerl::unordered_dense::set<size_t> RelaxProblem::unsettledMeshNodesAndNeighbours(double settledStepSize) const
+{
+    ankerl::unordered_dense::set<size_t> nodes;
+    for (size_t i = 0; i < _mesh_heights.size(); i++)
+    {
+        if (_mesh_last_step_sizes[i] < settledStepSize)
+            continue;
+        const size_t id = _mesh_heights[i].nodeId;
+        nodes.insert(id);
+        for (size_t e : _mesh.getNode(id)->getEdges())
+        {
+            const auto *edge = _mesh.getEdge(e);
+            nodes.insert(edge->getSource() == id ? edge->getDest() : edge->getSource());
+        }
+    }
+    return nodes;
+}
+
+void RelaxProblem::solveUnsettledMeshHeights()
+{
+    const auto unsettled = unsettledMeshNodesAndNeighbours(meshHeightConvergedStepSize());
+    if (unsettled.empty())
+        return;
+    for (const auto &height : _mesh_heights)
+        if (!unsettled.contains(height.nodeId))
+            _problem->SetParameterBlockConstant(height.z);
+    _solver.Solve(_solver_options, _problem.get(), &_summary);
+    spdlog::info("unsettled mesh heights: {} of {} active, iterations {}, time {}s", unsettled.size(),
+                 _mesh_heights.size(), _summary.iterations.size(), static_cast<float>(_summary.total_time_in_seconds));
+    for (const auto &height : _mesh_heights)
+        _problem->SetParameterBlockVariable(height.z);
+}
+
 void RelaxProblem::addTriangulatedRaysCost(const MeasurementGraph &graph, size_t edge_id,
                                            const MeasurementGraph::Edge &edge, const RelaxOptionSet &options)
 {
@@ -290,7 +422,8 @@ void RelaxProblem::addTriangulatedRaysCost(const MeasurementGraph &graph, size_t
         if (coveredByMultiRayTracks(edge, inlier, *pkg.source.model_ptr, *pkg.dest.model_ptr))
             continue;
 
-        addRayBlock(
+        addRobustBlock(
+            _ray_residuals,
             newAutoDiffTriangulatedReprojectionCost(
                 {image_to_3d(inlier.pixel_1, *pkg.source.model_ptr), image_to_3d(inlier.pixel_2, *pkg.dest.model_ptr)},
                 !options.hasAll({Option::POSITION})
@@ -681,10 +814,10 @@ void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, 
             std::unique_ptr<ceres::CostFunction> func(newAutoDiffPlaneIntersectionAngleCost_FocalRadial(
                 inlier.pixel_1, inlier.pixel_2, corner2d[0], corner2d[1], corner2d[2], inverse_iter->second));
 
-            addRayBlock(func.release(), 2,
-                        {datas[0], datas[1], zValues[0], zValues[1], zValues[2],
-                         &inverse_iter->second.focal_length_pixels, inverse_iter->second.principle_point.data(),
-                         inverse_iter->second.radial_distortion.data()});
+            addRobustBlock(_ray_residuals, func.release(), 2,
+                           {datas[0], datas[1], zValues[0], zValues[1], zValues[2],
+                            &inverse_iter->second.focal_length_pixels, inverse_iter->second.principle_point.data(),
+                            inverse_iter->second.radial_distortion.data()});
             _problem->SetParameterLowerBound(&inverse_iter->second.focal_length_pixels, 0, 100.0);
             _problem->SetParameterUpperBound(&inverse_iter->second.focal_length_pixels, 0, 20000.0);
             if (!options.hasAny(RelaxOptionSet{Option::FOCAL_LENGTH}))
@@ -706,7 +839,7 @@ void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, 
                 newAutoDiffPlaneIntersectionAngleCost(sourceRay.dir, destRay.dir, corner2d[0], corner2d[1], corner2d[2],
                                                       {inverseSigma(source_model), inverseSigma(dest_model)}));
 
-            addRayBlock(func.release(), 2, {datas[0], datas[1], zValues[0], zValues[1], zValues[2]});
+            addRobustBlock(_ray_residuals, func.release(), 2, {datas[0], datas[1], zValues[0], zValues[1], zValues[2]});
             points_added = true;
         }
     }
@@ -991,7 +1124,7 @@ std::vector<TrackRay> RelaxProblem::addMeshTrackCost(const MeasurementGraph &gra
     if (cost == nullptr)
         return {};
 
-    addRayBlock(cost, 2 * N - 2, param_blocks);
+    addRobustBlock(_ray_residuals, cost, 2 * N - 2, param_blocks);
 
     if (inv_model_ptr != nullptr)
     {
@@ -1065,8 +1198,9 @@ std::vector<TrackRay> RelaxProblem::addTriangulatedTrackCost(const std::vector<T
             camera_positions.push_back(r.camera_loc);
         param_blocks.push_back(r.pose_ptr);
     }
-    addRayBlock(newAutoDiffTriangulatedReprojectionCost(camera_rays, camera_positions, inverse_sigmas),
-                2 * static_cast<int>(good_rays.size()) - 3, param_blocks);
+    addRobustBlock(_ray_residuals,
+                   newAutoDiffTriangulatedReprojectionCost(camera_rays, camera_positions, inverse_sigmas),
+                   2 * static_cast<int>(good_rays.size()) - 3, param_blocks);
     return good_rays;
 }
 
@@ -1503,6 +1637,11 @@ void RelaxProblem::addMeshFlatPrior()
     }
 
     // Anchor to initial z to prevent gauge freedom drift
+    addMeshAnchorPrior([this](size_t) { return 1e-5 * _prior_scale; });
+}
+
+void RelaxProblem::addMeshAnchorPrior(const std::function<double(size_t node_id)> &weight)
+{
     _mesh_initial_z.clear();
     _mesh_initial_z.reserve(_mesh.size_nodes());
     for (auto iter = _mesh.nodebegin(); iter != _mesh.nodeend(); ++iter)
@@ -1513,8 +1652,35 @@ void RelaxProblem::addMeshFlatPrior()
     for (auto iter = _mesh.nodebegin(); iter != _mesh.nodeend(); ++iter, ++i)
     {
         double *h = &iter->second.payload.location.z();
-        _problem->AddResidualBlock(newAutoDiffDifferenceCost(1e-5 * _prior_scale), nullptr, h, &_mesh_initial_z[i]);
+        _problem->AddResidualBlock(newAutoDiffDifferenceCost(weight(iter->first)), nullptr, h, &_mesh_initial_z[i]);
         _problem->SetParameterBlockConstant(&_mesh_initial_z[i]);
+    }
+}
+
+void RelaxProblem::addMeshPointCosts(const std::vector<MeshPointSample> &samples, double pointSigma)
+{
+    for (const auto &sample : samples)
+    {
+        std::array<double *, 3> z;
+        for (int k = 0; k < 3; k++)
+            z[k] = &_mesh.getNode(sample.vertices[k])->payload.location.z();
+        addRobustBlock(_mesh_point_residuals,
+                       newAutoDiffMeshPointHeightCost(sample.barycentric, sample.z, 1 / pointSigma), 1,
+                       {z[0], z[1], z[2]});
+    }
+}
+
+void RelaxProblem::addMeshBendPrior(double weight, const MeshTriangleSet &dataTriangles)
+{
+    for (const auto &bend : meshBendsBetweenDataTriangles(_mesh, dataTriangles))
+    {
+        std::array<Eigen::Vector3d *, 4> v;
+        for (int k = 0; k < 4; k++)
+            v[k] = &_mesh.getNode(bend.edgeThenOppositeVertices[k])->payload.location;
+        _problem->AddResidualBlock(newAutoDiffAdjacentTriangleNormalCost(v[0]->head<2>(), v[1]->head<2>(),
+                                                                         v[2]->head<2>(), v[3]->head<2>(),
+                                                                         weight * bend.meanOppositeDistanceFromEdge),
+                                   nullptr, &v[0]->z(), &v[1]->z(), &v[2]->z(), &v[3]->z());
     }
 }
 
@@ -1573,34 +1739,36 @@ void RelaxProblem::addMonotonicityCosts()
     }
 }
 
-void RelaxProblem::addRayBlock(ceres::CostFunction *cost, int dof, const std::vector<double *> &params)
+void RelaxProblem::addRobustBlock(RobustResidualGroup &group, ceres::CostFunction *cost, int dof,
+                                  const std::vector<double *> &params)
 {
-    auto &loss = _ray_losses[dof];
+    auto &loss = group.lossesByDegreesOfFreedom[dof];
     if (loss == nullptr)
         loss = std::make_unique<ceres::LossFunctionWrapper>(nullptr, ceres::TAKE_OWNERSHIP);
-    _ray_blocks.emplace_back(_problem->AddResidualBlock(cost, loss.get(), params), dof);
+    group.blocks.push_back({_problem->AddResidualBlock(cost, loss.get(), params), dof});
 }
 
-void RelaxProblem::updateRayLossScale()
+void RelaxProblem::updateRobustLossScale(RobustResidualGroup &group)
 {
     std::vector<double> variances;
-    variances.reserve(_ray_blocks.size());
-    for (const auto &[id, dof] : _ray_blocks)
+    variances.reserve(group.blocks.size());
+    for (const auto &block : group.blocks)
     {
         double cost;
-        if (_problem->EvaluateResidualBlock(id, false, &cost, nullptr, nullptr))
-            variances.push_back(2 * cost / chi2Quantile(dof, 0));
+        if (_problem->EvaluateResidualBlock(block.id, false, &cost, nullptr, nullptr))
+            variances.push_back(2 * cost / chi2Quantile(block.degreesOfFreedom, 0));
     }
-    double sigma = 1;
-    if (!variances.empty())
+    group.atNominalScale = std::exchange(group.nextSolveAtNominalScale, false);
+    group.scale = 1;
+    if (!group.atNominalScale && !variances.empty())
     {
         auto mid = variances.begin() + variances.size() / 2;
         std::nth_element(variances.begin(), mid, variances.end());
-        sigma = std::max(1.0, std::sqrt(*mid));
+        group.scale = std::max(1.0, std::sqrt(*mid));
     }
-    for (auto &[dof, loss] : _ray_losses)
-        loss->Reset(new ceres::HuberLoss(sigma * std::sqrt(chi2Quantile(dof, Z_3_SIGMA))), ceres::TAKE_OWNERSHIP);
-    spdlog::debug("ray sigma {} from {} blocks", sigma, variances.size());
+    for (auto &[dof, loss] : group.lossesByDegreesOfFreedom)
+        loss->Reset(new ceres::HuberLoss(huberThreshold(dof, group.scale)), ceres::TAKE_OWNERSHIP);
+    spdlog::debug("{} scale {} from {} blocks", group.name, group.scale, variances.size());
 }
 
 void RelaxProblem::solve()
@@ -1617,7 +1785,8 @@ void RelaxProblem::solve()
         return;
     }
 
-    updateRayLossScale();
+    updateRobustLossScale(_ray_residuals);
+    updateRobustLossScale(_mesh_point_residuals);
     _solver.Solve(_solver_options, _problem.get(), &_summary);
     spdlog::info("Thread {} end relax: iterations {}, cost ratio {}, time {}s", thread_stream.str(),
                  _summary.iterations.size(), static_cast<float>(_summary.final_cost / _summary.initial_cost),

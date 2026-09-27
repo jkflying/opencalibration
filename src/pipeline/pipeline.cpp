@@ -12,6 +12,7 @@
 #include <opencalibration/ortho/color_balance.hpp>
 #include <opencalibration/ortho/ortho.hpp>
 #include <opencalibration/performance/performance.hpp>
+#include <opencalibration/relax/relax_problem.hpp>
 #include <opencalibration/surface/expand_mesh.hpp>
 #include <opencalibration/surface/intersect.hpp>
 #include <opencalibration/surface/refine_mesh.hpp>
@@ -929,8 +930,24 @@ Pipeline::Impl::Transition Pipeline::Impl::dense_mesh_relax()
     {
         if (surface.mesh.size_nodes() == 0)
             continue;
-        totalRefined +=
-            refineByPointDensity(surface.mesh, surface.cloud, maxPointsPerTriangle, minDistanceVariance, 1, reducedGsd);
+        const double pointSigma = std::max(minDistanceStddev, estimatePointHeightSigma(surface.cloud));
+        constexpr double HEIGHT_AGREEMENT_SIGMAS = 5;
+        surface_model agreeingSurface{
+            filterPointsWithoutHeightAgreement(surface.cloud, HEIGHT_AGREEMENT_SIGMAS * pointSigma),
+            std::move(surface.mesh)};
+        auto fitHeights = [&agreeingSurface, pointSigma] {
+            RelaxProblem rp;
+            rp.setupMeshHeightProblem(agreeingSurface, pointSigma);
+            rp.solveMeshHeights();
+            agreeingSurface.mesh = rp.getSurfaceModel().mesh;
+        };
+        const bool unrefinedMesh = stateRunCount() == 0;
+        if (unrefinedMesh)
+            fitHeights();
+        totalRefined += refineByPointDensity(agreeingSurface.mesh, agreeingSurface.cloud, maxPointsPerTriangle,
+                                             minDistanceVariance, 1, reducedGsd);
+        fitHeights();
+        surface.mesh = std::move(agreeingSurface.mesh);
     }
 
     if (totalRefined > 0)

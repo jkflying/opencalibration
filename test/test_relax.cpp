@@ -4,6 +4,8 @@
 #include <opencalibration/relax/relax_cost_function.hpp>
 #include <opencalibration/relax/relax_group.hpp>
 #include <opencalibration/relax/relax_problem.hpp>
+#include <opencalibration/surface/expand_mesh.hpp>
+#include <opencalibration/surface/refine_mesh.hpp>
 #include <opencalibration/types/measurement_graph.hpp>
 #include <opencalibration/types/node_pose.hpp>
 #include <opencalibration/types/point_cloud.hpp>
@@ -727,10 +729,10 @@ class TestRelaxProblem : public RelaxProblem
 
     double test_ray_loss_delta(int dof)
     {
-        updateRayLossScale();
+        updateRobustLossScale(_ray_residuals);
         double rho[3];
         const double s = 1e12;
-        _ray_losses.at(dof)->Evaluate(s, rho);
+        _ray_residuals.lossesByDegreesOfFreedom.at(dof)->Evaluate(s, rho);
         return rho[1] * std::sqrt(s);
     }
 };
@@ -1494,4 +1496,48 @@ TEST_F(relax_group, measurement_3_images_surface_model_rejects_inconsistent_rays
     }
     const size_t rotated_points = rotated_surface.cloud.empty() ? 0 : rotated_surface.cloud[0].size();
     EXPECT_EQ(rotated_points, 0u);
+}
+
+TEST(relax, mesh_height_problem_recovers_surface_despite_outliers)
+{
+    point_cloud cameras;
+    cameras.push_back(Eigen::Vector3d(0, 0, 10));
+    cameras.push_back(Eigen::Vector3d(10, 10, 10));
+
+    surface_model surface;
+    surface.mesh = buildMinimalMesh(cameras, {});
+
+    // GIVEN: a tilted plane with a bump, noise and gross outliers, meshed beyond the data so there are empty regions
+    auto height = [](double x, double y) {
+        return 0.1 * x - 0.2 * y + 3.0 + 0.5 * std::exp(-((x - 4) * (x - 4) + (y - 6) * (y - 6)) / 4);
+    };
+    std::mt19937 gen(42);
+    std::normal_distribution<double> noise(0, 0.02);
+    point_cloud pts;
+    for (double x = 0.25; x < 10; x += 0.25)
+        for (double y = 0.25; y < 10; y += 0.25)
+            pts.push_back(Eigen::Vector3d(x, y, height(x, y) + noise(gen)));
+    for (int i = 0; i < 40; i++)
+        pts.push_back(Eigen::Vector3d(0.5 + 0.2 * i, 3, height(0.5 + 0.2 * i, 3) + 20.0));
+    surface.cloud = {pts};
+
+    refineByPointDensity(surface.mesh, surface.cloud, 5, 0.0, 14);
+    ASSERT_GT(surface.mesh.size_nodes(), 50);
+
+    // WHEN: fitting the mesh heights
+    RelaxProblem rp;
+    rp.setupMeshHeightProblem(surface, 0.02);
+    rp.solveMeshHeights();
+    const MeshGraph relaxed = rp.getSurfaceModel().mesh;
+
+    // THEN: vertices a margin inside the data sit on the true surface, ignoring the outliers and keeping the tilt
+    ASSERT_EQ(relaxed.size_nodes(), surface.mesh.size_nodes());
+    double maxError = 0;
+    for (auto it = relaxed.cnodebegin(); it != relaxed.cnodeend(); ++it)
+    {
+        const Eigen::Vector3d &p = it->second.payload.location;
+        if (p.x() > 1 && p.x() < 9 && p.y() > 1 && p.y() < 9)
+            maxError = std::max(maxError, std::abs(p.z() - height(p.x(), p.y())));
+    }
+    EXPECT_LT(maxError, 0.05);
 }

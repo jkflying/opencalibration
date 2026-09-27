@@ -44,4 +44,12 @@ ceres::CostFunction *newAutoDiffAdjacentTriangleNormalCost(const Eigen::Vector2d
                                     Functor::NUM_PARAMETERS_2, Functor::NUM_PARAMETERS_3, Functor::NUM_PARAMETERS_4>;
     return new CostFunction(new Functor(xyA, xyB, xyC, xyD, weight));
 }
+
+ceres::CostFunction *newAutoDiffMeshPointHeightCost(const Eigen::Vector3d &barycentric, double z, double weight)
+{
+    using Functor = MeshPointHeightCost;
+    using CostFunction = ceres::AutoDiffCostFunction<Functor, Functor::NUM_RESIDUALS, Functor::NUM_PARAMETERS_1,
+                                                     Functor::NUM_PARAMETERS_2, Functor::NUM_PARAMETERS_3>;
+    return new CostFunction(new Functor(barycentric, z, weight));
+}
 } // namespace opencalibration

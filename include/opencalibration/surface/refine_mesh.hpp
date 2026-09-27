@@ -170,6 +170,42 @@ size_t refineByPointDensity(MeshGraph &mesh, const std::vector<point_cloud> &poi
                             double minDistanceVariance = 0.0, int maxIterations = 20,
                             double minTriangleSizeMeters = 0.0);
 
+using MeshTriangle = std::array<size_t, 3>;
+MeshTriangle sortedTriangle(size_t a, size_t b, size_t c);
+
+struct MeshTriangleHash
+{
+    size_t operator()(const MeshTriangle &t) const
+    {
+        return std::hash<size_t>()(t[0]) ^ (std::hash<size_t>()(t[1]) << 1) ^ (std::hash<size_t>()(t[2]) << 2);
+    }
+};
+using MeshTriangleSet = ankerl::unordered_dense::set<MeshTriangle, MeshTriangleHash>;
+
+struct MeshPointSample
+{
+    std::array<size_t, 3> vertices;
+    Eigen::Vector3d barycentric;
+    double z;
+};
+
+std::vector<MeshPointSample> sampleMeshPoints(const MeshGraph &mesh, const std::vector<point_cloud> &points);
+
+struct MeshBend
+{
+    std::array<size_t, 4> edgeThenOppositeVertices;
+    double meanOppositeDistanceFromEdge;
+};
+
+std::vector<MeshBend> meshBendsBetweenDataTriangles(const MeshGraph &mesh, const MeshTriangleSet &dataTriangles);
+
+double estimatePointHeightSigma(const std::vector<point_cloud> &points, size_t neighbours = 8,
+                                size_t maxSampledPoints = 100000);
+
+std::vector<point_cloud> filterPointsWithoutHeightAgreement(const std::vector<point_cloud> &points,
+                                                            double heightTolerance, size_t neighbours = 8,
+                                                            size_t minAgreeingNeighbours = 3);
+
 /**
  * @brief Merge multiple surface models with the same mesh structure
  *

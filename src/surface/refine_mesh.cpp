@@ -3,7 +3,9 @@
 #include <jk/KDTree.h>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <omp.h>
+#include <optional>
 #include <queue>
 
 namespace opencalibration
@@ -801,6 +803,167 @@ size_t refineByPointDensity(MeshGraph &mesh, const std::vector<point_cloud> &poi
     }
 
     return totalCreated;
+}
+
+MeshTriangle sortedTriangle(size_t a, size_t b, size_t c)
+{
+    MeshTriangle t{a, b, c};
+    std::sort(t.begin(), t.end());
+    return t;
+}
+
+namespace
+{
+std::optional<Eigen::Vector3d> barycentricInXy(const Eigen::Vector2d &p, const Eigen::Vector2d &a,
+                                               const Eigen::Vector2d &b, const Eigen::Vector2d &c)
+{
+    const Eigen::Vector2d v0 = b - a, v1 = c - a, v2 = p - a;
+    const double d = v0.x() * v1.y() - v1.x() * v0.y();
+    if (std::abs(d) < 1e-12)
+        return std::nullopt;
+    const double l1 = (v2.x() * v1.y() - v1.x() * v2.y()) / d;
+    const double l2 = (v0.x() * v2.y() - v2.x() * v0.y()) / d;
+    return Eigen::Vector3d(1 - l1 - l2, l1, l2);
+}
+} // namespace
+
+std::vector<MeshPointSample> sampleMeshPoints(const MeshGraph &mesh, const std::vector<point_cloud> &points)
+{
+    if (mesh.size_nodes() == 0)
+        return {};
+    std::vector<const Eigen::Vector3d *> allPoints;
+    for (const auto &cloud : points)
+        for (const auto &p : cloud)
+            allPoints.push_back(&p);
+
+    std::vector<MeshPointSample> samples(allPoints.size());
+    std::vector<char> valid(allPoints.size(), 0);
+    TriangleLocator locator(mesh);
+    const int num_points = static_cast<int>(allPoints.size());
+#pragma omp parallel for schedule(dynamic, 256) // NOLINT(modernize-loop-convert)
+    for (int pi = 0; pi < num_points; pi++)
+    {
+        const auto &p = *allPoints[pi];
+        const TriangleId tri = locator.find(p.x(), p.y());
+        if (tri.edgeId == 0)
+            continue;
+        const auto verts = getTriangleVertices(mesh, tri);
+        const auto *n0 = mesh.getNode(verts[0]);
+        const auto *n1 = mesh.getNode(verts[1]);
+        const auto *n2 = mesh.getNode(verts[2]);
+        if (!n0 || !n1 || !n2)
+            continue;
+        auto bary = barycentricInXy(p.head<2>(), n0->payload.location.head<2>(), n1->payload.location.head<2>(),
+                                    n2->payload.location.head<2>());
+        if (!bary)
+            continue;
+        samples[pi] = MeshPointSample{verts, *bary, p.z()};
+        valid[pi] = 1;
+    }
+
+    size_t dst = 0;
+    for (size_t i = 0; i < samples.size(); i++)
+        if (valid[i])
+            samples[dst++] = samples[i];
+    samples.resize(dst);
+    return samples;
+}
+
+std::vector<MeshBend> meshBendsBetweenDataTriangles(const MeshGraph &mesh, const MeshTriangleSet &dataTriangles)
+{
+    std::vector<MeshBend> bends;
+    for (auto it = mesh.cedgebegin(); it != mesh.cedgeend(); ++it)
+    {
+        const MeshEdge &edge = it->second.payload;
+        if (edge.border)
+            continue;
+        const std::array<size_t, 4> ids{it->second.getSource(), it->second.getDest(), edge.triangleOppositeNodes[0],
+                                        edge.triangleOppositeNodes[1]};
+        if (!dataTriangles.contains(sortedTriangle(ids[0], ids[1], ids[2])) ||
+            !dataTriangles.contains(sortedTriangle(ids[0], ids[1], ids[3])))
+            continue;
+        std::array<Eigen::Vector2d, 4> xy;
+        bool ok = true;
+        for (int k = 0; k < 4 && ok; k++)
+        {
+            const auto *node = mesh.getNode(ids[k]);
+            ok = node != nullptr;
+            if (ok)
+                xy[k] = node->payload.location.head<2>();
+        }
+        const Eigen::Vector2d ab = xy[1] - xy[0];
+        if (!ok || ab.norm() == 0)
+            continue;
+        auto distToAB = [&](const Eigen::Vector2d &p) {
+            const Eigen::Vector2d ap = p - xy[0];
+            return std::abs(ab.x() * ap.y() - ab.y() * ap.x()) / ab.norm();
+        };
+        const double meanOppositeDistance = 0.5 * (distToAB(xy[2]) + distToAB(xy[3]));
+        if (meanOppositeDistance > 0)
+            bends.push_back(MeshBend{ids, meanOppositeDistance});
+    }
+    return bends;
+}
+
+double estimatePointHeightSigma(const std::vector<point_cloud> &points, size_t neighbours, size_t maxSampledPoints)
+{
+    jk::tree::KDTree<double, 2> tree;
+    size_t total = 0;
+    for (const auto &cloud : points)
+        for (const auto &p : cloud)
+        {
+            tree.addPoint({p.x(), p.y()}, p.z(), false);
+            total++;
+        }
+    if (total <= neighbours)
+        return 0;
+    tree.splitOutstanding();
+
+    const size_t stride = std::max<size_t>(1, total / maxSampledPoints);
+    std::vector<double> deviations, heights;
+    size_t i = 0;
+    for (const auto &cloud : points)
+        for (const auto &p : cloud)
+        {
+            if (i++ % stride != 0)
+                continue;
+            heights.clear();
+            const size_t neighboursIncludingSelf = neighbours + 1;
+            for (const auto &n : tree.searchKnn({p.x(), p.y()}, neighboursIncludingSelf))
+                heights.push_back(n.payload);
+            auto mid = heights.begin() + heights.size() / 2;
+            std::nth_element(heights.begin(), mid, heights.end());
+            deviations.push_back(std::abs(p.z() - *mid));
+        }
+    auto mid = deviations.begin() + deviations.size() / 2;
+    std::nth_element(deviations.begin(), mid, deviations.end());
+    constexpr double MAD_TO_GAUSSIAN_SIGMA = 1.4826;
+    return MAD_TO_GAUSSIAN_SIGMA * *mid;
+}
+
+std::vector<point_cloud> filterPointsWithoutHeightAgreement(const std::vector<point_cloud> &points,
+                                                            double heightTolerance, size_t neighbours,
+                                                            size_t minAgreeingNeighbours)
+{
+    jk::tree::KDTree<double, 2> tree;
+    for (const auto &cloud : points)
+        for (const auto &p : cloud)
+            tree.addPoint({p.x(), p.y()}, p.z(), false);
+    tree.splitOutstanding();
+
+    const size_t neighboursIncludingSelf = neighbours + 1;
+    const size_t minAgreeingIncludingSelf = minAgreeingNeighbours + 1;
+    std::vector<point_cloud> agreeing(points.size());
+    for (size_t c = 0; c < points.size(); c++)
+        for (const auto &p : points[c])
+        {
+            size_t agreeingIncludingSelf = 0;
+            for (const auto &n : tree.searchKnn({p.x(), p.y()}, neighboursIncludingSelf))
+                agreeingIncludingSelf += std::abs(n.payload - p.z()) < heightTolerance;
+            if (agreeingIncludingSelf >= minAgreeingIncludingSelf)
+                agreeing[c].push_back(p);
+        }
+    return agreeing;
 }
 
 surface_model mergeSurfaceModels(const std::vector<surface_model> &surfaces)

@@ -11,6 +11,7 @@
 #include <fstream>
 #include <future>
 #include <memory>
+#include <random>
 #include <set>
 #include <thread>
 
@@ -1428,4 +1429,54 @@ TEST(refine_mesh, minimal_mesh_ignores_outlier_heights)
     ASSERT_GT(mesh.size_nodes(), 0u);
     for (auto iter = mesh.cnodebegin(); iter != mesh.cnodeend(); ++iter)
         EXPECT_NEAR(iter->second.payload.location.z(), 0, 1e-9);
+}
+
+TEST(refine_mesh, estimate_point_height_sigma_ignores_slope_and_outliers)
+{
+    const double sigma = 0.2;
+    std::mt19937 rng(42);
+    std::normal_distribution<double> noise(0, sigma);
+    std::uniform_real_distribution<double> uniform(0, 1);
+
+    // GIVEN: a steep slope with a fifth of the points as gross outliers
+    point_cloud pts;
+    for (double x = 0; x < 50; x += 0.25)
+        for (double y = 0; y < 50; y += 0.25)
+            pts.push_back(Eigen::Vector3d(x, y, x - 0.5 * y + noise(rng) + (uniform(rng) < 0.2 ? 30.0 : 0.0)));
+
+    // WHEN: estimating the point height sigma
+    const double estimate = estimatePointHeightSigma({pts});
+
+    // THEN: it is close to the noise, at most inflated to the 62.5th percentile of the inliers (~1.3 sigma)
+    EXPECT_GT(estimate, 0.8 * sigma);
+    EXPECT_LT(estimate, 1.5 * sigma);
+}
+
+TEST(refine_mesh, filter_points_without_height_agreement_drops_scattered_noise_but_keeps_breaklines)
+{
+    std::mt19937 rng(42);
+    std::normal_distribution<double> noise(0, 0.2);
+    std::uniform_real_distribution<double> scatter(-50, 50);
+
+    // GIVEN: a 20m step with a patch of heights scattered over 100m in the middle of the upper level
+    point_cloud pts;
+    size_t surface = 0, scattered = 0;
+    for (double x = 0; x < 50; x += 0.5)
+        for (double y = 0; y < 50; y += 0.5)
+        {
+            const bool patch = x > 30 && x < 40 && y > 20 && y < 30;
+            pts.push_back(Eigen::Vector3d(x, y, patch ? scatter(rng) : (x < 25 ? 0.0 : 20.0) + noise(rng)));
+            (patch ? scattered : surface)++;
+        }
+
+    // WHEN: filtering points without height agreement
+    const auto kept = filterPointsWithoutHeightAgreement({pts}, 1.0);
+
+    // THEN: both levels of the step are kept and the scattered patch is dropped
+    ASSERT_EQ(kept.size(), 1u);
+    size_t keptSurface = 0, keptScattered = 0;
+    for (const auto &p : kept[0])
+        (p.x() > 30 && p.x() < 40 && p.y() > 20 && p.y() < 30 ? keptScattered : keptSurface)++;
+    EXPECT_GT(keptSurface, 0.99 * surface);
+    EXPECT_LT(keptScattered, 0.05 * scattered);
 }

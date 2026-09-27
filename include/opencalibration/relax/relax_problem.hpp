@@ -3,6 +3,7 @@
 #include <opencalibration/distort/distort_keypoints.hpp>
 #include <opencalibration/geometry/intersection.hpp>
 #include <opencalibration/relax/grid_filter.hpp>
+#include <opencalibration/surface/refine_mesh.hpp>
 #include <opencalibration/types/feature_track.hpp>
 #include <opencalibration/types/measurement_graph.hpp>
 #include <opencalibration/types/node_pose.hpp>
@@ -22,6 +23,7 @@
 #include <ankerl/unordered_dense.h>
 
 #include <array>
+#include <functional>
 #include <map>
 
 namespace opencalibration
@@ -71,6 +73,9 @@ class RelaxProblem
                                       ankerl::unordered_dense::map<size_t, CameraModel> &cam_models,
                                       const ankerl::unordered_dense::set<size_t> &edges_to_optimize,
                                       const RelaxOptionSet &options);
+
+    void setupMeshHeightProblem(const surface_model &surface, double pointSigma, double smoothnessWeight = 1.0);
+    void solveMeshHeights();
 
     void relaxObservedModelOnly(); // only 3d points and ground plane
     void solve();
@@ -124,6 +129,9 @@ class RelaxProblem
     void addGPSPositionPrior(const MeasurementGraph &graph, const RelaxOptionSet &options);
     void addMeshFlatPrior();
     void addMeshSmoothPrior();
+    void addMeshPointCosts(const std::vector<MeshPointSample> &samples, double pointSigma);
+    void addMeshBendPrior(double weight, const MeshTriangleSet &dataTriangles);
+    void addMeshAnchorPrior(const std::function<double(size_t node_id)> &weight);
 
     void trackRadialObservation(double *radial_data, size_t pixels_rows, size_t pixels_cols, double focal_length);
     void addMonotonicityCosts();
@@ -176,14 +184,41 @@ class RelaxProblem
     };
     ankerl::unordered_dense::map<NodeIdFeatureIndex, MeasurementRay, NodeIdFeatureIndex> _measurement_rays;
 
-    std::vector<std::pair<ceres::ResidualBlockId, int>> _ray_blocks;
-    std::map<int, std::unique_ptr<ceres::LossFunctionWrapper>> _ray_losses;
-    void addRayBlock(ceres::CostFunction *cost, int dof, const std::vector<double *> &params);
-    void updateRayLossScale();
+    struct RobustBlock
+    {
+        ceres::ResidualBlockId id;
+        int degreesOfFreedom;
+    };
+    struct RobustResidualGroup
+    {
+        const char *name;
+        bool nextSolveAtNominalScale;
+        bool atNominalScale = false;
+        double scale = 1;
+        std::vector<RobustBlock> blocks{};
+        std::map<int, std::unique_ptr<ceres::LossFunctionWrapper>> lossesByDegreesOfFreedom{};
+    };
+    RobustResidualGroup _ray_residuals{"ray", false}, _mesh_point_residuals{"mesh point", true};
+    void addRobustBlock(RobustResidualGroup &group, ceres::CostFunction *cost, int dof,
+                        const std::vector<double *> &params);
+    void updateRobustLossScale(RobustResidualGroup &group);
     double _track_grid_fraction = 0.1;
     double _prior_scale = 1;
     MeshGraph _mesh;
     std::vector<double> _mesh_initial_z;
+    struct MeshHeight
+    {
+        size_t nodeId;
+        double *z;
+    };
+    std::vector<MeshHeight> _mesh_heights;
+    std::vector<double> _mesh_last_step_sizes;
+    std::unique_ptr<ceres::IterationCallback> _mesh_step_convergence;
+    double _mesh_point_sigma = 1;
+    double _mesh_converged_step_in_sigmas = 0.1;
+    double meshHeightConvergedStepSize() const;
+    ankerl::unordered_dense::set<size_t> unsettledMeshNodesAndNeighbours(double settledStepSize) const;
+    void solveUnsettledMeshHeights();
 };
 
 } // namespace opencalibration

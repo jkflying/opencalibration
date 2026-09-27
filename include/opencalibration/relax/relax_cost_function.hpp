@@ -182,7 +182,8 @@ struct AdjacentTriangleNormalCost
         const Vector3T n1 = AB.cross(C - A).normalized();
         const Vector3T n2 = (D - A).cross(AB).normalized();
 
-        residuals[0] = T(_weight) * angleBetweenUnitVectors<T>(n1, n2);
+        const T signedDihedralAngle = atan2(n1.cross(n2).dot(AB.normalized()), n1.dot(n2));
+        residuals[0] = T(_weight) * signedDihedralAngle;
         return true;
     }
 
@@ -191,6 +192,30 @@ struct AdjacentTriangleNormalCost
   private:
     const Eigen::Vector2d _xyA, _xyB, _xyC, _xyD;
     const double _weight;
+};
+
+struct MeshPointHeightCost
+{
+    static const int NUM_RESIDUALS = 1;
+    static const int NUM_PARAMETERS_1 = 1;
+    static const int NUM_PARAMETERS_2 = 1;
+    static const int NUM_PARAMETERS_3 = 1;
+
+    MeshPointHeightCost(const Eigen::Vector3d &barycentric, double z, double weight)
+        : _barycentric(barycentric), _z(z), _weight(weight)
+    {
+    }
+
+    template <typename T> bool operator()(const T *zA, const T *zB, const T *zC, T *residuals) const
+    {
+        const T meshHeight = T(_barycentric[0]) * *zA + T(_barycentric[1]) * *zB + T(_barycentric[2]) * *zC;
+        residuals[0] = T(_weight) * (T(_z) - meshHeight);
+        return true;
+    }
+
+  private:
+    const Eigen::Vector3d _barycentric;
+    const double _z, _weight;
 };
 
 struct DistortionMonotonicityCost
