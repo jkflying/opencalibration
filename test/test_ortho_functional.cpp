@@ -445,8 +445,8 @@ TEST_F(ortho, geotiff_without_feathering_uses_nearest_visible_camera_per_pixel)
             const int i = row * out.width + col;
             if (std::isnan(out.dsm[i]))
                 continue;
-            const Eigen::Vector3d point(out.geotransform[0] + col * out.geotransform[1],
-                                        out.geotransform[3] + row * out.geotransform[5], out.dsm[i]);
+            const Eigen::Vector3d point(out.geotransform[0] + (col + 0.5) * out.geotransform[1],
+                                        out.geotransform[3] + (row + 0.5) * out.geotransform[5], out.dsm[i]);
 
             std::array<int, 3> order{0, 1, 2};
             std::sort(order.begin(), order.end(), [&](int l, int r) {
@@ -768,7 +768,8 @@ TEST_F(ortho, textured_obj_export)
     for (int i = 0; i < 3; i++)
     {
         std::string path = TEST_DATA_OUTPUT_DIR "test_textured_mesh_image_" + std::to_string(i) + ".png";
-        cv::Mat img(600, 800, CV_8UC3, cv::Scalar(i * 80, 100, 200 - i * 60));
+        const cv::Scalar red_dominant_bgr(i * 30, 100, 220 - i * 20);
+        cv::Mat img(600, 800, CV_8UC3, red_dominant_bgr);
         cv::imwrite(path, img);
         graph.getNode(id[i])->payload.path = path;
     }
@@ -798,12 +799,25 @@ TEST_F(ortho, textured_obj_export)
     GDALDatasetWrapper ds(dataset.get());
     int expected_width = ds.GetRasterXSize();
     int expected_height = ds.GetRasterYSize();
+    cv::Mat ortho_rgb(expected_height, expected_width, CV_8UC3);
+    ASSERT_EQ(GDALDatasetRasterIO(dataset.get(), GF_Read, 0, 0, expected_width, expected_height, ortho_rgb.data,
+                                  expected_width, expected_height, GDT_Byte, 3, nullptr, 3,
+                                  static_cast<int>(ortho_rgb.step), 1),
+              CE_None);
     dataset.reset();
 
     cv::Mat texture = cv::imread(jpg_path);
     ASSERT_FALSE(texture.empty());
     EXPECT_EQ(texture.cols, expected_width);
     EXPECT_EQ(texture.rows, expected_height);
+
+    // AND: the texture has the GeoTIFF's colours in the same channels
+    cv::Mat texture_rgb;
+    cv::cvtColor(texture, texture_rgb, cv::COLOR_BGR2RGB);
+    const cv::Scalar ortho_mean = cv::mean(ortho_rgb), texture_mean = cv::mean(texture_rgb);
+    for (int c = 0; c < 3; c++)
+        EXPECT_NEAR(texture_mean[c], ortho_mean[c], 2);
+    EXPECT_GT(std::abs(ortho_mean[0] - ortho_mean[2]), 10) << "scene must distinguish R from B";
 
     // Verify OBJ file contents
     std::ifstream obj_file(obj_path);

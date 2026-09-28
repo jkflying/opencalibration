@@ -122,9 +122,7 @@ class GDALRasterBandWrapper
 
     CPLErr SetNoDataValue(double dfValue)
     {
-        // Note: GDALSetRasterNoDataValue returns an error, use GDALSetRasterNoDataValue for C API
-        GDALSetRasterNoDataValue(m_handle, dfValue);
-        return CE_None; // Assume success for now
+        return GDALSetRasterNoDataValue(m_handle, dfValue);
     }
 
     void GetBlockSize(int *pnXSize, int *pnYSize) const

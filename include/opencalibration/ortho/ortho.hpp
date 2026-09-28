@@ -43,6 +43,12 @@ class RayTraceContext
     std::vector<MeshIntersectionSearcher> _searchers;
 };
 
+struct OrthoMosaicBounds
+{
+    double min_x, max_x, min_y, max_y;
+    double mean_surface_z;
+};
+
 struct OrthoMosaic
 {
     GenericRaster pixelValues;
@@ -50,13 +56,8 @@ struct OrthoMosaic
     RasterLayer<uint8_t> overlap;
     RasterLayer<int32_t> cameraUUID;
     double gsd;
+    OrthoMosaicBounds bounds;
     ColorBalanceResult color_balance;
-};
-
-struct OrthoMosaicBounds
-{
-    double min_x, max_x, min_y, max_y;
-    double mean_surface_z;
 };
 
 // Context containing common data for orthomosaic generation

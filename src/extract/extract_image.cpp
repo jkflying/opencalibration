@@ -68,8 +68,10 @@ std::optional<image> extract_image(const std::string &path)
         cv::cvtColor(image, lab, cv::COLOR_BGR2Lab);
 
         const double scale = 50 / std::sqrt(image.size().area());
+        const cv::Size thumbnail_size(std::max(1, static_cast<int>(std::lround(image.cols * scale))),
+                                      std::max(1, static_cast<int>(std::lround(image.rows * scale))));
         cv::Mat thumbnail_lab;
-        cv::resize(lab, thumbnail_lab, cv::Size(0, 0), scale, scale, cv::INTER_AREA);
+        cv::resize(lab, thumbnail_lab, thumbnail_size, 0, 0, cv::INTER_AREA);
 
         cv::Mat thumbnail;
         cv::cvtColor(thumbnail_lab, thumbnail, cv::COLOR_Lab2BGR);

@@ -32,6 +32,7 @@
 #include <numeric>
 #include <omp.h>
 #include <thread>
+#include <type_traits>
 
 namespace
 {
@@ -275,6 +276,36 @@ class PatchSampler
 namespace opencalibration::orthomosaic
 {
 
+Eigen::Vector2d pixelCentre(const OrthoMosaicBounds &bounds, double gsd, double col, double row)
+{
+    return {bounds.min_x + (col + 0.5) * gsd, bounds.max_y - (row + 0.5) * gsd};
+}
+
+void rasterSizeCovering(const OrthoMosaicBounds &bounds, double gsd, int &width, int &height)
+{
+    auto pixels = [gsd](double extent) {
+        const double n = std::ceil(extent / gsd);
+        return std::isfinite(n) && n >= 1 ? static_cast<int>(n) : 100;
+    };
+    width = pixels(bounds.max_x - bounds.min_x);
+    height = pixels(bounds.max_y - bounds.min_y);
+}
+
+uint64_t pixelCount(int width, int height)
+{
+    return static_cast<uint64_t>(width) * static_cast<uint64_t>(height);
+}
+
+void coarsenGsdToFit(double &gsd, int &width, int &height, const OrthoMosaicBounds &bounds, uint64_t max_pixels)
+{
+    constexpr double kRoundUpMargin = 1 + 1e-6;
+    for (uint64_t pixels = pixelCount(width, height); pixels > max_pixels; pixels = pixelCount(width, height))
+    {
+        gsd *= std::sqrt(static_cast<double>(pixels) / static_cast<double>(max_pixels)) * kRoundUpMargin;
+        rasterSizeCovering(bounds, gsd, width, height);
+    }
+}
+
 // Clamp output resolution to not exceed sum of input image pixels
 void clampOutputResolution(double &gsd, int &width, int &height, const OrthoMosaicContext &context,
                            const MeasurementGraph &graph, const char *stage_name = "")
@@ -291,14 +322,10 @@ void clampOutputResolution(double &gsd, int &width, int &height, const OrthoMosa
         }
     }
 
-    uint64_t output_pixels = static_cast<uint64_t>(width) * static_cast<uint64_t>(height);
+    const uint64_t output_pixels = pixelCount(width, height);
     if (output_pixels > total_input_pixels && total_input_pixels > 0)
     {
-        // Scale GSD up to keep output resolution <= input pixels
-        double scale_factor = std::sqrt(static_cast<double>(output_pixels) / total_input_pixels);
-        gsd *= scale_factor;
-        width = static_cast<int>(width / scale_factor);
-        height = static_cast<int>(height / scale_factor);
+        coarsenGsdToFit(gsd, width, height, context.bounds, total_input_pixels);
 
         std::string stage_str = (stage_name && *stage_name) ? std::string(stage_name) + ": " : std::string("");
         spdlog::info("{}Clamped output resolution: GSD adjusted to {} (output pixels {} > input pixels {})", stage_str,
@@ -306,25 +333,22 @@ void clampOutputResolution(double &gsd, int &width, int &height, const OrthoMosa
     }
 }
 
-void clampOutputMegapixels(double &gsd, int &width, int &height, double max_output_megapixels,
-                           const char *stage_name = "")
+void clampOutputMegapixels(double &gsd, int &width, int &height, const OrthoMosaicBounds &bounds,
+                           double max_output_megapixels, const char *stage_name = "")
 {
     if (!std::isfinite(max_output_megapixels) || max_output_megapixels <= 0.0)
     {
         return;
     }
 
-    uint64_t output_pixels = static_cast<uint64_t>(width) * static_cast<uint64_t>(height);
-    uint64_t max_output_pixels = static_cast<uint64_t>(max_output_megapixels * 1000000.0);
+    const uint64_t output_pixels = pixelCount(width, height);
+    const uint64_t max_output_pixels = static_cast<uint64_t>(max_output_megapixels * 1000000.0);
     if (max_output_pixels == 0 || output_pixels <= max_output_pixels)
     {
         return;
     }
 
-    double scale_factor = std::sqrt(static_cast<double>(output_pixels) / static_cast<double>(max_output_pixels));
-    gsd *= scale_factor;
-    width = std::max(1, static_cast<int>(width / scale_factor));
-    height = std::max(1, static_cast<int>(height / scale_factor));
+    coarsenGsdToFit(gsd, width, height, bounds, max_output_pixels);
 
     std::string stage_str = (stage_name && *stage_name) ? std::string(stage_name) + ": " : std::string("");
     spdlog::info("{}Applied max output megapixels {} MP: GSD adjusted to {} (output pixels {} > max {})", stage_str,
@@ -543,11 +567,11 @@ ThumbnailColorSampling thumbnailColorSampling(const OrthoMosaicContext &context,
 {
     double full_resolution_gsd =
         calculateGSD(graph, context.involved_nodes, context.bounds.mean_surface_z, ImageResolution::FullResolution);
-    int full_width = std::max(1, static_cast<int>((context.bounds.max_x - context.bounds.min_x) / full_resolution_gsd));
-    int full_height =
-        std::max(1, static_cast<int>((context.bounds.max_y - context.bounds.min_y) / full_resolution_gsd));
+    int full_width, full_height;
+    rasterSizeCovering(context.bounds, full_resolution_gsd, full_width, full_height);
     clampOutputResolution(full_resolution_gsd, full_width, full_height, context, graph, "Color sampling");
-    clampOutputMegapixels(full_resolution_gsd, full_width, full_height, config.max_output_megapixels, "Color sampling");
+    clampOutputMegapixels(full_resolution_gsd, full_width, full_height, context.bounds, config.max_output_megapixels,
+                          "Color sampling");
 
     const double full_res_samples_per_thumbnail_pixel =
         std::pow(context.gsd / (full_resolution_gsd * std::max(1, config.color_sample_spacing_full_res_px)), 2);
@@ -599,31 +623,16 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
     spdlog::info("x range [{}; {}]  y range [{}; {}]  mean surface {}", context.bounds.min_x, context.bounds.max_x,
                  context.bounds.min_y, context.bounds.max_y, context.bounds.mean_surface_z);
 
-    // from bounds and gsd, calculate image resolution
-    double image_width = (context.bounds.max_x - context.bounds.min_x) / context.gsd;
-    double image_height = (context.bounds.max_y - context.bounds.min_y) / context.gsd;
-
-    if (!std::isfinite(image_width) || image_width < 1)
-        image_width = 100;
-    if (!std::isfinite(image_height) || image_height < 1)
-        image_height = 100;
-
-    int width = static_cast<int>(image_width);
-    int height = static_cast<int>(image_height);
+    int width, height;
+    rasterSizeCovering(context.bounds, context.gsd, width, height);
     clampOutputResolution(context.gsd, width, height, context, graph, "Thumbnail");
-    image_width = width;
-    image_height = height;
-
-    spdlog::info("requested image_width: {} image_height: {}", image_width, image_height);
-    spdlog::info("max_x: {} min_x: {} max_y: {} min_y: {}", context.bounds.max_x, context.bounds.min_x,
-                 context.bounds.max_y, context.bounds.min_y);
-
-    cv::Size image_dimensions(static_cast<int>(image_width), static_cast<int>(image_height));
+    const cv::Size image_dimensions(width, height);
 
     spdlog::info("gsd {}  img dims {}x{}", context.gsd, image_dimensions.width, image_dimensions.height);
 
     OrthoMosaic result;
     result.gsd = context.gsd;
+    result.bounds = context.bounds;
     MultiLayerRaster<uint8_t> pixelValues(image_dimensions.height, image_dimensions.width, 4);
     pixelValues.layers[0].band = Band::RED;
     pixelValues.layers[1].band = Band::GREEN;
@@ -639,7 +648,7 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
     struct CameraCache
     {
         Eigen::Matrix3d inv_rotation;
-        double thumb_scale;
+        Eigen::Vector2d thumb_scale_xy;
         Eigen::Vector2i thumb_size;
     };
     ankerl::unordered_dense::map<size_t, CameraCache> camera_cache;
@@ -651,7 +660,8 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
         cc.inv_rotation = payload.orientation.inverse().toRotationMatrix();
         Eigen::Vector2i sz = size(payload.thumbnail);
         cc.thumb_size = sz;
-        cc.thumb_scale = payload.model->pixels_rows > 0 ? static_cast<double>(sz[0]) / payload.model->pixels_rows : 1.0;
+        cc.thumb_scale_xy = {static_cast<double>(sz[1]) / payload.model->pixels_cols,
+                             static_cast<double>(sz[0]) / payload.model->pixels_rows};
         camera_cache[node_id] = cc;
     }
 
@@ -691,8 +701,8 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
         {
             for (int col = 0; col < image_dimensions.width; col++)
             {
-                const double x = col * context.gsd + context.bounds.min_x;
-                const double y = context.bounds.max_y - row * context.gsd;
+                const Eigen::Vector2d centre = pixelCentre(context.bounds, context.gsd, col, row);
+                const double x = centre.x(), y = centre.y();
 
                 // get height of pixel from mesh or nearest keypoint
                 const ray_d intersectionRay{{0, 0, -1}, {x, y, context.mean_camera_z}};
@@ -740,14 +750,14 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
                         continue;
 
                     Eigen::Vector2d pixel = image_from_3d(camera_ray, *payload.model);
-                    Eigen::Vector2d thumb_pixel = pixel * cc.thumb_scale;
+                    const Eigen::Vector2d thumb_pixel = pixel.cwiseProduct(cc.thumb_scale_xy);
                     if (!thumb_pixel.allFinite())
                         continue;
 
-                    int px = static_cast<int>(thumb_pixel.x());
-                    int py = static_cast<int>(thumb_pixel.y());
+                    const int px = static_cast<int>(std::floor(thumb_pixel.x()));
+                    const int py = static_cast<int>(std::floor(thumb_pixel.y()));
 
-                    if (px > 0 && px < cc.thumb_size[1] && py > 0 && py < cc.thumb_size[0])
+                    if (px >= 0 && px < cc.thumb_size[1] && py >= 0 && py < cc.thumb_size[0])
                     {
                         overlapCount++;
                         Eigen::Vector<uint8_t, Eigen::Dynamic> pixelValue(3);
@@ -782,6 +792,7 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
                 pixelValues.set(row, col, color);
                 result.cameraUUID.pixels(row, col) = pixelSource;
                 result.overlap.pixels(row, col) = overlapCount;
+                result.dsm.pixels(row, col) = static_cast<float>(z);
             }
 
             int current_completed = ++completed_rows;
@@ -827,144 +838,69 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
     return result;
 }
 
-GDALDatasetPtr createGeoTIFF(const std::string &path, int width, int height, double min_x, double max_y, double gsd,
-                             const std::string &wkt)
+GDALDatasetPtr createGeoTIFF(const std::string &path, int width, int height, int bands, GDALDataType type,
+                             int block_size, const OrthoMosaicBounds &bounds, double gsd, const std::string &wkt)
 {
-    GDALAllRegister();
-
     GDALDriverH driver = GDALGetDriverByName("GTiff");
     if (!driver)
-    {
         throw std::runtime_error("GTiff driver not available");
-    }
 
+    const bool rgba = bands == 4;
+    const std::string block = std::to_string(block_size);
     char **options = nullptr;
     options = CSLSetNameValue(options, "TILED", "YES");
-    options = CSLSetNameValue(options, "BLOCKXSIZE", "512");
-    options = CSLSetNameValue(options, "BLOCKYSIZE", "512");
+    options = CSLSetNameValue(options, "BLOCKXSIZE", block.c_str());
+    options = CSLSetNameValue(options, "BLOCKYSIZE", block.c_str());
     options = CSLSetNameValue(options, "COMPRESS", "DEFLATE");
-    options = CSLSetNameValue(options, "PREDICTOR", "2");
-    options = CSLSetNameValue(options, "PHOTOMETRIC", "RGB");
+    const char *horizontal_differencing = "2", *floating_point_predictor = "3";
+    options = CSLSetNameValue(options, "PREDICTOR",
+                              GDALDataTypeIsFloating(type) ? floating_point_predictor : horizontal_differencing);
     options = CSLSetNameValue(options, "NUM_THREADS", "ALL_CPUS");
     options = CSLSetNameValue(options, "BIGTIFF", "IF_SAFER");
     options = CSLSetNameValue(options, "SPARSE_OK", "YES");
-
-    GDALDatasetH dataset = GDALCreate(driver, path.c_str(), width, height, 4, GDT_Byte, options);
-
-    CSLDestroy(options);
-
-    if (!dataset)
+    if (rgba)
     {
+        options = CSLSetNameValue(options, "PHOTOMETRIC", "RGB");
+        options = CSLSetNameValue(options, "ALPHA", "YES");
+    }
+
+    GDALDatasetH dataset = GDALCreate(driver, path.c_str(), width, height, bands, type, options);
+    CSLDestroy(options);
+    if (!dataset)
         throw std::runtime_error("Failed to create GeoTIFF: " + path);
-    }
+    GDALDatasetPtr ptr(dataset);
 
-    GDALDatasetWrapper ds_wrapper(dataset);
-
-    // Set geotransform: [min_x, gsd, 0, max_y, 0, -gsd]
-    double geotransform[6] = {min_x, gsd, 0, max_y, 0, -gsd};
-    ds_wrapper.SetGeoTransform(geotransform);
-
-    // Set projection
+    double geotransform[6] = {bounds.min_x, gsd, 0, bounds.max_y, 0, -gsd};
+    GDALSetGeoTransform(dataset, geotransform);
     if (!wkt.empty())
-    {
-        ds_wrapper.SetProjection(wkt.c_str());
-    }
+        GDALSetProjection(dataset, wkt.c_str());
+    if (!rgba)
+        GDALSetRasterNoDataValue(GDALGetRasterBand(dataset, 1), std::numeric_limits<float>::quiet_NaN());
 
-    // Set band interpretation
-    GDALRasterBandWrapper band1(ds_wrapper.GetRasterBand(1));
-    GDALRasterBandWrapper band2(ds_wrapper.GetRasterBand(2));
-    GDALRasterBandWrapper band3(ds_wrapper.GetRasterBand(3));
-    GDALRasterBandWrapper band4(ds_wrapper.GetRasterBand(4));
-    band1.SetColorInterpretation(GCI_RedBand);
-    band2.SetColorInterpretation(GCI_GreenBand);
-    band3.SetColorInterpretation(GCI_BlueBand);
-    band4.SetColorInterpretation(GCI_AlphaBand);
-
-    return GDALDatasetPtr(dataset);
+    return ptr;
 }
 
-// Helper: Write tile data to GeoTIFF
-void writeTileToGeoTIFF(GDALDatasetH dataset, int x_offset, int y_offset, int width, int height,
-                        const std::vector<uint8_t> &buffer)
+int blockSizeDividingTile(int tile_size)
 {
-    // Deinterleave RGBA -> separate bands
-    std::vector<uint8_t> band_data[4];
-    for (auto &bd : band_data)
-    {
-        bd.resize(width * height);
-    }
-
-    for (int i = 0; i < width * height; i++)
-    {
-        band_data[0][i] = buffer[i * 4 + 0]; // R
-        band_data[1][i] = buffer[i * 4 + 1]; // G
-        band_data[2][i] = buffer[i * 4 + 2]; // B
-        band_data[3][i] = buffer[i * 4 + 3]; // A
-    }
-
-    // Write each band
-    for (int band = 1; band <= 4; band++)
-    {
-        GDALRasterBandH hBand = GDALGetRasterBand(dataset, band);
-        GDALRasterBandWrapper band_wrapper(hBand);
-        CPLErr err = band_wrapper.RasterIO(GF_Write, x_offset, y_offset, width, height, band_data[band - 1].data(),
-                                           width, height, GDT_Byte, 0, 0);
-
-        if (err != CE_None)
-        {
-            throw std::runtime_error("Failed to write tile to GeoTIFF");
-        }
-    }
+    constexpr int kPreferredBlockSize = 512;
+    constexpr int kTiffBlockMultiple = 16;
+    const int block_size = std::gcd(tile_size, kPreferredBlockSize);
+    return block_size % kTiffBlockMultiple == 0 ? block_size : kPreferredBlockSize;
 }
 
-// Helper: Create GDAL GeoTIFF dataset for DSM (single float32 band)
-GDALDatasetPtr createDSMGeoTIFF(const std::string &path, int width, int height, double min_x, double max_y, double gsd,
-                                const std::string &wkt)
+template <typename T>
+void writeInterleavedWindow(GDALDatasetH dataset, int x_offset, int y_offset, int width, int height,
+                            const std::vector<T> &buffer)
 {
-    GDALAllRegister();
-
-    GDALDriverH driver = GDALGetDriverByName("GTiff");
-    if (!driver)
-    {
-        throw std::runtime_error("GTiff driver not available");
-    }
-
-    char **options = nullptr;
-    options = CSLSetNameValue(options, "TILED", "YES");
-    options = CSLSetNameValue(options, "BLOCKXSIZE", "512");
-    options = CSLSetNameValue(options, "BLOCKYSIZE", "512");
-    options = CSLSetNameValue(options, "COMPRESS", "DEFLATE");
-    options = CSLSetNameValue(options, "PREDICTOR", "2");
-    options = CSLSetNameValue(options, "NUM_THREADS", "ALL_CPUS");
-    options = CSLSetNameValue(options, "BIGTIFF", "IF_SAFER");
-    options = CSLSetNameValue(options, "SPARSE_OK", "YES");
-
-    GDALDatasetH dataset = GDALCreate(driver, path.c_str(), width, height, 1, GDT_Float32, options);
-
-    CSLDestroy(options);
-
-    if (!dataset)
-    {
-        throw std::runtime_error("Failed to create DSM GeoTIFF: " + path);
-    }
-
-    GDALDatasetWrapper ds_wrapper(dataset);
-
-    // Set geotransform: [min_x, gsd, 0, max_y, 0, -gsd]
-    double geotransform[6] = {min_x, gsd, 0, max_y, 0, -gsd};
-    ds_wrapper.SetGeoTransform(geotransform);
-
-    // Set projection
-    if (!wkt.empty())
-    {
-        ds_wrapper.SetProjection(wkt.c_str());
-    }
-
-    // Set nodata value for DSM
-    GDALRasterBandWrapper band_wrapper(ds_wrapper.GetRasterBand(1));
-    band_wrapper.SetNoDataValue(std::numeric_limits<float>::quiet_NaN());
-
-    return GDALDatasetPtr(dataset);
+    const int bands = GDALGetRasterCount(dataset);
+    static_assert(std::is_same_v<T, uint8_t> || std::is_same_v<T, float>);
+    constexpr GDALDataType type = std::is_same_v<T, float> ? GDT_Float32 : GDT_Byte;
+    const int pixel_space = bands * sizeof(T);
+    CPLErr err =
+        GDALDatasetRasterIO(dataset, GF_Write, x_offset, y_offset, width, height, const_cast<T *>(buffer.data()), width,
+                            height, type, bands, nullptr, pixel_space, pixel_space * width, sizeof(T));
+    if (err != CE_None)
+        throw std::runtime_error(std::string("Failed to write tile to ") + GDALGetDescription(dataset));
 }
 
 std::vector<float> computeDSMTile(int tile_x, int tile_y, int tile_size, const OrthoMosaicBounds &bounds, double gsd,
@@ -1000,8 +936,8 @@ std::vector<float> computeDSMTile(int tile_x, int tile_y, int tile_size, const O
                 int global_col = x_offset + local_col;
                 int global_row = y_offset + local_row;
 
-                const double x = global_col * gsd + bounds.min_x;
-                const double y = bounds.max_y - global_row * gsd;
+                const Eigen::Vector2d centre = pixelCentre(bounds, gsd, global_col, global_row);
+                const double x = centre.x(), y = centre.y();
 
                 const ray_d intersectionRay{{0, 0, -1}, {x, y, mean_camera_z}};
                 double z = NAN;
@@ -1030,25 +966,6 @@ std::vector<float> computeDSMTile(int tile_x, int tile_y, int tile_size, const O
     }
 
     return tile_buffer;
-}
-
-void writeDSMTile(GDALDatasetH dataset, int tile_x, int tile_y, int tile_size, int output_width, int output_height,
-                  const std::vector<float> &tile_buffer)
-{
-    int x_offset = tile_x * tile_size;
-    int y_offset = tile_y * tile_size;
-    int tile_width = std::min(tile_size, output_width - x_offset);
-    int tile_height = std::min(tile_size, output_height - y_offset);
-
-    GDALRasterBandWrapper band_wrapper(GDALGetRasterBand(dataset, 1));
-    CPLErr err =
-        band_wrapper.RasterIO(GF_Write, x_offset, y_offset, tile_width, tile_height,
-                              const_cast<float *>(tile_buffer.data()), tile_width, tile_height, GDT_Float32, 0, 0);
-
-    if (err != CE_None)
-    {
-        throw std::runtime_error("Failed to write DSM tile to GeoTIFF");
-    }
 }
 
 namespace
@@ -1327,15 +1244,16 @@ TileUpdate tileUpdate(const std::vector<uint8_t> &rgba, int x_offset, int y_offs
 
 void buildOverviews(GDALDatasetH dataset, int width, int height)
 {
+    constexpr int kGdaladdoMinOverviewSize = 256;
     std::vector<int> overview_levels;
-    for (int level = 2; level < std::min(width, height); level *= 2)
+    for (int level = 2; std::max(width, height) / level >= kGdaladdoMinOverviewSize; level *= 2)
         overview_levels.push_back(level);
     if (overview_levels.empty())
         return;
 
-    GDALDatasetWrapper wrapper(dataset);
     CPLSetThreadLocalConfigOption("GDAL_NUM_THREADS", "ALL_CPUS");
-    CPLErr err = wrapper.BuildOverviews("AVERAGE", static_cast<int>(overview_levels.size()), overview_levels.data());
+    CPLErr err = GDALBuildOverviews(dataset, "AVERAGE", static_cast<int>(overview_levels.size()),
+                                    overview_levels.data(), 0, nullptr, nullptr, nullptr);
     CPLSetThreadLocalConfigOption("GDAL_NUM_THREADS", nullptr);
     if (err != CE_None)
         spdlog::warn("Failed to build overviews for {}", GDALGetDescription(dataset));
@@ -1363,8 +1281,9 @@ std::vector<uint8_t> renderTile(int tile_x, int tile_y, int tile_size, const Ort
     const int blocks_x = (tile_width + kBlockSize - 1) / kBlockSize;
     const int blocks_y = (tile_height + kBlockSize - 1) / kBlockSize;
 
-    auto world_x = [&](double local_col) { return (x_offset + local_col) * gsd + bounds.min_x; };
-    auto world_y = [&](double local_row) { return bounds.max_y - (y_offset + local_row) * gsd; };
+    auto localPixelCentre = [&](double local_col, double local_row) {
+        return pixelCentre(bounds, gsd, x_offset + local_col, y_offset + local_row);
+    };
 
 #pragma omp parallel
     {
@@ -1399,9 +1318,10 @@ std::vector<uint8_t> renderTile(int tile_x, int tile_y, int tile_size, const Ort
 
             cameras.clear();
             samples.clear();
-            const auto &candidates = tree_searcher.search(
-                {world_x(0.5 * (col_begin + col_end - 1)), world_y(0.5 * (row_begin + row_end - 1))}, INFINITY,
-                kBlockCandidates);
+            const Eigen::Vector2d block_centre =
+                localPixelCentre(0.5 * (col_begin + col_end - 1), 0.5 * (row_begin + row_end - 1));
+            const auto &candidates =
+                tree_searcher.search({block_centre.x(), block_centre.y()}, INFINITY, kBlockCandidates);
             for (const auto &candidate : candidates)
             {
                 auto &cam = cameras.emplace_back();
@@ -1419,7 +1339,8 @@ std::vector<uint8_t> renderTile(int tile_x, int tile_y, int tile_size, const Ort
                     const float z = dsm_tile[local_row * tile_width + local_col];
                     if (std::isnan(z))
                         continue;
-                    const Eigen::Vector3d sample_point(world_x(local_col), world_y(local_row), z);
+                    Eigen::Vector3d sample_point;
+                    sample_point << localPixelCentre(local_col, local_row), z;
 
                     rank.resize(cameras.size());
                     std::iota(rank.begin(), rank.end(), 0);
@@ -1504,16 +1425,11 @@ void generateGeoTIFF(const std::vector<surface_model> &surfaces, const Measureme
 
     OrthoMosaicContext context = prepareOrthoMosaicContext(surfaces, graph, ImageResolution::FullResolution);
 
-    int width = static_cast<int>((context.bounds.max_x - context.bounds.min_x) / context.gsd);
-    int height = static_cast<int>((context.bounds.max_y - context.bounds.min_y) / context.gsd);
-
-    if (width <= 0)
-        width = 100;
-    if (height <= 0)
-        height = 100;
+    int width, height;
+    rasterSizeCovering(context.bounds, context.gsd, width, height);
 
     clampOutputResolution(context.gsd, width, height, context, graph, "Orthomosaic");
-    clampOutputMegapixels(context.gsd, width, height, config.max_output_megapixels, "Orthomosaic");
+    clampOutputMegapixels(context.gsd, width, height, context.bounds, config.max_output_megapixels, "Orthomosaic");
 
     const OrthoMosaicBounds &bounds = context.bounds;
     double gsd = context.gsd;
@@ -1521,11 +1437,13 @@ void generateGeoTIFF(const std::vector<surface_model> &surfaces, const Measureme
 
     spdlog::info("GSD: {}  Output dimensions: {}x{} pixels", gsd, width, height);
 
-    std::string wkt = coord_system.getWKT();
-    GDALDatasetPtr output_ds = createGeoTIFF(output_path, width, height, bounds.min_x, bounds.max_y, gsd, wkt);
+    const int tile_size = config.tile_size;
+    const int block_size = blockSizeDividingTile(tile_size);
+    const std::string wkt = coord_system.getWKT();
+    GDALDatasetPtr output_ds = createGeoTIFF(output_path, width, height, 4, GDT_Byte, block_size, bounds, gsd, wkt);
     GDALDatasetPtr dsm_ds;
     if (!dsm_output_path.empty())
-        dsm_ds = createDSMGeoTIFF(dsm_output_path, width, height, bounds.min_x, bounds.max_y, gsd, wkt);
+        dsm_ds = createGeoTIFF(dsm_output_path, width, height, 1, GDT_Float32, block_size, bounds, gsd, wkt);
 
     ankerl::unordered_dense::map<size_t, Eigen::Matrix3d> inv_rotation_cache;
     for (size_t node_id : context.involved_nodes)
@@ -1537,7 +1455,6 @@ void generateGeoTIFF(const std::vector<surface_model> &surfaces, const Measureme
         }
     }
 
-    int tile_size = config.tile_size;
     int num_tiles_x = (width + tile_size - 1) / tile_size;
     int num_tiles_y = (height + tile_size - 1) / tile_size;
     int total_tiles = num_tiles_x * num_tiles_y;
@@ -1609,18 +1526,17 @@ void generateGeoTIFF(const std::vector<surface_model> &surfaces, const Measureme
         lap(process_s);
 
         if (write_future.valid())
-            write_future.wait();
+            write_future.get();
         lap(write_wait_s);
 
         auto rgba_tile_ptr = std::make_shared<std::vector<uint8_t>>(std::move(rgba_tile));
         auto dsm_tile_ptr = std::make_shared<std::vector<float>>(std::move(dsm_tile));
-        write_future =
-            std::async(std::launch::async, [&, rgba_tile_ptr, dsm_tile_ptr, x_off, y_off, tw, th, tile_x, tile_y] {
-                PerformanceMeasure thread_perf("Ortho - write");
-                writeTileToGeoTIFF(output_ds.get(), x_off, y_off, tw, th, *rgba_tile_ptr);
-                if (dsm_ds)
-                    writeDSMTile(dsm_ds.get(), tile_x, tile_y, tile_size, width, height, *dsm_tile_ptr);
-            });
+        write_future = std::async(std::launch::async, [&, rgba_tile_ptr, dsm_tile_ptr, x_off, y_off, tw, th] {
+            PerformanceMeasure thread_perf("Ortho - write");
+            writeInterleavedWindow(output_ds.get(), x_off, y_off, tw, th, *rgba_tile_ptr);
+            if (dsm_ds)
+                writeInterleavedWindow(dsm_ds.get(), x_off, y_off, tw, th, *dsm_tile_ptr);
+        });
 
         completed_tiles++;
         auto now = std::chrono::steady_clock::now();
@@ -1637,7 +1553,7 @@ void generateGeoTIFF(const std::vector<surface_model> &surfaces, const Measureme
     }
 
     if (write_future.valid())
-        write_future.wait();
+        write_future.get();
 
     spdlog::info("Building overviews...");
     buildOverviews(output_ds.get(), width, height);
@@ -1692,30 +1608,18 @@ void generateTexturedOBJ(const std::vector<surface_model> &surfaces, const std::
     std::string jpg_filename = filename_only(jpg_path);
 
     // Read RGBA from GeoTIFF and write JPEG texture
-    int num_bands = ds.GetRasterCount();
-    int bands_to_read = std::min(num_bands, 3);
-
-    cv::Mat texture(img_height, img_width, CV_8UC3, cv::Scalar(0, 0, 0));
-    for (int b = 0; b < bands_to_read; b++)
+    if (ds.GetRasterCount() < 3)
     {
-        std::vector<uint8_t> band_data(img_width * img_height);
-        GDALRasterBandWrapper band(ds.GetRasterBand(b + 1));
-        CPLErr err = band.RasterIO(GF_Read, 0, 0, img_width, img_height, band_data.data(), img_width, img_height,
-                                   GDT_Byte, 0, 0);
-        if (err != CE_None)
-        {
-            spdlog::error("Failed to read band {} from GeoTIFF", b + 1);
-            return;
-        }
-        // GDAL bands are R=1, G=2, B=3; OpenCV channels are BGR
-        int cv_channel = (b == 0) ? 2 : (b == 2) ? 0 : 1;
-        for (int y = 0; y < img_height; y++)
-        {
-            for (int x = 0; x < img_width; x++)
-            {
-                texture.at<cv::Vec3b>(y, x)[cv_channel] = band_data[y * img_width + x];
-            }
-        }
+        spdlog::error("Expected RGB bands in {}", geotiff_path);
+        return;
+    }
+    int rgb_bands_in_bgr_order[3] = {3, 2, 1};
+    cv::Mat texture(img_height, img_width, CV_8UC3);
+    if (GDALDatasetRasterIO(dataset.get(), GF_Read, 0, 0, img_width, img_height, texture.data, img_width, img_height,
+                            GDT_Byte, 3, rgb_bands_in_bgr_order, 3, static_cast<int>(texture.step), 1) != CE_None)
+    {
+        spdlog::error("Failed to read texture from {}", geotiff_path);
+        return;
     }
     cv::imwrite(jpg_path, texture);
     spdlog::info("Wrote texture: {} ({}x{})", jpg_path, img_width, img_height);

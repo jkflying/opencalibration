@@ -373,6 +373,172 @@ TEST_F(ortho, functional_ortho_scene)
     EXPECT_EQ(result.cameraUUID.pixels(row_y0, col_x10), static_cast<uint32_t>(id1 & 0xFFFFFFFF));
 }
 
+TEST_F(ortho, thumbnail_pixels_are_georeferenced_at_pixel_centres)
+{
+    // GIVEN: a nadir camera over a tilted plane, with a non-square thumbnail where every pixel has a unique colour
+    MeasurementGraph thumb_graph;
+    auto cam_model = std::make_shared<CameraModel>();
+    cam_model->focal_length_pixels = 500;
+    cam_model->principle_point << 500, 375;
+    cam_model->pixels_cols = 1000;
+    cam_model->pixels_rows = 750;
+    cam_model->projection_type = opencalibration::ProjectionType::PLANAR;
+    cam_model->id = 7;
+
+    const int thumb_cols = 50, thumb_rows = 38;
+    image img;
+    img.orientation = Eigen::Quaterniond(Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()));
+    img.position = {0, 0, 40};
+    img.model = cam_model;
+    img.metadata.camera_info.width_px = cam_model->pixels_cols;
+    img.metadata.camera_info.height_px = cam_model->pixels_rows;
+    img.thumbnail = RGBRaster(thumb_rows, thumb_cols, 3);
+    for (int r = 0; r < thumb_rows; r++)
+        for (int c = 0; c < thumb_cols; c++)
+        {
+            img.thumbnail.layers[0].pixels(r, c) = static_cast<uint8_t>(5 * c);
+            img.thumbnail.layers[1].pixels(r, c) = static_cast<uint8_t>(6 * r);
+            img.thumbnail.layers[2].pixels(r, c) = 100;
+        }
+    const image &camera = thumb_graph.getNode(thumb_graph.addNode(std::move(img)))->payload;
+
+    surface_model points_surface;
+    point_cloud cloud;
+    auto plane_z = [](double x, double y) { return 0.3 * x + 0.2 * y; };
+    for (int x = -10; x <= 10; x += 2)
+        for (int y = -10; y <= 10; y += 2)
+            cloud.emplace_back(x, y, plane_z(x, y));
+    points_surface.cloud.push_back(cloud);
+    surface_model surface;
+    surface.mesh = rebuildMesh({camera.position, camera.position + Eigen::Vector3d(1, 0, 0)}, {points_surface});
+
+    // WHEN: we generate the thumbnail orthomosaic
+    const OrthoMosaic result = generateOrthomosaic({surface}, thumb_graph);
+
+    // THEN: the raster covers the bounds and matches the context's georeference
+    const auto expected_bounds = calculateBoundsAndMeanZ({surface});
+    EXPECT_DOUBLE_EQ(result.bounds.min_x, expected_bounds.min_x);
+    EXPECT_DOUBLE_EQ(result.bounds.max_y, expected_bounds.max_y);
+    const auto &pixels = std::get<MultiLayerRaster<uint8_t>>(result.pixelValues);
+    const int width = static_cast<int>(pixels.layers[0].pixels.cols());
+    const int height = static_cast<int>(pixels.layers[0].pixels.rows());
+    EXPECT_GE(width * result.gsd, result.bounds.max_x - result.bounds.min_x);
+    EXPECT_GE(height * result.gsd, result.bounds.max_y - result.bounds.min_y);
+    EXPECT_LT((width - 1) * result.gsd, result.bounds.max_x - result.bounds.min_x);
+    EXPECT_LT((height - 1) * result.gsd, result.bounds.max_y - result.bounds.min_y);
+    ASSERT_EQ(result.dsm.pixels.rows(), height);
+    ASSERT_EQ(result.dsm.pixels.cols(), width);
+
+    // AND: every pixel's DSM height and colour come from the surface/camera at that pixel's centre
+    const Eigen::Matrix3d inv_rotation = camera.orientation.inverse().toRotationMatrix();
+    const Eigen::Vector2d thumb_scale(static_cast<double>(thumb_cols) / cam_model->pixels_cols,
+                                      static_cast<double>(thumb_rows) / cam_model->pixels_rows);
+    const std::vector<surface_model> surfaces{surface};
+    RayTraceContext ray_trace(surfaces);
+    auto onPixelBoundary = [](const Eigen::Vector2d &pixel) {
+        const Eigen::Array2d frac = pixel.array() - pixel.array().floor();
+        return (frac < 1e-6).any() || (frac > 1 - 1e-6).any();
+    };
+    constexpr int kLabRoundTripTolerance = 2;
+    int dsm_checked = 0, colour_checked = 0, dsm_mismatches = 0, colour_mismatches = 0;
+    for (int row = 0; row < height; row++)
+    {
+        for (int col = 0; col < width; col++)
+        {
+            const double x = result.bounds.min_x + (col + 0.5) * result.gsd;
+            const double y = result.bounds.max_y - (row + 0.5) * result.gsd;
+            const double z = ray_trace.traceHeight(x, y, camera.position.z());
+            const float dsm = result.dsm.pixels(row, col);
+            if (std::isnan(z))
+            {
+                dsm_mismatches += !std::isnan(dsm);
+                continue;
+            }
+            dsm_checked++;
+            dsm_mismatches += !(std::abs(dsm - z) < 1e-3);
+
+            const Eigen::Vector2d thumb_pixel =
+                image_from_3d(Eigen::Vector3d(x, y, z), *cam_model, camera.position, inv_rotation)
+                    .cwiseProduct(thumb_scale);
+            if (onPixelBoundary(thumb_pixel))
+                continue;
+            const int tc = static_cast<int>(std::floor(thumb_pixel.x()));
+            const int tr = static_cast<int>(std::floor(thumb_pixel.y()));
+            const uint8_t alpha = pixels.layers[3].pixels(row, col);
+            if (tc < 0 || tc >= thumb_cols || tr < 0 || tr >= thumb_rows)
+            {
+                colour_mismatches += alpha != 0;
+                continue;
+            }
+            colour_checked++;
+            colour_mismatches += alpha != 255 ||
+                                 std::abs(pixels.layers[0].pixels(row, col) - 5 * tc) > kLabRoundTripTolerance ||
+                                 std::abs(pixels.layers[1].pixels(row, col) - 6 * tr) > kLabRoundTripTolerance ||
+                                 std::abs(pixels.layers[2].pixels(row, col) - 100) > kLabRoundTripTolerance;
+        }
+    }
+    EXPECT_GT(dsm_checked, width * height / 4);
+    EXPECT_GT(colour_checked, 500);
+    EXPECT_EQ(dsm_mismatches, 0);
+    EXPECT_EQ(colour_mismatches, 0);
+}
+
+TEST_F(ortho, thumbnail_colour_balance_preserves_channel_order)
+{
+    // GIVEN: two overlapping nadir cameras that both see the same colour with distinct R, G and B
+    const uint8_t rgb[3] = {200, 100, 30};
+    MeasurementGraph balance_graph;
+    auto cam_model = std::make_shared<CameraModel>();
+    cam_model->focal_length_pixels = 500;
+    cam_model->principle_point << 500, 375;
+    cam_model->pixels_cols = 1000;
+    cam_model->pixels_rows = 750;
+    cam_model->projection_type = opencalibration::ProjectionType::PLANAR;
+    cam_model->id = 7;
+    point_cloud camera_locations = {{0, 0, 40}, {10, 0, 40}};
+    for (const auto &position : camera_locations)
+    {
+        image img;
+        img.orientation = Eigen::Quaterniond(Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()));
+        img.position = position;
+        img.model = cam_model;
+        img.metadata.camera_info.width_px = cam_model->pixels_cols;
+        img.metadata.camera_info.height_px = cam_model->pixels_rows;
+        img.thumbnail = RGBRaster(38, 50, 3);
+        for (int c = 0; c < 3; c++)
+            img.thumbnail.layers[c].pixels.fill(rgb[c]);
+        balance_graph.addNode(std::move(img));
+    }
+
+    surface_model points_surface;
+    point_cloud cloud;
+    for (int x = -10; x <= 20; x += 2)
+        for (int y = -10; y <= 10; y += 2)
+            cloud.emplace_back(x, y, 0);
+    points_surface.cloud.push_back(cloud);
+    surface_model surface;
+    surface.mesh = rebuildMesh(camera_locations, {points_surface});
+
+    // WHEN: we generate the thumbnail, which colour balances the cameras against each other
+    const OrthoMosaic result = generateOrthomosaic({surface}, balance_graph);
+
+    // THEN: the balance ran, and every covered pixel still has the input colour in the right channels
+    EXPECT_EQ(result.color_balance.per_image_params.size(), 2u);
+    const auto &pixels = std::get<MultiLayerRaster<uint8_t>>(result.pixelValues);
+    int covered = 0, mismatches = 0;
+    for (Eigen::Index row = 0; row < pixels.layers[0].pixels.rows(); row++)
+        for (Eigen::Index col = 0; col < pixels.layers[0].pixels.cols(); col++)
+        {
+            if (pixels.layers[3].pixels(row, col) == 0)
+                continue;
+            covered++;
+            for (int c = 0; c < 3; c++)
+                mismatches += std::abs(pixels.layers[c].pixels(row, col) - rgb[c]) > 3;
+        }
+    EXPECT_GT(covered, 500);
+    EXPECT_EQ(mismatches, 0);
+}
+
 TEST_F(ortho, measurement_3_images_points)
 {
     // GIVEN: a graph with 3 images and a 3d point based surface model
