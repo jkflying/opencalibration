@@ -79,8 +79,7 @@ TEST(extract_features, downscaled_locations_have_no_half_pixel_bias)
     // GIVEN: a large image with a single symmetric blob at a known pixel centre
     const cv::Point2d centre(2000, 1500);
     cv::Mat image(3000, 4000, CV_8UC3, cv::Scalar(40, 40, 40));
-    cv::circle(image, cv::Point(int(centre.x), int(centre.y)), 40, cv::Scalar(220, 220, 220), cv::FILLED,
-               cv::LINE_AA);
+    cv::circle(image, cv::Point(int(centre.x), int(centre.y)), 40, cv::Scalar(220, 220, 220), cv::FILLED, cv::LINE_AA);
     cv::GaussianBlur(image, image, cv::Size(0, 0), 8);
 
     // WHEN: we extract features, which downsamples the image internally
