@@ -9,6 +9,13 @@
 namespace opencalibration
 {
 
+constexpr int FEATURE_MAX_LENGTH_PIXELS = 1600;
+
+inline Eigen::Vector2d unscale_pixel(const Eigen::Vector2d &scaled_pixel, double scale)
+{
+    return (scaled_pixel.array() + 0.5) / scale - 0.5;
+}
+
 struct extracted_features
 {
     std::vector<feature_2d> features;

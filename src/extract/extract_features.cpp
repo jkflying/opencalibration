@@ -5,76 +5,55 @@
 
 #include <jk/KDTree.h>
 
-namespace opencalibration
+namespace
 {
+using namespace opencalibration;
 
-extracted_features extract_features(const cv::Mat &image)
+std::vector<feature_2d> to_features(const std::vector<cv::KeyPoint> &keypoints, const cv::Mat &descriptors,
+                                    double scale)
 {
-
-    int max_length_pixels = 1600;
-    double nms_pixel_radius = 8;
-    std::vector<feature_2d> results;
-    std::vector<feature_2d> dense;
-
-    if (image.empty())
-    {
-        return {results, 0};
-    }
-
-    cv::Mat image_scaled;
-    cv::cvtColor(image, image_scaled, cv::COLOR_BGR2GRAY);
-    double scale = std::min(1.f, float(max_length_pixels) / std::max(image.size().width, image.size().height));
-    cv::resize(image_scaled, image_scaled, cv::Size(0, 0), scale, scale, cv::INTER_AREA);
-
-    cv::Mat descriptors;
-
-    // TODO: tuning
-
-    std::vector<cv::KeyPoint> keypoints;
-
-    auto akaze = cv::AKAZE::create(cv::AKAZE::DESCRIPTOR_MLDB, feature_2d::DESCRIPTOR_BITS, 3, 0.00005f);
-    akaze->detectAndCompute(image_scaled, cv::noArray(), keypoints, descriptors);
-
-    std::vector<feature_2d> oc_keypoints;
-    oc_keypoints.reserve(keypoints.size());
-
+    std::vector<feature_2d> features;
+    features.reserve(keypoints.size());
     for (size_t i = 0; i < keypoints.size(); i++)
     {
         feature_2d point;
-        point.location.x() = keypoints[i].pt.x / scale;
-        point.location.y() = keypoints[i].pt.y / scale;
+        point.location = unscale_pixel({keypoints[i].pt.x, keypoints[i].pt.y}, scale);
         point.strength = keypoints[i].response;
         point.descriptor.reset();
         const uchar *row = &descriptors.at<uchar>(i, 0);
         for (int j = 0; j < feature_2d::DESCRIPTOR_BITS; j++)
             point.descriptor[j] = (row[j >> 3] >> (j & 7)) & 1;
-        oc_keypoints.push_back(point);
+        features.push_back(point);
     }
+    return features;
+}
 
-    // non-maximal suppression (nearest-neighbor based)
-    std::sort(oc_keypoints.begin(), oc_keypoints.end(),
+extracted_features sparse_first_by_non_maximal_suppression(std::vector<feature_2d> features, double radius)
+{
+    std::sort(features.begin(), features.end(),
               [](const feature_2d &a, const feature_2d &b) -> bool { return a.strength > b.strength; });
 
-    results.reserve(std::min(keypoints.size(), static_cast<size_t>(image_scaled.size().width / nms_pixel_radius *
-                                                                   image_scaled.size().height / nms_pixel_radius)));
+    std::vector<feature_2d> sparse;
+    std::vector<feature_2d> dense;
 
     auto toArray = [](const Eigen::Vector2d &v) -> std::array<double, 2> { return {v.x(), v.y()}; };
     jk::tree::KDTree<size_t, 2, 8> tree;
-    if (oc_keypoints.size() > 0)
+    if (!features.empty())
     {
-        tree.addPoint(toArray(oc_keypoints[0].location), 0);
-        results.push_back(oc_keypoints[0]);
+        tree.addPoint(toArray(features[0].location), 0);
+        sparse.push_back(features[0]);
     }
 
-    auto sqr = [](double d) { return d * d; };
     auto searcher = tree.searcher();
-    for (const feature_2d &f : oc_keypoints)
+    for (size_t i = 1; i < features.size(); i++)
     {
-        const auto &nn = searcher.search(toArray(f.location), std::numeric_limits<double>::infinity(), 1);
-        if (nn[0].distance * sqr(scale) > sqr(nms_pixel_radius))
+        const feature_2d &f = features[i];
+        const auto &nearest = searcher.search(toArray(f.location), std::numeric_limits<double>::infinity(), 1);
+        const double squared_distance = nearest[0].distance;
+        if (squared_distance > radius * radius)
         {
             tree.addPoint(toArray(f.location), 0);
-            results.push_back(f);
+            sparse.push_back(f);
         }
         else
         {
@@ -82,9 +61,37 @@ extracted_features extract_features(const cv::Mat &image)
         }
     }
 
-    size_t num_sparse = results.size();
-    results.insert(results.end(), std::make_move_iterator(dense.begin()), std::make_move_iterator(dense.end()));
-    return {std::move(results), num_sparse};
+    const size_t num_sparse = sparse.size();
+    sparse.insert(sparse.end(), std::make_move_iterator(dense.begin()), std::make_move_iterator(dense.end()));
+    return {std::move(sparse), num_sparse};
+}
+} // namespace
+
+namespace opencalibration
+{
+
+extracted_features extract_features(const cv::Mat &image)
+{
+    const double nms_scaled_pixel_radius = 8;
+
+    if (image.empty())
+    {
+        return {};
+    }
+
+    cv::Mat image_scaled;
+    cv::cvtColor(image, image_scaled, cv::COLOR_BGR2GRAY);
+    const double scale =
+        std::min(1.f, float(FEATURE_MAX_LENGTH_PIXELS) / std::max(image.size().width, image.size().height));
+    cv::resize(image_scaled, image_scaled, cv::Size(0, 0), scale, scale, cv::INTER_AREA);
+
+    std::vector<cv::KeyPoint> keypoints;
+    cv::Mat descriptors;
+    auto akaze = cv::AKAZE::create(cv::AKAZE::DESCRIPTOR_MLDB, feature_2d::DESCRIPTOR_BITS, 3, 0.00005f);
+    akaze->detectAndCompute(image_scaled, cv::noArray(), keypoints, descriptors);
+
+    return sparse_first_by_non_maximal_suppression(to_features(keypoints, descriptors, scale),
+                                                   nms_scaled_pixel_radius / scale);
 }
 
 } // namespace opencalibration

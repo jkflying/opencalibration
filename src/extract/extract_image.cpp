@@ -15,9 +15,30 @@
 
 namespace
 {
-cv::Mat load_image(const std::string &path)
+int largest_decode_reduction_keeping_feature_resolution(const opencalibration::image_metadata &metadata)
 {
-    return cv::imread(path); //, cv::IMREAD_IGNORE_ORIENTATION | cv::IMREAD_COLOR);
+    const size_t max_dim = std::max(metadata.camera_info.width_px, metadata.camera_info.height_px);
+    size_t reduction = 1;
+    while (reduction < 8 && max_dim / (reduction * 2) >= size_t(opencalibration::FEATURE_MAX_LENGTH_PIXELS))
+    {
+        reduction *= 2;
+    }
+    return static_cast<int>(reduction);
+}
+
+cv::Mat load_image(const std::string &path, int reduction)
+{
+    switch (reduction)
+    {
+    case 2:
+        return cv::imread(path, cv::IMREAD_REDUCED_COLOR_2);
+    case 4:
+        return cv::imread(path, cv::IMREAD_REDUCED_COLOR_4);
+    case 8:
+        return cv::imread(path, cv::IMREAD_REDUCED_COLOR_8);
+    default:
+        return cv::imread(path);
+    }
 }
 } // namespace
 
@@ -30,9 +51,13 @@ std::optional<image> extract_image(const std::string &path)
     image img;
     img.path = path;
 
-    PerformanceMeasure p("Load image");
+    PerformanceMeasure p("Load metadata");
+    img.metadata = extract_metadata(img.path);
+
+    p.reset("Load image");
     {
-        const cv::Mat image = load_image(img.path);
+        const int reduction = largest_decode_reduction_keeping_feature_resolution(img.metadata);
+        const cv::Mat image = load_image(img.path, reduction);
 
         if (image.empty())
         {
@@ -55,10 +80,11 @@ std::optional<image> extract_image(const std::string &path)
         auto extracted = extract_features(image);
         img.features = std::move(extracted.features);
         img.num_sparse_features = extracted.num_sparse_features;
+        for (feature_2d &f : img.features)
+        {
+            f.location = unscale_pixel(f.location, 1.0 / reduction);
+        }
     }
-
-    p.reset("Load metadata");
-    img.metadata = extract_metadata(img.path);
 
     img.model = std::make_shared<CameraModel>();
 
@@ -67,7 +93,6 @@ std::optional<image> extract_image(const std::string &path)
     img.model->pixels_rows = img.metadata.camera_info.height_px;
     img.model->principle_point = Eigen::Vector2d(img.model->pixels_cols, img.model->pixels_rows) / 2;
 
-    // Load camera database on first call and apply calibration if available
     static bool db_loaded = CameraDatabase::instance().load(CAMERA_DATABASE_PATH);
     (void)db_loaded;
 
