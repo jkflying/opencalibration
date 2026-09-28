@@ -408,12 +408,12 @@ PipelineState Pipeline::Impl::chooseNextState(PipelineState currentState, Transi
         USM_STATE(transition, State::CAMERA_PARAMETER_RELAX,
                   USM_MAP(Transition::NEXT, State::FINAL_GLOBAL_RELAX, s));
         USM_STATE(transition, State::FINAL_GLOBAL_RELAX,
-                  USM_MAP(Transition::NEXT, State::GENERATE_THUMBNAIL, s));
-        USM_STATE(transition, State::GENERATE_THUMBNAIL,
                   USM_MAP(Transition::NEXT, State::DENSIFY_MESH, s));
         USM_STATE(transition, State::DENSIFY_MESH,
                   USM_MAP(Transition::NEXT, State::DENSE_MESH_RELAX, s));
         USM_STATE(transition, State::DENSE_MESH_RELAX,
+                  USM_MAP(Transition::NEXT, State::GENERATE_THUMBNAIL, s));
+        USM_STATE(transition, State::GENERATE_THUMBNAIL,
                   USM_MAP(Transition::NEXT, State::GENERATE_GEOTIFF, s));
         USM_STATE(transition, State::GENERATE_GEOTIFF,
                   USM_MAP(Transition::NEXT, State::COMPLETE, s));
@@ -494,9 +494,9 @@ void Pipeline::Impl::emit_progress(std::string activity, float local_fraction, b
         {State::INITIAL_GLOBAL_RELAX, 0.12f},
         {State::CAMERA_PARAMETER_RELAX, 0.12f},
         {State::FINAL_GLOBAL_RELAX, 0.05f},
-        {State::GENERATE_THUMBNAIL, 0.05f},
         {State::DENSIFY_MESH, 0.04f},
         {State::DENSE_MESH_RELAX, 0.03f},
+        {State::GENERATE_THUMBNAIL, 0.05f},
         {State::GENERATE_GEOTIFF, 0.24f},
     }};
 

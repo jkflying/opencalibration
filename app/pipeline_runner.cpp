@@ -96,7 +96,7 @@ int main(int argc, char *argv[])
                      "Restore and resume from checkpoint directory");
     args.addArgument({"--resume-from"}, &resume_from,
                      "Resume from specific stage (INITIAL_PROCESSING, INITIAL_GLOBAL_RELAX, CAMERA_PARAMETER_RELAX, "
-                     "FINAL_GLOBAL_RELAX, MESH_REFINEMENT, GENERATE_THUMBNAIL, DENSIFY_MESH, DENSE_MESH_RELAX, "
+                     "FINAL_GLOBAL_RELAX, MESH_REFINEMENT, DENSIFY_MESH, DENSE_MESH_RELAX, GENERATE_THUMBNAIL, "
                      "GENERATE_GEOTIFF)");
     args.addArgument({"--update-camera-db"}, &update_camera_db,
                      "Update camera database with optimized parameters after pipeline completes");
@@ -190,7 +190,7 @@ int main(int argc, char *argv[])
     {
         spdlog::error("Unrecognized --resume-from state: '{}'. Valid states: INITIAL_PROCESSING, "
                       "INITIAL_GLOBAL_RELAX, CAMERA_PARAMETER_RELAX, FINAL_GLOBAL_RELAX, MESH_REFINEMENT, "
-                      "GENERATE_THUMBNAIL, DENSIFY_MESH, DENSE_MESH_RELAX, GENERATE_GEOTIFF",
+                      "DENSIFY_MESH, DENSE_MESH_RELAX, GENERATE_THUMBNAIL, GENERATE_GEOTIFF",
                       resume_from);
         return -1;
     }
