@@ -1182,7 +1182,7 @@ std::vector<TrackRay> RelaxProblem::addTriangulatedTrackCost(const std::vector<T
         ray_scores[i] = {(p_cam.normalized() - rays[i].camera_ray.normalized()).norm(), i};
     }
 
-    const std::vector<TrackRay> good_rays = selectInlierRays(ray_scores, rays);
+    std::vector<TrackRay> good_rays = selectInlierRays(ray_scores, rays);
     if (good_rays.size() < 3 ||
         std::none_of(good_rays.begin(), good_rays.end(), [](const TrackRay &r) { return r.optimize; }))
         return {};

@@ -39,7 +39,7 @@ class BufferedIStream
             _pos++;
         return c;
     }
-    size_t Tell() const
+    [[nodiscard]] size_t Tell() const
     {
         return _consumed + _pos;
     }

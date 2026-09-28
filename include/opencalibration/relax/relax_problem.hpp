@@ -191,12 +191,16 @@ class RelaxProblem
     };
     struct RobustResidualGroup
     {
+        RobustResidualGroup(const char *name, bool nextSolveAtNominalScale)
+            : name(name), nextSolveAtNominalScale(nextSolveAtNominalScale)
+        {
+        }
         const char *name;
         bool nextSolveAtNominalScale;
         bool atNominalScale = false;
         double scale = 1;
-        std::vector<RobustBlock> blocks{};
-        std::map<int, std::unique_ptr<ceres::LossFunctionWrapper>> lossesByDegreesOfFreedom{};
+        std::vector<RobustBlock> blocks;
+        std::map<int, std::unique_ptr<ceres::LossFunctionWrapper>> lossesByDegreesOfFreedom;
     };
     RobustResidualGroup _ray_residuals{"ray", false}, _mesh_point_residuals{"mesh point", true};
     void addRobustBlock(RobustResidualGroup &group, ceres::CostFunction *cost, int dof,

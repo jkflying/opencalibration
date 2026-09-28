@@ -814,13 +814,13 @@ MeshTriangle sortedTriangle(size_t a, size_t b, size_t c)
 
 namespace
 {
-std::optional<Eigen::Vector3d> barycentricInXy(const Eigen::Vector2d &p, const Eigen::Vector2d &a,
-                                               const Eigen::Vector2d &b, const Eigen::Vector2d &c)
+Eigen::Vector3d barycentricInXy(const Eigen::Vector2d &p, const Eigen::Vector2d &a, const Eigen::Vector2d &b,
+                                const Eigen::Vector2d &c)
 {
     const Eigen::Vector2d v0 = b - a, v1 = c - a, v2 = p - a;
     const double d = v0.x() * v1.y() - v1.x() * v0.y();
     if (std::abs(d) < 1e-12)
-        return std::nullopt;
+        return Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN());
     const double l1 = (v2.x() * v1.y() - v1.x() * v2.y()) / d;
     const double l2 = (v0.x() * v2.y() - v2.x() * v0.y()) / d;
     return Eigen::Vector3d(1 - l1 - l2, l1, l2);
@@ -853,11 +853,11 @@ std::vector<MeshPointSample> sampleMeshPoints(const MeshGraph &mesh, const std::
         const auto *n2 = mesh.getNode(verts[2]);
         if (!n0 || !n1 || !n2)
             continue;
-        auto bary = barycentricInXy(p.head<2>(), n0->payload.location.head<2>(), n1->payload.location.head<2>(),
-                                    n2->payload.location.head<2>());
-        if (!bary)
+        const Eigen::Vector3d bary = barycentricInXy(p.head<2>(), n0->payload.location.head<2>(),
+                                                     n1->payload.location.head<2>(), n2->payload.location.head<2>());
+        if (!bary.allFinite())
             continue;
-        samples[pi] = MeshPointSample{verts, *bary, p.z()};
+        samples[pi] = MeshPointSample{verts, bary, p.z()};
         valid[pi] = 1;
     }
 

@@ -16,7 +16,6 @@
 #include <algorithm>
 #include <mutex>
 #include <numeric>
-#include <optional>
 
 namespace
 {
@@ -108,8 +107,10 @@ class CellSortedFeatures
         }
     }
 
-    std::optional<size_t> ratioTestMatchNear(const opencalibration::feature_2d &query,
-                                             const Eigen::Vector2d &center) const
+    static constexpr size_t NO_MATCH = std::numeric_limits<size_t>::max();
+
+    [[nodiscard]] size_t ratioTestMatchNear(const opencalibration::feature_2d &query,
+                                            const Eigen::Vector2d &center) const
     {
         size_t nearby = 0;
         double best_dist = std::numeric_limits<double>::infinity();
@@ -135,11 +136,11 @@ class CellSortedFeatures
         });
 
         if (nearby == 0)
-            return std::nullopt;
+            return NO_MATCH;
         bool good_match =
             nearby >= 2 ? best_dist < RATIO_THRESHOLD * second_best_dist : best_dist < MAX_ABSOLUTE_DESCRIPTOR_DISTANCE;
         if (!good_match)
-            return std::nullopt;
+            return NO_MATCH;
         return _imageFeatureIndex[best_slot];
     }
 
@@ -151,7 +152,7 @@ class CellSortedFeatures
         return static_cast<int>(std::floor(offset * (1 / CELL_SIZE_PIXELS)));
     }
 
-    size_t cellIndex(int row, int col) const
+    [[nodiscard]] size_t cellIndex(int row, int col) const
     {
         return static_cast<size_t>(row) * _cols + col;
     }
@@ -435,18 +436,17 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
                 if (cand_features == features_by_node.end())
                     continue;
 
-                auto forward = cand_features->second->ratioTestMatchNear(feat, predicted);
-                if (!forward)
+                const size_t forward = cand_features->second->ratioTestMatchNear(feat, predicted);
+                if (forward == CellSortedFeatures::NO_MATCH)
                     continue;
 
                 // Mutual check: the candidate's best match back in the source image must be this feature. Centre the
                 // reverse search where the candidate maps to, assuming the local src->cand offset is a translation.
-                const auto &cand_feat = cand_img.features[*forward];
+                const auto &cand_feat = cand_img.features[forward];
                 const Eigen::Vector2d reverse_center = feat.location + (cand_feat.location - predicted);
-                auto reverse = src_features.ratioTestMatchNear(cand_feat, reverse_center);
-                if (reverse && *reverse == global_fi)
+                if (src_features.ratioTestMatchNear(cand_feat, reverse_center) == global_fi)
                 {
-                    local_matches.push_back({src_id, measurementId(cand_nid, *forward)});
+                    local_matches.push_back({src_id, measurementId(cand_nid, forward)});
                 }
             }
         }
