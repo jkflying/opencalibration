@@ -1,49 +1,29 @@
 #include <opencalibration/io/saveXYZ.hpp>
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
 namespace opencalibration
 {
 
 bool toXYZ(const std::vector<surface_model> &surfaces, std::ostream &out,
            const std::array<std::pair<int64_t, int64_t>, 3> &bounds)
 {
+    const bool unbounded = std::all_of(bounds.begin(), bounds.end(), [](const auto &b) { return b.first == b.second; });
+    auto inbounds = [&bounds, unbounded](const Eigen::Vector3d &v) {
+        for (size_t i = 0; i < bounds.size(); i++)
+            if (!unbounded && !(bounds[i].first <= v[i] && v[i] < bounds[i].second))
+                return false;
+        return true;
+    };
 
-    std::function<bool(const Eigen::Vector3d &)> inbounds;
-
-    if (bounds[0].first == bounds[0].second && bounds[1].first == bounds[1].second &&
-        bounds[2].first == bounds[2].second)
-    {
-        inbounds = [](const Eigen::Vector3d &) -> bool { return true; };
-    }
-    else
-    {
-        inbounds = [&bounds](const Eigen::Vector3d &v) -> bool {
-            bool res = true;
-            for (size_t i = 0; i < bounds.size(); i++)
-            {
-                res &= bounds[i].first < v[i] && v[i] < bounds[i].second;
-            }
-            return res;
-        };
-    }
-
-    std::ostringstream buffer;
-
+    out.precision(std::numeric_limits<double>::max_digits10);
     for (const auto &s : surfaces)
-    {
         for (const auto &c : s.cloud)
-        {
             for (const auto &p : c)
-            {
                 if (inbounds(p))
-                {
-                    buffer << p.x() << "," << p.y() << "," << p.z() << "\n";
-                }
-            }
-            out << buffer.str();
-            buffer.str("");
-            buffer.clear();
-        }
-    }
+                    out << p.x() << "," << p.y() << "," << p.z() << "\n";
     return true;
 }
 
@@ -60,7 +40,7 @@ std::array<std::pair<int64_t, int64_t>, 3> filterOutliers(const std::vector<surf
             {
                 for (size_t i = 0; i < count_map.size(); i++)
                 {
-                    count_map[i][static_cast<int64_t>(p[i])]++;
+                    count_map[i][static_cast<int64_t>(std::floor(p[i]))]++;
                 }
                 total++;
             }
@@ -93,12 +73,10 @@ std::array<std::pair<int64_t, int64_t>, 3> filterOutliers(const std::vector<surf
             highSum += counts[highIndex--].second;
         }
 
-        int64_t lowBound = counts[lowIndex].first;
-        int64_t highBound = counts[highIndex].first;
-        int64_t width = (highBound - lowBound) * 2;
-        int64_t mid = lowBound + width / 2;
-
-        return {mid - width, mid + width};
+        const int64_t lowBound = counts[lowIndex].first;
+        const int64_t highBound = counts[highIndex].first + 1;
+        const int64_t extent = highBound - lowBound;
+        return {lowBound - extent, highBound + extent};
     };
 
     return {dimbox(count_map[0], total), dimbox(count_map[1], total), dimbox(count_map[2], total)};

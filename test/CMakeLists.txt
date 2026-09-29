@@ -51,12 +51,14 @@ add_executable(unit_tests gtest_main.cpp
                           test_raster.cpp
                           test_relax.cpp
                           test_relax_options.cpp
+                          test_save_xyz.cpp
                           test_tile_ordering.cpp
                           test_tree.cpp)
 
 target_link_libraries(unit_tests PUBLIC gtest pthread oc_geo_coord
                                                       oc_match
                                                       oc_geometry
+                                                      oc_io
                                                       oc_model_inliers
                                                       oc_ortho
                                                       oc_relax
