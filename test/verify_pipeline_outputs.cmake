@@ -15,6 +15,13 @@ set(EXPECTED_FILES
     test_checkpoint/features.json.zst
 )
 
+if(CLEAN)
+    list(TRANSFORM EXPECTED_FILES PREPEND "${TEST_DIR}/")
+    file(REMOVE ${EXPECTED_FILES})
+    file(REMOVE_RECURSE "${TEST_DIR}/test_checkpoint")
+    return()
+endif()
+
 set(ALL_PASSED TRUE)
 foreach(F ${EXPECTED_FILES})
     set(FULL_PATH "${TEST_DIR}/${F}")

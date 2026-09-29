@@ -194,6 +194,11 @@ int main(int argc, char *argv[])
                       resume_from);
         return -1;
     }
+    if (!resume_from.empty() && checkpoint_restore.empty())
+    {
+        spdlog::error("--resume-from requires --checkpoint-restore");
+        return -1;
+    }
 
     Pipeline p(batch_size);
     p.set_generate_thumbnails(generate_thumbnails);
@@ -219,6 +224,11 @@ int main(int argc, char *argv[])
                 stage = s.name;
             }
         }
+        if (resume_state && stage.empty())
+        {
+            spdlog::error("No checkpoint for stage {} in {}", resume_from, checkpoint_restore);
+            return -1;
+        }
         spdlog::info("Loading checkpoint {} from {}", stage.empty() ? "latest" : stage, checkpoint_restore);
         if (!p.loadCheckpoint(checkpoint_restore, stage))
         {
@@ -227,19 +237,10 @@ int main(int argc, char *argv[])
         }
         spdlog::info("Loaded checkpoint, current state: {}", Pipeline::toString(p.getState()));
 
-        if (!resume_from.empty())
+        if (resume_state && !p.resumeFromState(*resume_state))
         {
-            auto target_state_opt = Pipeline::fromString(resume_from);
-            if (!target_state_opt)
-            {
-                spdlog::error("Unknown state: {}", resume_from);
-                return -1;
-            }
-            if (!p.resumeFromState(*target_state_opt))
-            {
-                spdlog::error("Failed to resume from state {}", resume_from);
-                return -1;
-            }
+            spdlog::error("Failed to resume from state {}", resume_from);
+            return -1;
         }
     }
 

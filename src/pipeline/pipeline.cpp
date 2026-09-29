@@ -24,7 +24,6 @@
 
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <deque>
 #include <iostream>
 #include <mutex>
@@ -65,6 +64,51 @@ cv::Mat packCameraIdLow24BitsIntoRgb(const opencalibration::RasterLayer<int32_t>
     return packed;
 }
 
+struct MeshScale
+{
+    double gsd = 0.01;
+    double meanImageSize = 0;
+};
+
+MeshScale estimateMeshScale(const opencalibration::MeasurementGraph &graph,
+                            const std::vector<opencalibration::surface_model> &surfaces)
+{
+    double meanSurfaceZ = 0;
+    size_t surfNodeCount = 0;
+    for (const auto &surface : surfaces)
+    {
+        for (auto it = surface.mesh.cnodebegin(); it != surface.mesh.cnodeend(); ++it)
+        {
+            meanSurfaceZ += it->second.payload.location.z();
+            surfNodeCount++;
+        }
+    }
+    if (surfNodeCount > 0)
+        meanSurfaceZ /= surfNodeCount;
+
+    double meanCameraZ = 0;
+    double meanArcPerPixel = 0;
+    double meanImageSize = 0;
+    size_t camCount = 0;
+    for (auto it = graph.cnodebegin(); it != graph.cnodeend(); ++it)
+    {
+        const auto &payload = it->second.payload;
+        if (!payload.model || payload.model->focal_length_pixels <= 0 || !payload.position.allFinite())
+            continue;
+        meanCameraZ += payload.position.z();
+        meanArcPerPixel += 1.0 / payload.model->focal_length_pixels;
+        meanImageSize += static_cast<double>(std::max(payload.model->pixels_cols, payload.model->pixels_rows));
+        camCount++;
+    }
+
+    if (camCount == 0)
+        return {};
+    meanCameraZ /= camCount;
+    meanArcPerPixel /= camCount;
+    meanImageSize /= camCount;
+    return {std::max(0.001, std::abs(meanCameraZ - meanSurfaceZ) * meanArcPerPixel), meanImageSize};
+}
+
 } // namespace
 
 namespace opencalibration
@@ -93,10 +137,14 @@ struct Pipeline::Impl : public usm::StateMachine<PipelineState, PipelineTransiti
     std::unique_ptr<LinkStage> link_stage;
     std::unique_ptr<RelaxStage> relax_stage;
 
-    std::condition_variable queue_condition_variable;
     std::mutex queue_mutex;
     std::mutex progress_mutex;
     std::deque<std::string> add_queue;
+    size_t queue_size()
+    {
+        std::lock_guard<std::mutex> guard(queue_mutex);
+        return add_queue.size();
+    }
 
     jk::tree::KDTree<size_t, 2> imageGPSLocations;
 
@@ -128,7 +176,8 @@ struct Pipeline::Impl : public usm::StateMachine<PipelineState, PipelineTransiti
     Impl(size_t batch_size_, size_t parallelism_)
         : usm::StateMachine<PipelineState, PipelineTransition>(State::INITIAL_PROCESSING), load_stage(new LoadStage()),
           link_stage(new LinkStage()), relax_stage(new RelaxStage()), step_callback([](const StepCompletionInfo &) {}),
-          batch_size(batch_size_), parallelism(parallelism_ == 0 ? omp_get_num_procs() : parallelism_)
+          batch_size(std::max<size_t>(batch_size_, 1)),
+          parallelism(parallelism_ == 0 ? omp_get_num_procs() : parallelism_)
     {
         cv::setNumThreads(1);
     }
@@ -172,7 +221,6 @@ void Pipeline::add(const std::vector<std::string> &paths)
 {
     std::lock_guard<std::mutex> guard(_impl->queue_mutex);
     _impl->add_queue.insert(_impl->add_queue.end(), paths.begin(), paths.end());
-    _impl->queue_condition_variable.notify_all();
 }
 
 const MeasurementGraph &Pipeline::getGraph() const
@@ -277,8 +325,18 @@ PipelineState Pipeline::getState() const
 bool Pipeline::saveCheckpoint(const std::string &checkpoint_dir)
 {
     CheckpointData data;
-    data.graph = _impl->graph;
-    data.surfaces = _impl->surfaces;
+    data.graph = std::move(_impl->graph);
+    data.surfaces = std::move(_impl->surfaces);
+    struct MoveBack
+    {
+        Impl &impl;
+        CheckpointData &data;
+        ~MoveBack()
+        {
+            impl.graph = std::move(data.graph);
+            impl.surfaces = std::move(data.surfaces);
+        }
+    } move_back{*_impl, data};
     data.origin_latitude = _impl->coordinate_system.getOriginLatitude();
     data.origin_longitude = _impl->coordinate_system.getOriginLongitude();
     data.state = _impl->getState();
@@ -365,29 +423,11 @@ std::string Pipeline::toString(PipelineState state)
 
 std::optional<PipelineState> Pipeline::fromString(const std::string &str)
 {
-    if (str == "INITIAL_PROCESSING" || str == "Initial Processing")
-        return PipelineState::INITIAL_PROCESSING;
-    if (str == "INITIAL_GLOBAL_RELAX" || str == "Initial global Relax")
-        return PipelineState::INITIAL_GLOBAL_RELAX;
-    if (str == "CAMERA_PARAMETER_RELAX" || str == "Camera Parameter Relax")
-        return PipelineState::CAMERA_PARAMETER_RELAX;
-    if (str == "FINAL_GLOBAL_RELAX" || str == "Final Global Relax")
-        return PipelineState::FINAL_GLOBAL_RELAX;
-    if (str == "MESH_REFINEMENT" || str == "Mesh Refinement")
-        return PipelineState::MESH_REFINEMENT;
-    if (str == "GENERATE_THUMBNAIL" || str == "Generate Thumbnail")
-        return PipelineState::GENERATE_THUMBNAIL;
-    if (str == "DENSIFY_MESH" || str == "Densify Mesh")
-        return PipelineState::DENSIFY_MESH;
-    if (str == "DENSE_MESH_RELAX" || str == "Dense Mesh Relax")
-        return PipelineState::DENSE_MESH_RELAX;
-    if (str == "GENERATE_GEOTIFF" || str == "Generate GeoTIFF" || str == "GENERATE_LAYERS" ||
-        str == "Generate Layers" || str == "BLEND_LAYERS" || str == "Blend Layers" || str == "COLOR_BALANCE" ||
-        str == "Color Balance" || str == "GENERATE_DSM" || str == "Generate DSM")
-        return PipelineState::GENERATE_GEOTIFF;
-    if (str == "COMPLETE" || str == "Complete")
-        return PipelineState::COMPLETE;
-
+    if (auto state = stringToPipelineState(str))
+        return state;
+    for (int i = 0; i <= static_cast<int>(PipelineState::COMPLETE); i++)
+        if (toString(static_cast<PipelineState>(i)) == str)
+            return static_cast<PipelineState>(i);
     return std::nullopt;
 }
 
@@ -447,7 +487,7 @@ Pipeline::Impl::Transition Pipeline::Impl::runCurrentState(PipelineState current
     switch (currentState)
     {
     case State::INITIAL_PROCESSING: {
-        size_t total = graph.size_nodes() + add_queue.size();
+        size_t total = graph.size_nodes() + queue_size();
         local = total > 0 ? float(graph.size_nodes()) / float(total) : 1.f;
         break;
     }
@@ -514,7 +554,7 @@ void Pipeline::Impl::emit_progress(std::string activity, float local_fraction, b
     }
 
     StepCompletionInfo info{next_loaded_ids,    next_linked_ids,     next_relaxed_ids,
-                            graph.size_nodes(), add_queue.size(),    current,
+                            graph.size_nodes(), queue_size(),        current,
                             stateRunCount(),    std::move(activity), completed_weight + current_weight * local_fraction,
                             local_fraction,     surfaces_updated,    std::move(tile_update)};
     std::lock_guard<std::mutex> guard(progress_mutex);
@@ -734,44 +774,9 @@ Pipeline::Impl::Transition Pipeline::Impl::mesh_refinement()
         USM_DECISION_TABLE(Transition::NEXT, );
     }
 
-    double meanSurfaceZ = 0;
-    size_t surfNodeCount = 0;
-    for (const auto &surface : surfaces)
-    {
-        for (auto it = surface.mesh.cnodebegin(); it != surface.mesh.cnodeend(); ++it)
-        {
-            meanSurfaceZ += it->second.payload.location.z();
-            surfNodeCount++;
-        }
-    }
-    if (surfNodeCount > 0)
-        meanSurfaceZ /= surfNodeCount;
-
-    double meanCameraZ = 0;
-    double meanArcPerPixel = 0;
-    double meanImageSize = 0;
-    size_t camCount = 0;
-    for (auto it = graph.cnodebegin(); it != graph.cnodeend(); ++it)
-    {
-        const auto &payload = it->second.payload;
-        if (!payload.model || payload.model->focal_length_pixels <= 0 || !payload.position.allFinite())
-            continue;
-        meanCameraZ += payload.position.z();
-        meanArcPerPixel += 1.0 / payload.model->focal_length_pixels;
-        meanImageSize += static_cast<double>(std::max(payload.model->pixels_cols, payload.model->pixels_rows));
-        camCount++;
-    }
-
-    double gsd = 0.01;
-    double reducedGsd = 0.0;
-    if (camCount > 0)
-    {
-        meanCameraZ /= camCount;
-        meanArcPerPixel /= camCount;
-        meanImageSize /= camCount;
-        gsd = std::max(0.001, std::abs(meanCameraZ - meanSurfaceZ) * meanArcPerPixel);
-        reducedGsd = std::sqrt(static_cast<double>(maxPointsPerTriangle) / 8.0) * gridFraction * meanImageSize * gsd;
-    }
+    const auto [gsd, meanImageSize] = estimateMeshScale(graph, surfaces);
+    const double reducedGsd =
+        std::sqrt(static_cast<double>(maxPointsPerTriangle) / 8.0) * gridFraction * meanImageSize * gsd;
     const double minDistanceStddev = varianceGsdMultiplier * gsd;
     const double minDistanceVariance = minDistanceStddev * minDistanceStddev;
     spdlog::info("Mesh refinement level {}: GSD {:.4f}m, grid fraction {:.4f}, min triangle {:.4f}m",
@@ -883,45 +888,9 @@ Pipeline::Impl::Transition Pipeline::Impl::dense_mesh_relax()
     const double varianceGsdMultiplier = 2.0;
     const double baseGridFraction = 0.05;
 
-    double meanSurfaceZ = 0;
-    size_t surfNodeCount = 0;
-    for (const auto &surface : surfaces)
-    {
-        for (auto it = surface.mesh.cnodebegin(); it != surface.mesh.cnodeend(); ++it)
-        {
-            meanSurfaceZ += it->second.payload.location.z();
-            surfNodeCount++;
-        }
-    }
-    if (surfNodeCount > 0)
-        meanSurfaceZ /= surfNodeCount;
-
-    double meanCameraZ = 0;
-    double meanArcPerPixel = 0;
-    double meanImageSize = 0;
-    size_t camCount = 0;
-    for (auto it = graph.cnodebegin(); it != graph.cnodeend(); ++it)
-    {
-        const auto &payload = it->second.payload;
-        if (!payload.model || payload.model->focal_length_pixels <= 0 || !payload.position.allFinite())
-            continue;
-        meanCameraZ += payload.position.z();
-        meanArcPerPixel += 1.0 / payload.model->focal_length_pixels;
-        meanImageSize += static_cast<double>(std::max(payload.model->pixels_cols, payload.model->pixels_rows));
-        camCount++;
-    }
-
-    double gsd = 0.01;
-    double reducedGsd = 0.0;
-    if (camCount > 0)
-    {
-        meanCameraZ /= camCount;
-        meanArcPerPixel /= camCount;
-        meanImageSize /= camCount;
-        gsd = std::max(0.001, std::abs(meanCameraZ - meanSurfaceZ) * meanArcPerPixel);
-        reducedGsd =
-            std::sqrt(static_cast<double>(maxPointsPerTriangle) / 8.0) * baseGridFraction * meanImageSize * gsd;
-    }
+    const auto [gsd, meanImageSize] = estimateMeshScale(graph, surfaces);
+    const double reducedGsd =
+        std::sqrt(static_cast<double>(maxPointsPerTriangle) / 8.0) * baseGridFraction * meanImageSize * gsd;
     const double minDistanceStddev = varianceGsdMultiplier * gsd;
     const double minDistanceVariance = minDistanceStddev * minDistanceStddev;
 

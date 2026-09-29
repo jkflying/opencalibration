@@ -17,25 +17,46 @@ TEST(pipeline, constructs_with_lots_of_threads)
     std::this_thread::sleep_for(1ms);
 }
 
+namespace
+{
+const std::vector<std::string> kFourImages = {TEST_DATA_DIR "P2530253.JPG", TEST_DATA_DIR "P2540254.JPG",
+                                              TEST_DATA_DIR "P2550255.JPG", TEST_DATA_DIR "P2560256.JPG"};
+
+void runToCompletion(Pipeline &p)
+{
+    while (p.getState() != PipelineState::COMPLETE)
+        p.iterateOnce();
+}
+} // namespace
+
 TEST(pipeline, processes_4_images)
 {
-
     // GIVEN: a pipeline and paths
     Pipeline p(2);
     p.set_skip_camera_param_relax(true);
-    std::string path1 = TEST_DATA_DIR "P2530253.JPG";
-    std::string path2 = TEST_DATA_DIR "P2540254.JPG";
-    std::string path3 = TEST_DATA_DIR "P2550255.JPG";
-    std::string path4 = TEST_DATA_DIR "P2560256.JPG";
 
-    // WHEN: we add the paths
-    p.add({path1, path2, path3, path4});
+    // WHEN: we add the paths and run to completion
+    p.add(kFourImages);
+    runToCompletion(p);
 
-    // THEN: after some time they should all be processed
-    while (p.getState() != PipelineState::COMPLETE)
-    {
-        p.iterateOnce();
-    }
+    // THEN: every image is loaded, linked and has a surface
+    EXPECT_EQ(p.getGraph().size_nodes(), 4u);
+    EXPECT_GT(p.getGraph().size_edges(), 0u);
+    EXPECT_FALSE(p.getSurfaces().empty());
+}
+
+TEST(pipeline, batch_size_zero_still_processes_images)
+{
+    // GIVEN: a pipeline with a batch size of zero
+    Pipeline p(0);
+    p.set_skip_camera_param_relax(true);
+
+    // WHEN: we add the paths and run to completion
+    p.add(kFourImages);
+    runToCompletion(p);
+
+    // THEN: every image is loaded
+    EXPECT_EQ(p.getGraph().size_nodes(), 4u);
 }
 
 #include <filesystem>

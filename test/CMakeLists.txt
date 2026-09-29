@@ -70,6 +70,9 @@ set_target_properties(functional_tests unit_tests PROPERTIES CXX_CLANG_TIDY "")
 
 add_custom_target(test
                   USES_TERMINAL
+                  COMMAND ${CMAKE_COMMAND} -DCLEAN=ON
+                    -DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/verify_pipeline_outputs.cmake
                   COMMAND ${CMAKE_BINARY_DIR}/test/unit_tests
                   COMMAND ${CMAKE_BINARY_DIR}/test/functional_tests
                   COMMAND ${CMAKE_BINARY_DIR}/app/pipeline_runner -i "${CMAKE_CURRENT_SOURCE_DIR}/test_data/"

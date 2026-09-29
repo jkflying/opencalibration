@@ -220,6 +220,24 @@ TEST_F(CheckpointTest, resume_from_later_state_fails)
     EXPECT_FALSE(p2.resumeFromState(PipelineState::COMPLETE));
 }
 
+TEST_F(CheckpointTest, resume_follows_execution_order)
+{
+    // GIVEN: a checkpoint taken at mesh refinement, which runs directly after initial processing
+    CheckpointData data;
+    data.state = PipelineState::MESH_REFINEMENT;
+    ASSERT_TRUE(saveCheckpoint(data, test_checkpoint_dir));
+
+    // WHEN: we try to resume from a relax stage that has not run yet, or from the stage before
+    Pipeline p(1);
+    ASSERT_TRUE(p.loadCheckpoint(test_checkpoint_dir));
+    const bool resumed_later = p.resumeFromState(PipelineState::CAMERA_PARAMETER_RELAX);
+    const bool resumed_earlier = p.resumeFromState(PipelineState::INITIAL_PROCESSING);
+
+    // THEN: only the stage that already ran is accepted
+    EXPECT_FALSE(resumed_later);
+    EXPECT_TRUE(resumed_earlier);
+}
+
 TEST_F(CheckpointTest, load_malformed_metadata)
 {
     std::filesystem::create_directories(test_checkpoint_dir);

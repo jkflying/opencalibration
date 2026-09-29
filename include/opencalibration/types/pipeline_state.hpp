@@ -6,13 +6,14 @@
 namespace opencalibration
 {
 
+// Declared in execution order: resumeFromState relies on it
 enum class PipelineState
 {
     INITIAL_PROCESSING,
+    MESH_REFINEMENT,
     INITIAL_GLOBAL_RELAX,
     CAMERA_PARAMETER_RELAX,
     FINAL_GLOBAL_RELAX,
-    MESH_REFINEMENT,
     DENSIFY_MESH,
     DENSE_MESH_RELAX,
     GENERATE_THUMBNAIL,
