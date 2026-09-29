@@ -1509,6 +1509,32 @@ TEST(refine_mesh, filter_points_without_height_agreement_drops_scattered_noise_b
     EXPECT_LT(keptScattered, 0.05 * scattered);
 }
 
+TEST(refine_mesh, merge_keeps_point_clouds_in_surface_order)
+{
+    // GIVEN: many surfaces on the same mesh, each with a distinguishable cloud
+    point_cloud cameras;
+    cameras.push_back(Eigen::Vector3d(0, 0, 10));
+    cameras.push_back(Eigen::Vector3d(10, 10, 10));
+    const MeshGraph mesh = buildMinimalMesh(cameras, {});
+    std::vector<surface_model> surfaces(32);
+    for (size_t i = 0; i < surfaces.size(); i++)
+    {
+        surfaces[i].mesh = mesh;
+        surfaces[i].cloud.push_back(point_cloud{Eigen::Vector3d(static_cast<double>(i), 0, 0)});
+    }
+
+    for (int attempt = 0; attempt < 20; attempt++)
+    {
+        // WHEN: we merge them
+        const surface_model merged = mergeSurfaceModels(surfaces);
+
+        // THEN: the clouds come out in surface order
+        ASSERT_EQ(merged.cloud.size(), surfaces.size());
+        for (size_t i = 0; i < surfaces.size(); i++)
+            ASSERT_EQ(merged.cloud[i][0].x(), static_cast<double>(i));
+    }
+}
+
 TEST(refine_mesh, rebuild_with_too_few_cameras_is_not_degenerate)
 {
     // GIVEN: a previous point cloud

@@ -820,18 +820,12 @@ surface_model mergeSurfaceModels(const std::vector<surface_model> &surfaces)
             double weight = static_cast<double>(pointCount);
             threadLocal[nodeId] = {pos * weight, weight};
         }
-
-#pragma omp critical(merge_clouds)
-        {
-            for (const auto &cloud : surf.cloud)
-            {
-                result.cloud.push_back(cloud);
-            }
-        }
     }
 
     for (size_t surfIdx = 0; surfIdx < surfaces.size(); surfIdx++)
     {
+        if (surfaces[surfIdx].mesh.size_nodes() > 0)
+            result.cloud.insert(result.cloud.end(), surfaces[surfIdx].cloud.begin(), surfaces[surfIdx].cloud.end());
         for (const auto &[nodeId, weightPair] : threadLocalWeights[surfIdx])
         {
             auto &[sumPos, sumWeight] = vertexWeights[nodeId];
@@ -849,7 +843,6 @@ surface_model mergeSurfaceModels(const std::vector<surface_model> &surfaces)
         {
             nodeIt->second.payload.location = sumPos / sumWeight;
         }
-        // If no weight (no points nearby), keep original position from first surface
     }
 
     spdlog::info("Merged {} surface models into one with {} nodes, {} edges, {} point clouds", surfaces.size(),

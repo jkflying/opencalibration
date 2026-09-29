@@ -280,7 +280,6 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
         return;
     }
 
-    // Collect all image node IDs that have dense features and a valid camera
     std::vector<size_t> node_ids;
     for (auto it = graph.cnodebegin(); it != graph.cnodeend(); ++it)
     {
@@ -302,7 +301,6 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
 
     spdlog::info("Dense: {} images with dense features, {} surfaces", node_ids.size(), surfaces.size());
 
-    // Build KDTree of camera positions for finding candidate images
     jk::tree::KDTree<size_t, 3, 8> camera_tree;
     for (size_t nid : node_ids)
     {
@@ -322,10 +320,6 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
     {
         features_by_node[node_ids[ni]] = &cell_sorted_features[ni];
     }
-
-    // Use first surface's mesh for intersection
-    auto &surface = surfaces[0];
-    const auto &mesh = surface.mesh;
 
     struct Measurement
     {
@@ -363,6 +357,8 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
     std::mutex uf_mutex;
     std::mutex progress_mutex;
     UnionFind uf(id_to_measurement.size());
+    constexpr size_t NO_SURFACE = std::numeric_limits<size_t>::max();
+    std::vector<size_t> measurement_surface(id_to_measurement.size(), NO_SURFACE);
 
     const int num_nodes = static_cast<int>(node_ids.size());
 #pragma omp parallel for schedule(dynamic) // NOLINT(modernize-loop-convert)
@@ -375,12 +371,10 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
         const auto &src_pos = src_img.position;
         const auto &src_ori = src_img.orientation;
 
-        MeshIntersectionSearcher searcher;
-        if (!searcher.init(mesh))
-        {
-            images_done++;
-            continue;
-        }
+        std::vector<MeshIntersectionSearcher> searchers(surfaces.size());
+        for (size_t si = 0; si < surfaces.size(); si++)
+            if (!searchers[si].init(surfaces[si].mesh))
+                searchers[si] = MeshIntersectionSearcher();
 
         auto order =
             hilbertFeatureOrder(src_img.features, src_img.num_sparse_features, static_cast<int>(src_model.pixels_cols),
@@ -401,13 +395,16 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
             const auto &feat = src_img.features[global_fi];
 
             ray_d r = image_to_3d(feat.location, src_model, src_pos, src_ori);
-            const auto &info = searcher.triangleIntersect(r);
-
-            if (info.type != MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
+            size_t surface_index = 0;
+            while (surface_index < searchers.size() && searchers[surface_index].triangleIntersect(r).type !=
+                                                           MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
+                surface_index++;
+            if (surface_index == searchers.size())
                 continue;
 
-            const Eigen::Vector3d &pt3d = info.intersectionLocation;
+            const Eigen::Vector3d pt3d = searchers[surface_index].lastResult().intersectionLocation;
             size_t src_id = measurementId(src_nid, global_fi);
+            measurement_surface[src_id] = surface_index;
 
             auto candidates = camera_searcher.search({pt3d.x(), pt3d.y(), pt3d.z()}, std::numeric_limits<double>::max(),
                                                      MAX_CANDIDATE_IMAGES + 1);
@@ -564,22 +561,25 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
         track_valid[ti] = true;
     }
 
-    point_cloud merged_points;
+    std::vector<point_cloud> surface_points(surfaces.size());
     for (int ti = 0; ti < num_tracks; ti++)
     {
-        if (track_valid[ti])
-            merged_points.push_back(track_results[ti]);
-    }
-
-    if (!merged_points.empty())
-    {
-        surface.cloud.push_back(std::move(merged_points));
+        if (!track_valid[ti])
+            continue;
+        const auto &ids = multi_tracks[ti];
+        const auto with_surface =
+            std::find_if(ids.begin(), ids.end(), [&](size_t id) { return measurement_surface[id] != NO_SURFACE; });
+        if (with_surface != ids.end())
+            surface_points[measurement_surface[*with_surface]].push_back(track_results[ti]);
     }
 
     size_t total_points = 0;
-    for (const auto &cloud : surface.cloud)
+    for (size_t si = 0; si < surfaces.size(); si++)
     {
-        total_points += cloud.size();
+        if (surface_points[si].empty())
+            continue;
+        total_points += surface_points[si].size();
+        surfaces[si].cloud.push_back(std::move(surface_points[si]));
     }
     spdlog::info("Dense: {} 3D points from {} tracks, {} images", total_points, track_ids.size(), node_ids.size());
 

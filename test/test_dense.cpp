@@ -613,3 +613,39 @@ TEST_F(DensifyMultiviewTest, progress_callback_not_called_concurrently)
     // THEN: the callback was never running on two threads at once
     EXPECT_FALSE(overlapped);
 }
+
+TEST_F(DensifyMultiviewTest, densifies_against_every_surface)
+{
+    // GIVEN: two overlapping cameras over a flat mesh that is the second of two surfaces
+    MeasurementGraph graph;
+    auto model_ptr = std::make_shared<CameraModel>(cam_model);
+    const std::vector<Eigen::Vector3d> cam_positions{{0, 0, 100}, {10, 0, 100}};
+    for (const auto &cam_pos : cam_positions)
+    {
+        image img;
+        img.model = model_ptr;
+        img.position = cam_pos;
+        img.orientation = cam_ori;
+        std::vector<feature_2d> dense;
+        uint64_t seed = 42;
+        for (double x = -5; x <= 15; x += 2)
+            for (double y = -5; y <= 5; y += 2)
+                dense.push_back(makeFeature(projectPoint({x, y, 0}, cam_model, cam_pos, cam_ori), seed++));
+        addDenseFeatures(img, std::move(dense));
+        graph.addNode(std::move(img));
+    }
+
+    std::vector<surface_model> surfaces(2);
+    surfaces[0].mesh = buildFlatMesh();
+    for (auto it = surfaces[0].mesh.nodebegin(); it != surfaces[0].mesh.nodeend(); ++it)
+        it->second.payload.location.x() += 1000;
+    surfaces[1].mesh = buildFlatMesh();
+
+    // WHEN: we densify
+    densifyMesh(graph, surfaces);
+
+    // THEN: points are triangulated and stored with the surface they lie on
+    EXPECT_TRUE(surfaces[0].cloud.empty());
+    ASSERT_EQ(surfaces[1].cloud.size(), 1u);
+    EXPECT_GT(surfaces[1].cloud[0].size(), 0u);
+}
