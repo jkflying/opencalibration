@@ -1,9 +1,8 @@
 #include <opencalibration/extract/extract_features.hpp>
+#include <opencalibration/match/match_features.hpp>
 
 #include <opencv2/features2d.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
-
-#include <jk/KDTree.h>
 
 namespace
 {
@@ -33,33 +32,14 @@ extracted_features sparse_first_by_non_maximal_suppression(std::vector<feature_2
     std::sort(features.begin(), features.end(),
               [](const feature_2d &a, const feature_2d &b) -> bool { return a.strength > b.strength; });
 
+    std::vector<bool> is_sparse(features.size(), false);
+    for (size_t i : spatially_subsample_feature_indices(features, radius))
+        is_sparse[i] = true;
+
     std::vector<feature_2d> sparse;
     std::vector<feature_2d> dense;
-
-    auto toArray = [](const Eigen::Vector2d &v) -> std::array<double, 2> { return {v.x(), v.y()}; };
-    jk::tree::KDTree<size_t, 2, 8> tree;
-    if (!features.empty())
-    {
-        tree.addPoint(toArray(features[0].location), 0);
-        sparse.push_back(features[0]);
-    }
-
-    auto searcher = tree.searcher();
-    for (size_t i = 1; i < features.size(); i++)
-    {
-        const feature_2d &f = features[i];
-        const auto &nearest = searcher.search(toArray(f.location), std::numeric_limits<double>::infinity(), 1);
-        const double squared_distance = nearest[0].distance;
-        if (squared_distance > radius * radius)
-        {
-            tree.addPoint(toArray(f.location), 0);
-            sparse.push_back(f);
-        }
-        else
-        {
-            dense.push_back(f);
-        }
-    }
+    for (size_t i = 0; i < features.size(); i++)
+        (is_sparse[i] ? sparse : dense).push_back(std::move(features[i]));
 
     const size_t num_sparse = sparse.size();
     sparse.insert(sparse.end(), std::make_move_iterator(dense.begin()), std::make_move_iterator(dense.end()));

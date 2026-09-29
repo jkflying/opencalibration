@@ -43,6 +43,7 @@ add_executable(unit_tests gtest_main.cpp
                           test_geo_coord.cpp
                           test_geometry.cpp
                           test_graph.cpp
+                          test_match_unit.cpp
                           test_meshgraph.cpp
                           test_ortho.cpp
                           test_ransac_benchmark.cpp
@@ -54,6 +55,7 @@ add_executable(unit_tests gtest_main.cpp
                           test_tree.cpp)
 
 target_link_libraries(unit_tests PUBLIC gtest pthread oc_geo_coord
+                                                      oc_match
                                                       oc_geometry
                                                       oc_model_inliers
                                                       oc_ortho

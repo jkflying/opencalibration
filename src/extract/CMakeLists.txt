@@ -16,7 +16,7 @@ target_include_directories(oc_extract PUBLIC
 target_include_directories(oc_extract SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/external/TinyEXIF-master
                                                      ${PROJECT_SOURCE_DIR}/external/jk-tree/include)
 
-target_link_libraries(oc_extract PUBLIC opencv_core opencv_imgcodecs opencv_features2d spdlog::spdlog tinyxml2)
+target_link_libraries(oc_extract PUBLIC oc_match opencv_core opencv_imgcodecs opencv_features2d spdlog::spdlog tinyxml2)
 
 target_compile_definitions(oc_extract PRIVATE
     CAMERA_DATABASE_PATH="${CMAKE_BINARY_DIR}/camera_database.json"

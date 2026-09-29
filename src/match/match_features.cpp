@@ -2,6 +2,9 @@
 
 #include <jk/KDTree.h>
 
+#include <algorithm>
+#include <unordered_set>
+
 namespace opencalibration
 {
 
@@ -58,7 +61,6 @@ std::vector<feature_match> match_features_subset(const std::vector<feature_2d> &
 {
     using descriptor_t = std::bitset<feature_2d::DESCRIPTOR_BITS>;
 
-    // Pack subset descriptors contiguously for cache-friendly inner loop
     std::vector<descriptor_t> packed_2(indices_2.size());
     for (size_t k = 0; k < indices_2.size(); k++)
     {
@@ -98,7 +100,13 @@ std::vector<feature_match> match_features_subset(const std::vector<feature_2d> &
     }
 
     std::sort(results.begin(), results.end(),
-              [](const feature_match &f1, const feature_match &f2) -> bool { return f1.distance > f2.distance; });
+              [](const feature_match &f1, const feature_match &f2) -> bool { return f1.distance < f2.distance; });
+    std::unordered_set<size_t> used_2;
+    results.erase(
+        std::remove_if(results.begin(), results.end(),
+                       [&used_2](const feature_match &m) { return !used_2.insert(m.feature_index_2).second; }),
+        results.end());
+    std::reverse(results.begin(), results.end());
     return results;
 }
 
