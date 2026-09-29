@@ -363,6 +363,31 @@ TEST_F(relax_group, pixel_error_cost_function)
     }
 }
 
+TEST_F(relax_group, pixel_error_cost_rejects_points_behind_camera)
+{
+    // GIVEN: a camera and a point directly behind it, observed at the principal point
+    init_cameras();
+    const Eigen::Vector3d behind = ground_pos[0] - 5 * (ground_ori[0] * Eigen::Vector3d::UnitZ());
+    const Eigen::Vector2d observed = model->principle_point;
+    const auto pose = packPose(ground_ori[0], ground_pos[0]);
+    const double focal = model->focal_length_pixels;
+    const Eigen::Vector3d radial = model->radial_distortion;
+    const Eigen::Vector2d tangential = model->tangential_distortion;
+
+    // WHEN: we evaluate each pixel error cost there
+    double r[4][2];
+    PixelErrorCost_Orientation(*model, observed)(pose.data(), behind.data(), r[0]);
+    PixelErrorCost_OrientationFocal(*model, observed)(pose.data(), behind.data(), &focal, observed.data(), r[1]);
+    PixelErrorCost_OrientationFocalRadial(*model, observed)(pose.data(), behind.data(), &focal, observed.data(),
+                                                            radial.data(), r[2]);
+    PixelErrorCost_OrientationFocalRadialTangential(*model, observed)(
+        pose.data(), behind.data(), &focal, observed.data(), radial.data(), tangential.data(), r[3]);
+
+    // THEN: none of them report a perfect fit
+    for (const auto &residual : r)
+        EXPECT_GT(Eigen::Vector2d(residual[0], residual[1]).norm(), 1);
+}
+
 TEST_F(relax_group, gps_position_prior_cost_function)
 {
     // GIVEN: a GPS prior with 2m horizontal and 4m vertical sigma
@@ -1397,6 +1422,27 @@ TEST_F(incremental_relax, two_phase_optimization_improves_convergence)
 
     EXPECT_LT(final_error, initial_error * 0.3) << "Should achieve at least 70% error reduction";
     EXPECT_LT(final_error, 0.1) << "Expected final error < 0.1 rad even with large initial disturbance";
+}
+
+TEST(RobustCentroid, continuous_in_its_inputs)
+{
+    // GIVEN: three points, one of which slides steadily away from the others
+    const double step = 1e-4;
+    Eigen::Vector3d points[] = {{0, 0, 0}, {1, 0, 0}, {0.5, 0.5, 0}};
+    Eigen::Vector3d previous = robustCentroid(points, 3, 0.3);
+
+    double largest_jump = 0;
+    for (double y = 0.5; y < 3; y += step)
+    {
+        // WHEN: we recompute the centroid after each small move
+        points[2].y() = y;
+        const Eigen::Vector3d centroid = robustCentroid(points, 3, 0.3);
+        largest_jump = std::max(largest_jump, (centroid - previous).norm());
+        previous = centroid;
+    }
+
+    // THEN: the centroid never jumps by more than the input moved
+    EXPECT_LT(largest_jump, 2 * step);
 }
 
 TEST(RobustCentroid, identical_points)

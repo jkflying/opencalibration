@@ -13,6 +13,13 @@ ceres::CostFunction *newAutoDiffDifferenceCost(double weight)
     return new CostFunction(new Functor(weight));
 }
 
+ceres::CostFunction *newAutoDiffValuePrior(double target, double weight)
+{
+    using Functor = ValuePrior;
+    using CostFunction = ceres::AutoDiffCostFunction<Functor, Functor::NUM_RESIDUALS, Functor::NUM_PARAMETERS_1>;
+    return new CostFunction(new Functor(target, weight));
+}
+
 ceres::CostFunction *newAutoDiffPointsDownwardsPrior(double weight)
 {
     using Functor = PointsDownwardsPrior;

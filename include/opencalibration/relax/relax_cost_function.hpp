@@ -89,6 +89,26 @@ struct DifferenceCost
     const double _weight;
 };
 
+struct ValuePrior
+{
+    static const int NUM_RESIDUALS = 1;
+    static const int NUM_PARAMETERS_1 = 1;
+
+    ValuePrior(double target, double weight) : _target(target), _weight(weight)
+    {
+    }
+
+    template <typename T> bool operator()(const T *val, T *residual) const
+    {
+        residual[0] = T(_weight) * (val[0] - T(_target));
+        return true;
+    }
+
+  private:
+    const double _target;
+    const double _weight;
+};
+
 struct GPSPositionPrior
 {
     static const int NUM_RESIDUALS = 3;
@@ -117,10 +137,8 @@ struct GPSPositionPrior
     const Eigen::Vector3d _weights;
 };
 
-constexpr int ROBUST_CENTROID_MAX_POINTS = 5;
-
 template <typename T>
-Eigen::Matrix<T, 3, 1> robustCentroid(const Eigen::Matrix<T, 3, 1> *points, int n, T huber_threshold)
+Eigen::Matrix<T, 3, 1> robustCentroid(const Eigen::Matrix<T, 3, 1> *points, int n, T outlier_distance)
 {
     using Vector3T = Eigen::Matrix<T, 3, 1>;
     constexpr int MAX_STAGES = 3;
@@ -130,36 +148,20 @@ Eigen::Matrix<T, 3, 1> robustCentroid(const Eigen::Matrix<T, 3, 1> *points, int 
         centroid += points[i];
     centroid /= T(n);
 
-    T weights[ROBUST_CENTROID_MAX_POINTS];
-    for (int i = 0; i < n; i++)
-        weights[i] = T(1.0);
-
     for (int stage = 0; stage < MAX_STAGES; stage++)
     {
         T total_w = T(0);
-        T min_w = T(std::numeric_limits<double>::max());
-        T max_w = T(0);
+        Vector3T weighted_sum = Vector3T::Zero();
         for (int i = 0; i < n; i++)
         {
             T err = (points[i] - centroid).norm();
             T w = T(1.0) / (err + T(1e-8));
-            if (err > huber_threshold)
-                w *= huber_threshold / err;
-            weights[i] = w;
+            if (err > outlier_distance)
+                w *= outlier_distance / err;
             total_w += w;
-            if (w < min_w)
-                min_w = w;
-            if (w > max_w)
-                max_w = w;
+            weighted_sum += w * points[i];
         }
-
-        Vector3T weighted_sum = Vector3T::Zero();
-        for (int i = 0; i < n; i++)
-            weighted_sum += weights[i] * points[i];
         centroid = weighted_sum / total_w;
-
-        if (min_w > max_w * T(0.5))
-            break;
     }
 
     return centroid;
@@ -505,6 +507,25 @@ template <int N> struct TriangulatedReprojectionCost
     const bool position_fixed = false;
 };
 
+template <typename T>
+void pixelResidual(const Eigen::Matrix<T, 3, 1> &ray, const DifferentiableCameraModel<T> &model,
+                   const Eigen::Vector2d &pixel, T *residuals)
+{
+    Eigen::Map<Eigen::Matrix<T, 2, 1>> residuals_m(residuals);
+    residuals_m = image_from_3d<T>(ray, model) - pixel.cast<T>();
+    const T behind = T(MIN_PROJECTION_Z) - ray.z();
+    if (behind > T(0))
+        residuals_m.array() += model.focal_length_pixels * behind;
+}
+
+template <typename T> Eigen::Matrix<T, 3, 1> cameraRay(const T *pose, const T *point)
+{
+    const Eigen::Map<const Eigen::Quaternion<T>> rotation(pose);
+    const Eigen::Map<const Eigen::Matrix<T, 3, 1>> location(pose + 4);
+    const Eigen::Map<const Eigen::Matrix<T, 3, 1>> point_m(point);
+    return rotation.inverse() * (point_m - location);
+}
+
 struct PixelErrorCost_Orientation
 {
     static const int NUM_RESIDUALS = 2;
@@ -518,22 +539,7 @@ struct PixelErrorCost_Orientation
 
     template <typename T> bool operator()(const T *pose, const T *point, T *residuals) const
     {
-        using QuaterionT = Eigen::Quaternion<T>;
-        using Vector3T = Eigen::Matrix<T, 3, 1>;
-        using Vector2T = Eigen::Matrix<T, 2, 1>;
-        using QuaterionTCM = Eigen::Map<const QuaterionT>;
-        using Vector3TCM = Eigen::Map<const Vector3T>;
-        using Vector2TM = Eigen::Map<Vector2T>;
-
-        const QuaterionTCM rotation_em(pose);
-        const Vector3TCM loc_em(pose + 4);
-        const Vector3TCM point_em(point);
-
-        const Vector2T projected_pixel = image_from_3d<T>(point_em, model.cast<T>(), Vector3T(loc_em), rotation_em);
-
-        Vector2TM residuals_m(residuals);
-        residuals_m = projected_pixel - pixel.cast<T>();
-
+        pixelResidual<T>(cameraRay(pose, point), model.cast<T>(), pixel, residuals);
         return true;
     }
 
@@ -558,29 +564,10 @@ struct PixelErrorCost_OrientationFocal
     template <typename T>
     bool operator()(const T *pose, const T *point, const T *focal, const T *principal, T *residuals) const
     {
-        using QuaterionT = Eigen::Quaternion<T>;
-        using Vector3T = Eigen::Matrix<T, 3, 1>;
-        using Vector2T = Eigen::Matrix<T, 2, 1>;
-        using QuaterionTCM = Eigen::Map<const QuaterionT>;
-        using Vector3TCM = Eigen::Map<const Vector3T>;
-        using Vector2TCM = Eigen::Map<const Vector2T>;
-        using Vector2TM = Eigen::Map<Vector2T>;
-
-        const QuaterionTCM rotation_em(pose);
-        const Vector3TCM loc_em(pose + 4);
-        const Vector3TCM point_em(point);
-
-        Vector3T ray = rotation_em.inverse() * (point_em - loc_em);
-
         DifferentiableCameraModel<T> model_t = model.cast<T>();
         model_t.focal_length_pixels = *focal;
-        model_t.principle_point = Vector2TCM(principal);
-
-        Vector2T projected_pixel = image_from_3d<T>(ray, model_t);
-
-        Vector2TM residuals_m(residuals);
-        residuals_m = projected_pixel - pixel.cast<T>();
-
+        model_t.principle_point = Eigen::Map<const Eigen::Matrix<T, 2, 1>>(principal);
+        pixelResidual<T>(cameraRay(pose, point), model_t, pixel, residuals);
         return true;
     }
 
@@ -607,31 +594,11 @@ struct PixelErrorCost_OrientationFocalRadial
     bool operator()(const T *pose, const T *point, const T *focal, const T *principal, const T *radial,
                     T *residuals) const
     {
-        using QuaterionT = Eigen::Quaternion<T>;
-        using Vector3T = Eigen::Matrix<T, 3, 1>;
-        using Vector2T = Eigen::Matrix<T, 2, 1>;
-        using QuaterionTCM = Eigen::Map<const QuaterionT>;
-        using Vector3TCM = Eigen::Map<const Vector3T>;
-        using Vector3TCM_const = Eigen::Map<const Eigen::Matrix<T, 3, 1>>;
-        using Vector2TCM = Eigen::Map<const Vector2T>;
-        using Vector2TM = Eigen::Map<Vector2T>;
-
-        const QuaterionTCM rotation_em(pose);
-        const Vector3TCM loc_em(pose + 4);
-        const Vector3TCM point_em(point);
-
-        Vector3T ray = rotation_em.inverse() * (point_em - loc_em);
-
         DifferentiableCameraModel<T> model_t = model.cast<T>();
         model_t.focal_length_pixels = *focal;
-        model_t.principle_point = Vector2TCM(principal);
-        model_t.radial_distortion = Vector3TCM_const(radial);
-
-        Vector2T projected_pixel = image_from_3d<T>(ray, model_t);
-
-        Vector2TM residuals_m(residuals);
-        residuals_m = projected_pixel - pixel.cast<T>();
-
+        model_t.principle_point = Eigen::Map<const Eigen::Matrix<T, 2, 1>>(principal);
+        model_t.radial_distortion = Eigen::Map<const Eigen::Matrix<T, 3, 1>>(radial);
+        pixelResidual<T>(cameraRay(pose, point), model_t, pixel, residuals);
         return true;
     }
 
@@ -660,32 +627,12 @@ struct PixelErrorCost_OrientationFocalRadialTangential
     bool operator()(const T *pose, const T *point, const T *focal, const T *principal, const T *radial,
                     const T *tangential, T *residuals) const
     {
-        using QuaterionT = Eigen::Quaternion<T>;
-        using Vector3T = Eigen::Matrix<T, 3, 1>;
-        using Vector2T = Eigen::Matrix<T, 2, 1>;
-        using QuaterionTCM = Eigen::Map<const QuaterionT>;
-        using Vector3TCM = Eigen::Map<const Vector3T>;
-        using Vector3TCM_const = Eigen::Map<const Eigen::Matrix<T, 3, 1>>;
-        using Vector2TCM = Eigen::Map<const Vector2T>;
-        using Vector2TM = Eigen::Map<Vector2T>;
-
-        const QuaterionTCM rotation_em(pose);
-        const Vector3TCM loc_em(pose + 4);
-        const Vector3TCM point_em(point);
-
-        Vector3T ray = rotation_em.inverse() * (point_em - loc_em);
-
         DifferentiableCameraModel<T> model_t = model.cast<T>();
         model_t.focal_length_pixels = *focal;
-        model_t.principle_point = Vector2TCM(principal);
-        model_t.radial_distortion = Vector3TCM_const(radial);
-        model_t.tangential_distortion = Vector2TCM(tangential);
-
-        Vector2T projected_pixel = image_from_3d<T>(ray, model_t);
-
-        Vector2TM residuals_m(residuals);
-        residuals_m = projected_pixel - pixel.cast<T>();
-
+        model_t.principle_point = Eigen::Map<const Eigen::Matrix<T, 2, 1>>(principal);
+        model_t.radial_distortion = Eigen::Map<const Eigen::Matrix<T, 3, 1>>(radial);
+        model_t.tangential_distortion = Eigen::Map<const Eigen::Matrix<T, 2, 1>>(tangential);
+        pixelResidual<T>(cameraRay(pose, point), model_t, pixel, residuals);
         return true;
     }
 
@@ -745,25 +692,19 @@ template <int N> struct MultiRayPlaneIntersectionAngleCost_FocalRadial
         }
         avg_dist /= T(N);
 
-        T huber_threshold = avg_dist * T(0.01);
-        Vector3T centroid = robustCentroid(intersection, N, huber_threshold);
+        T outlier_distance = avg_dist * T(0.01);
+        Vector3T centroid = robustCentroid(intersection, N, outlier_distance);
 
         const T inverse_sigma = *focal / RAY_PIXEL_SIGMA;
         for (int i = 0; i < N; i++)
         {
             const QuaternionTCM rot(poses[i]);
             const Vector3T p_cam = rot.inverse() * (centroid - Vector3TCM(poses[i] + 4));
-            if (p_cam.z() > T(0.5) * p_cam.norm())
-            {
-                Vector2TM(residuals + i * 2) =
-                    (p_cam.template head<2>() / p_cam.z() - camera_ray[i].template head<2>() / camera_ray[i].z()) *
-                    inverse_sigma;
-            }
-            else
-            {
-                Vector2TM(residuals + i * 2) =
-                    (p_cam.normalized() - camera_ray[i].normalized()).template head<2>() * inverse_sigma;
-            }
+            const Vector3T &ray = camera_ray[i];
+            const T min_depth = T(0.5) * p_cam.norm() * ray.z() / ray.norm();
+            const T depth = p_cam.z() > min_depth ? p_cam.z() : min_depth;
+            Vector2TM(residuals + i * 2) =
+                (p_cam.template head<2>() / depth - ray.template head<2>() / ray.z()) * inverse_sigma;
         }
 
         return all_valid;
@@ -848,8 +789,8 @@ template <int N> struct MultiRayPlaneIntersectionAngleCost
         }
         avg_dist /= T(N);
 
-        T huber_threshold = avg_dist * T(0.01);
-        Vector3T centroid = robustCentroid(intersection, N, huber_threshold);
+        T outlier_distance = avg_dist * T(0.01);
+        Vector3T centroid = robustCentroid(intersection, N, outlier_distance);
 
         for (int i = 0; i < N; i++)
         {

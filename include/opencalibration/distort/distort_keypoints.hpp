@@ -41,6 +41,8 @@ Eigen::Matrix<T, 2, 1> distortProjectedRay(const Eigen::Matrix<T, 2, 1> &ray_pro
     return ray_distorted;
 }
 
+constexpr double MIN_PROJECTION_Z = 1e-3;
+
 template <typename T>
 Eigen::Matrix<T, 2, 1> image_from_3d(const Eigen::Matrix<T, 3, 1> &ray, const DifferentiableCameraModel<T> &model)
 {
@@ -49,8 +51,7 @@ Eigen::Matrix<T, 2, 1> image_from_3d(const Eigen::Matrix<T, 3, 1> &ray, const Di
     {
     case ProjectionType::PLANAR: {
         const auto &z = ray.z();
-        const T min_z = T(1e-3);
-        const T clamped_z = (z < min_z) ? min_z : z;
+        const T clamped_z = (z < T(MIN_PROJECTION_Z)) ? T(MIN_PROJECTION_Z) : z;
         ray_projected = ray.template head<2>() / clamped_z;
         break;
     }

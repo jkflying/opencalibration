@@ -25,6 +25,20 @@ TEST(cost_functions, difference_cost_equal)
     EXPECT_DOUBLE_EQ(0.0, residual);
 }
 
+TEST(cost_functions, value_prior)
+{
+    // GIVEN: a prior pulling towards 3 with weight 2
+    ValuePrior cost(3.0, 2.0);
+    double v = 5.0;
+    double residual = 0;
+
+    // WHEN: evaluated at 5
+    EXPECT_TRUE(cost(&v, &residual));
+
+    // THEN: residual is weighted offset from target
+    EXPECT_DOUBLE_EQ(4.0, residual);
+}
+
 TEST(cost_functions, distortion_monotonicity_zero_distortion)
 {
     DistortionMonotonicityCost cost(1.0, 1.0);
@@ -91,10 +105,8 @@ TEST(cost_functions, robust_centroid_with_outlier)
     Eigen::Vector3d points[4] = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {100, 100, 100}};
     Eigen::Vector3d result = robustCentroid(points, 4, 1.0);
 
-    Eigen::Vector3d naive_center(1.0 / 3, 1.0 / 3, 0);
-    double dist_to_inliers = (result - naive_center).norm();
-    double dist_to_outlier = (result - Eigen::Vector3d(100, 100, 100)).norm();
-    EXPECT_LT(dist_to_inliers, dist_to_outlier);
+    Eigen::Vector3d inlier_center(1.0 / 3, 1.0 / 3, 0);
+    EXPECT_LT((result - inlier_center).norm(), 1.0);
 }
 
 TEST(cost_functions, angle_between_unit_vectors)
@@ -149,6 +161,40 @@ TEST(cost_functions, plane_intersection_focal_radial_residual_not_reduced_by_lar
     EXPECT_NEAR(residualNormForPixelError(6000, center) / residualNormForPixelError(3000, center), 1.0, 0.05);
     EXPECT_NEAR(residualNormForPixelError(6000, off_axis) / residualNormForPixelError(3000, off_axis), 1.0, 0.05);
     EXPECT_NEAR(residualNormForPixelError(3000, off_axis) / residualNormForPixelError(3000, center), 1.0, 0.1);
+}
+
+TEST(cost_functions, plane_intersection_focal_radial_residual_continuous_at_wide_angles)
+{
+    InverseDifferentiableCameraModel<double> model;
+    model.focal_length_pixels = 3000;
+    model.principle_point << 2000, 1500;
+
+    const Eigen::Quaterniond down(Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()));
+    const Eigen::Vector3d cam0(0, 0, 100), cam1(20, 0, 100);
+    std::array<double, 7> pose0{down.x(), down.y(), down.z(), down.w(), cam0.x(), cam0.y(), cam0.z()};
+    std::array<double, 7> pose1{down.x(), down.y(), down.z(), down.w(), cam1.x(), cam1.y(), cam1.z()};
+    const double z = 0;
+
+    const auto residualNorm = [&](const Eigen::Vector3d &ground) {
+        const Eigen::Vector2d pixel0 = image_from_3d(down.inverse() * (ground - cam0), model);
+        const Eigen::Vector2d pixel1 = image_from_3d(down.inverse() * (ground - cam1), model) + Eigen::Vector2d(5, 0);
+        PlaneIntersectionAngleCost_OrientationFocalRadial_SharedModel cost(
+            pixel0, pixel1, Eigen::Vector2d(-500, -500), Eigen::Vector2d(500, -500), Eigen::Vector2d(0, 500), model);
+        std::array<double, 4> residuals;
+        EXPECT_TRUE(cost(pose0.data(), pose1.data(), &z, &z, &z, &model.focal_length_pixels,
+                         model.principle_point.data(), model.radial_distortion.data(), residuals.data()));
+        return Eigen::Map<Eigen::Matrix<double, 4, 1>>(residuals.data()).norm();
+    };
+
+    // GIVEN: a ground point seen by camera 0 on either side of 60 degrees off axis
+    const double sixty_degrees_x = 100 * std::tan(M_PI / 3);
+
+    // WHEN: we evaluate the residual just either side
+    const double inside = residualNorm({sixty_degrees_x - 0.1, 0, 0});
+    const double outside = residualNorm({sixty_degrees_x + 0.1, 0, 0});
+
+    // THEN: the residual barely changes
+    EXPECT_NEAR(outside / inside, 1.0, 0.01);
 }
 
 TEST(cost_functions, triangulated_reprojection_zero_at_true_pose_for_any_terrain_height)
