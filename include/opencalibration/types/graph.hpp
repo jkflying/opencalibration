@@ -139,6 +139,14 @@ template <typename NodePayload, typename EdgePayload> class DirectedGraph
         return &(iter->second);
     }
 
+    [[nodiscard]] std::optional<size_t> getEdgeId(size_t source_node_id, size_t dest_node_id) const
+    {
+        auto iter = _edge_id_from_nodes_lookup.find(SourceDestIndex{source_node_id, dest_node_id});
+        if (iter == _edge_id_from_nodes_lookup.end())
+            return std::nullopt;
+        return iter->second;
+    }
+
     [[nodiscard]] const Edge *getEdge(size_t source_node_id, size_t dest_node_id) const
     {
         SourceDestIndex idx{source_node_id, dest_node_id};

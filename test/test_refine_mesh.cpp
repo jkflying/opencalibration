@@ -524,27 +524,21 @@ TEST(refine_mesh, minimal_mesh_not_reused_from_ground_plane_triangle)
 
 TEST(refine_mesh, count_points_per_triangle)
 {
+    // GIVEN: a minimal mesh and three points inside it
     MeshGraph g;
     point_cloud p{Eigen::Vector3d(0, 0, 10), Eigen::Vector3d(5, 5, 10)};
     g = rebuildMesh(p, {surface_model{{}, g}});
+    const std::vector<point_cloud> clouds{
+        {Eigen::Vector3d(2.5, 2.5, 0), Eigen::Vector3d(1, 1, 0), Eigen::Vector3d(4, 4, 0)}};
 
-    // Create some test points
-    std::vector<point_cloud> clouds;
-    point_cloud testPoints;
-    testPoints.push_back(Eigen::Vector3d(2.5, 2.5, 0)); // Center point
-    testPoints.push_back(Eigen::Vector3d(1, 1, 0));
-    testPoints.push_back(Eigen::Vector3d(4, 4, 0));
-    clouds.push_back(testPoints);
-
+    // WHEN: we count the points per triangle
     auto stats = countPointsPerTriangle(g, clouds);
 
-    // Should have counted some points
+    // THEN: every point is counted exactly once
     size_t totalCounted = 0;
     for (const auto &[key, s] : stats)
-    {
         totalCounted += s.count;
-    }
-    EXPECT_GT(totalCounted, 0);
+    EXPECT_EQ(totalCounted, 3);
 }
 
 TEST(refine_mesh, refine_by_point_density)
@@ -995,6 +989,40 @@ TEST(refine_mesh, triangle_locator_empty_mesh)
 
     TriangleId result = locator.find(5.0, 5.0);
     EXPECT_EQ(result.edgeId, 0);
+}
+
+TEST(refine_mesh, triangle_locator_matches_brute_force_graded_mesh)
+{
+    // GIVEN: a mesh refined only around one corner, so neighbouring triangles differ greatly in size
+    point_cloud cameras;
+    cameras.push_back(Eigen::Vector3d(0, 0, 10));
+    cameras.push_back(Eigen::Vector3d(10, 10, 10));
+    MeshGraph mesh = buildMinimalMesh(cameras, {});
+
+    for (int pass = 0; pass < 6; pass++)
+    {
+        TriangleId tri = findTriangleContainingPoint(mesh, -9, -9);
+        ASSERT_NE(tri.edgeId, 0);
+        refineTriangle(mesh, tri);
+    }
+
+    // WHEN: locating points on a fine grid covering the mesh and its surroundings
+    TriangleLocator locator(mesh);
+    int mismatches = 0;
+    for (double x = -15; x <= 25; x += 0.37)
+    {
+        for (double y = -15; y <= 25; y += 0.37)
+        {
+            TriangleId brute = findTriangleContainingPoint(mesh, x, y);
+            TriangleId fast = locator.find(x, y);
+
+            // THEN: the walk agrees with brute force everywhere
+            if ((brute.edgeId == 0) != (fast.edgeId == 0) ||
+                (fast.edgeId != 0 && !testPointInTriangle(mesh, fast, x, y)))
+                mismatches++;
+        }
+    }
+    EXPECT_EQ(mismatches, 0);
 }
 
 // Worst 2D aspect ratio over the mesh: longest_edge_sq / (2 * area). Iso-right = 2.
@@ -1479,4 +1507,24 @@ TEST(refine_mesh, filter_points_without_height_agreement_drops_scattered_noise_b
         (p.x() > 30 && p.x() < 40 && p.y() > 20 && p.y() < 30 ? keptScattered : keptSurface)++;
     EXPECT_GT(keptSurface, 0.99 * surface);
     EXPECT_LT(keptScattered, 0.05 * scattered);
+}
+
+TEST(refine_mesh, rebuild_with_too_few_cameras_is_not_degenerate)
+{
+    // GIVEN: a previous point cloud
+    surface_model previous;
+    previous.cloud.push_back(point_cloud{Eigen::Vector3d(0, 0, 0), Eigen::Vector3d(5, 5, 0)});
+
+    for (const point_cloud &cameras : {point_cloud{}, point_cloud{Eigen::Vector3d(1, 1, 10)}})
+    {
+        // WHEN: we rebuild the mesh with fewer than two cameras
+        const MeshGraph mesh = rebuildMesh(cameras, {previous});
+
+        // THEN: it is either empty or made of finite triangles
+        if (mesh.size_nodes() == 0)
+            continue;
+        EXPECT_GT(mesh.size_edges(), 0u) << cameras.size() << " cameras";
+        for (auto it = mesh.cnodebegin(); it != mesh.cnodeend(); ++it)
+            EXPECT_TRUE(it->second.payload.location.allFinite());
+    }
 }

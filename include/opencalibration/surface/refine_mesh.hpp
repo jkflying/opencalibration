@@ -54,12 +54,12 @@ struct TriangleIdHash
  * @brief Get the three vertex IDs of a triangle
  * @param mesh The mesh graph
  * @param tri The triangle identifier
- * @return Array of 3 vertex IDs forming the triangle, or empty array if invalid
+ * @return Array of 3 vertex IDs forming the triangle, or {0, 0, 0} if invalid
  */
 std::array<size_t, 3> getTriangleVertices(const MeshGraph &mesh, const TriangleId &tri);
 
 /**
- * @brief Find the longest edge of a triangle (the edge to bisect in newest vertex bisection)
+ * @brief Find the longest edge of a triangle (the edge to bisect in longest-edge bisection)
  *
  * For isosceles right triangles, this is the hypotenuse.
  *
@@ -101,7 +101,7 @@ class TriangleLocator
 /**
  * @brief Bisect a single edge, splitting the triangles on both sides
  *
- * This is the core operation of newest vertex bisection. It:
+ * This is the core operation of longest-edge bisection. It:
  * 1. Creates a new vertex at the midpoint of the edge
  * 2. Splits the edge into two new edges
  * 3. Creates new edges from the midpoint to the opposite corners
@@ -114,13 +114,13 @@ class TriangleLocator
 BisectionResult bisectEdge(MeshGraph &mesh, size_t edgeId);
 
 /**
- * @brief Refine a triangle using newest vertex bisection with conforming propagation
+ * @brief Refine a triangle using longest-edge bisection with conforming propagation
  *
  * This function bisects the triangle at its longest edge (hypotenuse for right triangles).
  * To maintain a conforming mesh (no hanging nodes), it recursively bisects neighbor
  * triangles as needed.
  *
- * The propagation follows the "newest vertex bisection" algorithm:
+ * The propagation:
  * - Each triangle is bisected at its longest edge
  * - If the neighbor triangle shares that edge, both are split
  * - If the neighbor's longest edge is different, the neighbor is recursively refined first
@@ -128,7 +128,7 @@ BisectionResult bisectEdge(MeshGraph &mesh, size_t edgeId);
  * @param mesh The mesh graph to modify
  * @param tri The triangle to refine
  * @param maxDepth Maximum recursion depth to prevent runaway refinement (default 10)
- * @return Number of triangles created (2 per bisection)
+ * @return Number of triangles created (4 per interior bisection, 2 per border bisection)
  */
 size_t refineTriangle(MeshGraph &mesh, const TriangleId &tri, int maxDepth = 10);
 

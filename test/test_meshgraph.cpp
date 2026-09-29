@@ -73,8 +73,7 @@ TEST(meshgraph, intersects_rays)
 
 TEST(meshgraph, cycle_on_vertex_resolves)
 {
-    // Build a mesh with enough triangles that shooting a ray at a vertex
-    // can cause the triangle walk to cycle between adjacent triangles.
+    // GIVEN: a mesh with enough triangles that a ray at a vertex can make the triangle walk cycle
     MeshGraph g;
     point_cloud p;
     for (double x = -2; x <= 2; x += 0.5)
@@ -91,36 +90,32 @@ TEST(meshgraph, cycle_on_vertex_resolves)
     MeshIntersectionSearcher s;
     ASSERT_TRUE(s.init(g));
 
-    // Shoot rays at every mesh vertex — these land exactly on shared edges
-    // and are the classic trigger for walk oscillation
+    Eigen::AlignedBox2d bounds;
     for (auto it = g.cnodebegin(); it != g.cnodeend(); ++it)
-    {
-        const auto &loc = it->second.payload.location;
-        const ray_d r{{0, 0, 1}, {loc.x(), loc.y(), loc.z() + 5}};
-        auto result = s.triangleIntersect(r);
-
-        EXPECT_NE(result.type, MeshIntersectionSearcher::IntersectionInfo::GRAPH_STRUCTURE_INCONSISTENT)
-            << "Ray at vertex (" << loc.x() << ", " << loc.y() << ") should not fail";
-        if (result.type == MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
+        bounds.extend(it->second.payload.location.topRows<2>());
+    const auto expectResolved = [&](const Eigen::Vector3d &target) {
+        const ray_d r{{0, 0, 1}, {target.x(), target.y(), target.z() + 5}};
+        const auto result = s.triangleIntersect(r);
+        const bool interior = target.x() > bounds.min().x() && target.x() < bounds.max().x() &&
+                              target.y() > bounds.min().y() && target.y() < bounds.max().y();
+        if (!interior)
         {
-            EXPECT_NEAR(result.intersectionLocation.z(), loc.z(), 0.01);
+            EXPECT_NE(result.type, MeshIntersectionSearcher::IntersectionInfo::GRAPH_STRUCTURE_INCONSISTENT)
+                << target.transpose();
+            return;
         }
-    }
+        EXPECT_EQ(result.type, MeshIntersectionSearcher::IntersectionInfo::INTERSECTION) << target.transpose();
+        EXPECT_NEAR(result.intersectionLocation.z(), target.z(), 0.01) << target.transpose();
+    };
 
-    // Also shoot rays at edge midpoints
+    // WHEN: we shoot rays exactly at every vertex and edge midpoint, which lie on shared edges
+    // THEN: every interior ray resolves to an intersection instead of cycling
+    for (auto it = g.cnodebegin(); it != g.cnodeend(); ++it)
+        expectResolved(it->second.payload.location);
     for (auto it = g.cedgebegin(); it != g.cedgeend(); ++it)
-    {
-        const auto *src = g.getNode(it->second.getSource());
-        const auto *dst = g.getNode(it->second.getDest());
-        if (!src || !dst)
-            continue;
-        Eigen::Vector3d mid = (src->payload.location + dst->payload.location) * 0.5;
-        const ray_d r{{0, 0, 1}, {mid.x(), mid.y(), mid.z() + 5}};
-        auto result = s.triangleIntersect(r);
-
-        EXPECT_NE(result.type, MeshIntersectionSearcher::IntersectionInfo::GRAPH_STRUCTURE_INCONSISTENT)
-            << "Ray at edge midpoint (" << mid.x() << ", " << mid.y() << ") should not fail";
-    }
+        expectResolved(
+            (g.getNode(it->second.getSource())->payload.location + g.getNode(it->second.getDest())->payload.location) *
+            0.5);
 }
 
 TEST(meshgraph, doesnt_intersect_outside)

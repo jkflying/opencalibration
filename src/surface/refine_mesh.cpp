@@ -5,7 +5,6 @@
 
 #include <algorithm>
 #include <omp.h>
-#include <optional>
 #include <queue>
 
 namespace opencalibration
@@ -31,20 +30,23 @@ double edgeLengthSquared(const MeshGraph &mesh, size_t edgeId)
 
 size_t findEdgeBetween(const MeshGraph &mesh, size_t node1, size_t node2)
 {
-    const auto *node = mesh.getNode(node1);
-    if (node)
+    auto id = mesh.getEdgeId(node1, node2);
+    if (!id)
+        id = mesh.getEdgeId(node2, node1);
+    return id.value_or(0);
+}
+
+bool triangleCorners(const MeshGraph &mesh, const TriangleId &tri, std::array<Eigen::Vector3d, 3> &corners)
+{
+    const auto verts = getTriangleVertices(mesh, tri);
+    for (int i = 0; i < 3; i++)
     {
-        for (size_t eid : node->getEdges())
-        {
-            const auto *e = mesh.getEdge(eid);
-            if (e && ((e->getSource() == node1 && e->getDest() == node2) ||
-                      (e->getSource() == node2 && e->getDest() == node1)))
-            {
-                return eid;
-            }
-        }
+        const auto *node = mesh.getNode(verts[i]);
+        if (!node)
+            return false;
+        corners[i] = node->payload.location;
     }
-    return 0;
+    return true;
 }
 
 bool pointInTriangle2D(double px, double py, const Eigen::Vector3d &v0, const Eigen::Vector3d &v1,
@@ -92,15 +94,9 @@ TriangleId findTriangleNearVertices(const MeshGraph &mesh, const std::array<size
             for (int side = 0; side < 2; side++)
             {
                 TriangleId candidate{eid, side};
-                auto cverts = getTriangleVertices(mesh, candidate);
-                if (cverts[0] == 0 && cverts[1] == 0 && cverts[2] == 0)
-                    continue;
-                const auto *cn0 = mesh.getNode(cverts[0]);
-                const auto *cn1 = mesh.getNode(cverts[1]);
-                const auto *cn2 = mesh.getNode(cverts[2]);
-                if (!cn0 || !cn1 || !cn2)
-                    continue;
-                if (pointInTriangle2D(x, y, cn0->payload.location, cn1->payload.location, cn2->payload.location))
+                std::array<Eigen::Vector3d, 3> corners;
+                if (triangleCorners(mesh, candidate, corners) &&
+                    pointInTriangle2D(x, y, corners[0], corners[1], corners[2]))
                     return candidate;
             }
         }
@@ -170,203 +166,64 @@ TriangleId findTriangleContainingPoint(const MeshGraph &mesh, double x, double y
 {
     for (auto it = mesh.cedgebegin(); it != mesh.cedgeend(); ++it)
     {
-        const auto &edge = it->second;
-        size_t edgeId = it->first;
-
-        auto verts = getTriangleVertices(mesh, {edgeId, 0});
-        if (verts[0] != 0 || verts[1] != 0 || verts[2] != 0)
+        for (int side = 0; side < (it->second.payload.border ? 1 : 2); side++)
         {
-            const auto *n0 = mesh.getNode(verts[0]);
-            const auto *n1 = mesh.getNode(verts[1]);
-            const auto *n2 = mesh.getNode(verts[2]);
-            if (n0 && n1 && n2)
-            {
-                if (pointInTriangle2D(x, y, n0->payload.location, n1->payload.location, n2->payload.location))
-                {
-                    return {edgeId, 0};
-                }
-            }
-        }
-
-        if (!edge.payload.border)
-        {
-            verts = getTriangleVertices(mesh, {edgeId, 1});
-            if (verts[0] != 0 || verts[1] != 0 || verts[2] != 0)
-            {
-                const auto *n0 = mesh.getNode(verts[0]);
-                const auto *n1 = mesh.getNode(verts[1]);
-                const auto *n2 = mesh.getNode(verts[2]);
-                if (n0 && n1 && n2)
-                {
-                    if (pointInTriangle2D(x, y, n0->payload.location, n1->payload.location, n2->payload.location))
-                    {
-                        return {edgeId, 1};
-                    }
-                }
-            }
+            const TriangleId tri{it->first, side};
+            std::array<Eigen::Vector3d, 3> corners;
+            if (triangleCorners(mesh, tri, corners) && pointInTriangle2D(x, y, corners[0], corners[1], corners[2]))
+                return tri;
         }
     }
-
     return {0, 0};
 }
 
 BisectionResult bisectEdge(MeshGraph &mesh, size_t edgeId)
 {
-    BisectionResult result{0, 0, {}};
-
-    auto *edge = mesh.getEdge(edgeId);
+    const auto *edge = mesh.getEdge(edgeId);
     if (!edge)
-        return result;
+        return {0, 0, {}};
 
-    size_t srcId = edge->getSource();
-    size_t dstId = edge->getDest();
-
+    const size_t srcId = edge->getSource();
+    const size_t dstId = edge->getDest();
     const auto *srcNode = mesh.getNode(srcId);
     const auto *dstNode = mesh.getNode(dstId);
     if (!srcNode || !dstNode)
-        return result;
+        return {0, 0, {}};
 
-    Eigen::Vector3d midpoint = (srcNode->payload.location + dstNode->payload.location) / 2.0;
-    size_t midId = mesh.addNode(MeshNode{midpoint});
-    result.newVertexId = midId;
+    const bool isBorder = edge->payload.border;
+    const size_t opp0 = edge->payload.triangleOppositeNodes[0];
+    const size_t opp1 = isBorder ? 0 : edge->payload.triangleOppositeNodes[1];
 
-    size_t opp0 = edge->payload.triangleOppositeNodes[0];
-    size_t opp1 = edge->payload.triangleOppositeNodes[1];
-    bool isBorder = edge->payload.border;
-
-    // Capture adjacent edges before removing the bisected edge
-    size_t edgeSrcOpp0 = findEdgeBetween(mesh, srcId, opp0);
-    size_t edgeDstOpp0 = findEdgeBetween(mesh, dstId, opp0);
-
-    size_t edgeSrcOpp1 = 0, edgeDstOpp1 = 0;
-    if (!isBorder && opp1 != 0)
-    {
-        edgeSrcOpp1 = findEdgeBetween(mesh, srcId, opp1);
-        edgeDstOpp1 = findEdgeBetween(mesh, dstId, opp1);
-    }
-
+    const size_t midId = mesh.addNode(MeshNode{(srcNode->payload.location + dstNode->payload.location) / 2.0});
     mesh.removeEdge(edgeId);
 
-    MeshEdge srcMidEdge;
-    srcMidEdge.border = isBorder;
-    size_t srcMidId = mesh.addEdge(srcMidEdge, srcId, midId);
-    result.splitEdgeIds.push_back(srcMidId);
+    auto addEdge = [&mesh](size_t a, size_t b, bool border, size_t oppositeA, size_t oppositeB) {
+        MeshEdge newEdge;
+        newEdge.border = border;
+        newEdge.triangleOppositeNodes = {oppositeA, oppositeB};
+        return mesh.addEdge(newEdge, a, b);
+    };
+    auto replaceOpposite = [&mesh](size_t a, size_t b, size_t from, size_t to) {
+        auto *adjacent = mesh.getEdge(findEdgeBetween(mesh, a, b));
+        if (!adjacent)
+            return;
+        auto &opposite = adjacent->payload.triangleOppositeNodes;
+        auto *it = std::find(opposite.begin(), opposite.end(), from);
+        if (it != opposite.end())
+            *it = to;
+    };
 
-    MeshEdge midDstEdge;
-    midDstEdge.border = isBorder;
-    size_t midDstId = mesh.addEdge(midDstEdge, midId, dstId);
-    result.splitEdgeIds.push_back(midDstId);
-
-    MeshEdge midOpp0Edge;
-    midOpp0Edge.border = false;
-    size_t midOpp0Id = mesh.addEdge(midOpp0Edge, midId, opp0);
-
-    size_t midOpp1Id = 0;
-    if (!isBorder && opp1 != 0)
+    BisectionResult result{midId, 0, {}};
+    result.splitEdgeIds = {addEdge(srcId, midId, isBorder, opp0, opp1), addEdge(midId, dstId, isBorder, opp0, opp1)};
+    result.newEdgeId = addEdge(midId, opp0, false, srcId, dstId);
+    replaceOpposite(srcId, opp0, dstId, midId);
+    replaceOpposite(dstId, opp0, srcId, midId);
+    if (opp1 != 0)
     {
-        MeshEdge midOpp1Edge;
-        midOpp1Edge.border = false;
-        midOpp1Id = mesh.addEdge(midOpp1Edge, midId, opp1);
+        addEdge(midId, opp1, false, srcId, dstId);
+        replaceOpposite(srcId, opp1, dstId, midId);
+        replaceOpposite(dstId, opp1, srcId, midId);
     }
-
-    // 4 triangles after bisection (2 if border):
-    // Triangle A: src, mid, opp0
-    // Triangle B: mid, dst, opp0
-    // Triangle C: src, mid, opp1 (if not border)
-    // Triangle D: mid, dst, opp1 (if not border)
-    auto *srcMidEdgePtr = mesh.getEdge(srcMidId);
-    srcMidEdgePtr->payload.triangleOppositeNodes[0] = opp0;
-    if (!isBorder && opp1 != 0)
-    {
-        srcMidEdgePtr->payload.triangleOppositeNodes[1] = opp1;
-    }
-
-    auto *midDstEdgePtr = mesh.getEdge(midDstId);
-    midDstEdgePtr->payload.triangleOppositeNodes[0] = opp0;
-    if (!isBorder && opp1 != 0)
-    {
-        midDstEdgePtr->payload.triangleOppositeNodes[1] = opp1;
-    }
-
-    auto *midOpp0EdgePtr = mesh.getEdge(midOpp0Id);
-    midOpp0EdgePtr->payload.triangleOppositeNodes[0] = srcId;
-    midOpp0EdgePtr->payload.triangleOppositeNodes[1] = dstId;
-
-    if (!isBorder && opp1 != 0 && midOpp1Id != 0)
-    {
-        auto *midOpp1EdgePtr = mesh.getEdge(midOpp1Id);
-        midOpp1EdgePtr->payload.triangleOppositeNodes[0] = srcId;
-        midOpp1EdgePtr->payload.triangleOppositeNodes[1] = dstId;
-    }
-
-    if (edgeSrcOpp0)
-    {
-        auto *e = mesh.getEdge(edgeSrcOpp0);
-        if (e)
-        {
-            for (int i = 0; i < 2; i++)
-            {
-                if (e->payload.triangleOppositeNodes[i] == dstId)
-                {
-                    e->payload.triangleOppositeNodes[i] = midId;
-                    break;
-                }
-            }
-        }
-    }
-
-    if (edgeDstOpp0)
-    {
-        auto *e = mesh.getEdge(edgeDstOpp0);
-        if (e)
-        {
-            for (int i = 0; i < 2; i++)
-            {
-                if (e->payload.triangleOppositeNodes[i] == srcId)
-                {
-                    e->payload.triangleOppositeNodes[i] = midId;
-                    break;
-                }
-            }
-        }
-    }
-
-    if (!isBorder && opp1 != 0)
-    {
-        if (edgeSrcOpp1)
-        {
-            auto *e = mesh.getEdge(edgeSrcOpp1);
-            if (e)
-            {
-                for (int i = 0; i < 2; i++)
-                {
-                    if (e->payload.triangleOppositeNodes[i] == dstId)
-                    {
-                        e->payload.triangleOppositeNodes[i] = midId;
-                        break;
-                    }
-                }
-            }
-        }
-
-        if (edgeDstOpp1)
-        {
-            auto *e = mesh.getEdge(edgeDstOpp1);
-            if (e)
-            {
-                for (int i = 0; i < 2; i++)
-                {
-                    if (e->payload.triangleOppositeNodes[i] == srcId)
-                    {
-                        e->payload.triangleOppositeNodes[i] = midId;
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    result.newEdgeId = midOpp0Id;
     return result;
 }
 
@@ -480,20 +337,12 @@ TriangleLocator::TriangleLocator(const MeshGraph &m) : _mesh(m)
                 continue;
 
             TriangleId tri{edgeId, side};
-            auto verts = getTriangleVertices(_mesh, tri);
-            if (verts[0] == 0 && verts[1] == 0 && verts[2] == 0)
+            std::array<Eigen::Vector3d, 3> corners;
+            if (!triangleCorners(_mesh, tri, corners))
                 continue;
 
-            const auto *n0 = _mesh.getNode(verts[0]);
-            const auto *n1 = _mesh.getNode(verts[1]);
-            const auto *n2 = _mesh.getNode(verts[2]);
-            if (!n0 || !n1 || !n2)
-                continue;
-
-            double cx = (n0->payload.location.x() + n1->payload.location.x() + n2->payload.location.x()) / 3.0;
-            double cy = (n0->payload.location.y() + n1->payload.location.y() + n2->payload.location.y()) / 3.0;
-
-            _centroidTree.addPoint({cx, cy}, tri, false);
+            const Eigen::Vector3d centroid = (corners[0] + corners[1] + corners[2]) / 3.0;
+            _centroidTree.addPoint({centroid.x(), centroid.y()}, tri, false);
         }
     }
     _centroidTree.splitOutstanding();
@@ -509,19 +358,11 @@ TriangleId TriangleLocator::find(double x, double y) const
 
     for (int step = 0; step < 100; step++)
     {
-        auto verts = getTriangleVertices(_mesh, current);
-        if (verts[0] == 0 && verts[1] == 0 && verts[2] == 0)
+        const auto verts = getTriangleVertices(_mesh, current);
+        std::array<Eigen::Vector3d, 3> corners;
+        if (!triangleCorners(_mesh, current, corners))
             return {0, 0};
-
-        const auto *n0 = _mesh.getNode(verts[0]);
-        const auto *n1 = _mesh.getNode(verts[1]);
-        const auto *n2 = _mesh.getNode(verts[2]);
-        if (!n0 || !n1 || !n2)
-            return {0, 0};
-
-        const auto &p0 = n0->payload.location;
-        const auto &p1 = n1->payload.location;
-        const auto &p2 = n2->payload.location;
+        const auto &[p0, p1, p2] = corners;
 
         auto sign = [](double px, double py, double ax, double ay, double bx, double by) {
             return (px - bx) * (ay - by) - (ax - bx) * (py - by);
@@ -531,27 +372,13 @@ TriangleId TriangleLocator::find(double x, double y) const
         double d1 = sign(x, y, p1.x(), p1.y(), p2.x(), p2.y()); // edge v1-v2
         double d2 = sign(x, y, p2.x(), p2.y(), p0.x(), p0.y()); // edge v2-v0
 
-        bool hasNeg = (d0 < 0) || (d1 < 0) || (d2 < 0);
-        bool hasPos = (d0 > 0) || (d1 > 0) || (d2 > 0);
-
-        if (!(hasNeg && hasPos))
-            return current;
-
-        // Determine expected sign (majority vote) and pick the most-violated edge
-        int negCount = (d0 < 0) + (d1 < 0) + (d2 < 0);
-        bool expectPositive = negCount < 2;
+        const bool expectPositive = sign(p2.x(), p2.y(), p0.x(), p0.y(), p1.x(), p1.y()) > 0;
 
         double worstVal = 0;
         int worstEdge = -1;
 
         auto checkEdge = [&](int edgeIdx, double d) {
-            if (d == 0)
-            {
-                worstVal = 0.000001;
-                worstEdge = edgeIdx;
-                return;
-            }
-            if ((d > 0) != expectPositive && std::abs(d) > worstVal)
+            if (d != 0 && (d > 0) != expectPositive && std::abs(d) > worstVal)
             {
                 worstVal = std::abs(d);
                 worstEdge = edgeIdx;
@@ -562,7 +389,7 @@ TriangleId TriangleLocator::find(double x, double y) const
         checkEdge(2, d2);
 
         if (worstEdge < 0)
-            return {0, 0};
+            return current;
 
         // Cross the worst edge to the neighboring triangle
         // Edge 0: verts[0]-verts[1] = the defining edge of current TriangleId
@@ -618,41 +445,9 @@ ankerl::unordered_dense::map<TriangleId, TrianglePointStats, TriangleIdHash> cou
         double sumDistSq = 0;
     };
 
-    struct TrianglePlane
-    {
-        Eigen::Vector3d normal;
-        Eigen::Vector3d origin;
-    };
-
     spdlog::debug("countPointsPerTriangle: mesh has {} nodes, {} edges", mesh.size_nodes(), mesh.size_edges());
 
     TriangleLocator locator(mesh);
-
-    ankerl::unordered_dense::map<TriangleId, TrianglePlane, TriangleIdHash> planeCache;
-    for (auto it = mesh.cedgebegin(); it != mesh.cedgeend(); ++it)
-    {
-        for (int side = 0; side < 2; side++)
-        {
-            if (side == 1 && it->second.payload.border)
-                continue;
-
-            TriangleId tri{it->first, side};
-            auto verts = getTriangleVertices(mesh, tri);
-            if (verts[0] == 0 && verts[1] == 0 && verts[2] == 0)
-                continue;
-
-            const auto *n0 = mesh.getNode(verts[0]);
-            const auto *n1 = mesh.getNode(verts[1]);
-            const auto *n2 = mesh.getNode(verts[2]);
-            if (n0 && n1 && n2)
-            {
-                Eigen::Vector3d normal = (n1->payload.location - n0->payload.location)
-                                             .cross(n2->payload.location - n0->payload.location)
-                                             .normalized();
-                planeCache[tri] = {normal, n0->payload.location};
-            }
-        }
-    }
 
     std::vector<const Eigen::Vector3d *> allPoints;
     {
@@ -684,10 +479,11 @@ ankerl::unordered_dense::map<TriangleId, TrianglePointStats, TriangleIdHash> cou
             auto &acc = localAcc[tri];
             acc.count++;
 
-            auto planeIt = planeCache.find(tri);
-            if (planeIt != planeCache.end())
+            std::array<Eigen::Vector3d, 3> corners;
+            if (triangleCorners(mesh, tri, corners))
             {
-                double dist = (p - planeIt->second.origin).dot(planeIt->second.normal);
+                const auto &[c0, c1, c2] = corners;
+                const double dist = (p - c0).dot((c1 - c0).cross(c2 - c0).normalized());
                 acc.sumDist += dist;
                 acc.sumDistSq += dist * dist;
             }
@@ -741,15 +537,12 @@ size_t refineByPointDensity(MeshGraph &mesh, const std::vector<point_cloud> &poi
                 const auto verts = getTriangleVertices(mesh, tri);
                 if (minTriangleSizeMeters > 0.0)
                 {
-                    const auto *n0 = mesh.getNode(verts[0]);
-                    const auto *n1 = mesh.getNode(verts[1]);
-                    const auto *n2 = mesh.getNode(verts[2]);
-                    if (n0 && n1 && n2)
+                    std::array<Eigen::Vector3d, 3> corners;
+                    if (triangleCorners(mesh, tri, corners))
                     {
-                        Eigen::Vector2d p0 = n0->payload.location.head<2>();
-                        Eigen::Vector2d p1 = n1->payload.location.head<2>();
-                        Eigen::Vector2d p2 = n2->payload.location.head<2>();
-                        double maxEdge = std::max({(p0 - p1).norm(), (p1 - p2).norm(), (p2 - p0).norm()});
+                        const auto &[p0, p1, p2] = corners;
+                        const double maxEdge = std::max(
+                            {(p0 - p1).head<2>().norm(), (p1 - p2).head<2>().norm(), (p2 - p0).head<2>().norm()});
                         if (maxEdge < minTriangleSizeMeters)
                         {
                             skippedSmall++;
@@ -847,17 +640,14 @@ std::vector<MeshPointSample> sampleMeshPoints(const MeshGraph &mesh, const std::
         const TriangleId tri = locator.find(p.x(), p.y());
         if (tri.edgeId == 0)
             continue;
-        const auto verts = getTriangleVertices(mesh, tri);
-        const auto *n0 = mesh.getNode(verts[0]);
-        const auto *n1 = mesh.getNode(verts[1]);
-        const auto *n2 = mesh.getNode(verts[2]);
-        if (!n0 || !n1 || !n2)
+        std::array<Eigen::Vector3d, 3> corners;
+        if (!triangleCorners(mesh, tri, corners))
             continue;
-        const Eigen::Vector3d bary = barycentricInXy(p.head<2>(), n0->payload.location.head<2>(),
-                                                     n1->payload.location.head<2>(), n2->payload.location.head<2>());
+        const auto &[c0, c1, c2] = corners;
+        const Eigen::Vector3d bary = barycentricInXy(p.head<2>(), c0.head<2>(), c1.head<2>(), c2.head<2>());
         if (!bary.allFinite())
             continue;
-        samples[pi] = MeshPointSample{verts, bary, p.z()};
+        samples[pi] = MeshPointSample{getTriangleVertices(mesh, tri), bary, p.z()};
         valid[pi] = 1;
     }
 
