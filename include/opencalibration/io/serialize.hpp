@@ -12,6 +12,9 @@ bool serializeFeatures(const MeasurementGraph &graph, std::ostream &out);
 
 bool serialize(const MeshGraph &graph, std::ostream &out);
 
+// Each triangle once, ascending node ids, orientation normalised, sorted
+std::vector<std::array<size_t, 3>> meshFaces(const MeshGraph &graph);
+
 bool toVisualizedGeoJson(const MeasurementGraph &graph,
                          std::function<Eigen::Vector3d(const Eigen::Vector3d &)> toGlobalCoordinates,
                          std::ostream &out);

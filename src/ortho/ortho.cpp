@@ -15,6 +15,7 @@
 #include <opencalibration/distort/distort_keypoints.hpp>
 #include <opencalibration/geo_coord/geo_coord.hpp>
 #include <opencalibration/geometry/utils.hpp>
+#include <opencalibration/io/serialize.hpp>
 #include <opencalibration/ortho/gdal_dataset.hpp>
 #include <opencalibration/ortho/image_cache.hpp>
 #include <opencalibration/performance/performance.hpp>
@@ -1618,67 +1619,7 @@ void generateTexturedOBJ(const std::vector<surface_model> &surfaces, const std::
             obj << "vt " << u << " " << v << "\n";
         }
 
-        // Extract faces (same logic as PLY serializer)
-        auto nodes_anticlockwise = [&mesh](const std::array<size_t, 3> &face) {
-            std::array<Eigen::Vector3d, 3> corners;
-            Eigen::Index i = 0;
-            for (size_t node_id : face)
-            {
-                corners[i++] = mesh.getNode(node_id)->payload.location;
-            }
-            return anticlockwise(corners);
-        };
-
-        struct ArrayHash
-        {
-            size_t operator()(const std::array<size_t, 3> &arr) const
-            {
-                size_t result = arr.size();
-                for (const auto &i : arr)
-                {
-                    result ^= i + 0x9e3779b9 + (result << 6) + (result >> 2);
-                }
-                return result;
-            }
-        };
-
-        ankerl::unordered_dense::set<std::array<size_t, 3>, ArrayHash> faces;
-        std::vector<size_t> sorted_edges;
-        sorted_edges.reserve(mesh.size_edges());
-        std::transform(mesh.cedgebegin(), mesh.cedgeend(), std::back_inserter(sorted_edges),
-                       [](const auto &iter) { return iter.first; });
-        std::sort(sorted_edges.begin(), sorted_edges.end());
-
-        for (size_t edge_id : sorted_edges)
-        {
-            const auto &edge = *mesh.getEdge(edge_id);
-            size_t source = edge.getSource();
-            size_t dest = edge.getDest();
-
-            auto addFace = [&](size_t opposite_corner) {
-                std::array<size_t, 3> face;
-                face[0] = source;
-                face[1] = dest;
-                face[2] = opposite_corner;
-
-                auto sorted_face = face;
-                std::sort(sorted_face.begin(), sorted_face.end());
-                if (nodes_anticlockwise(sorted_face))
-                    std::swap(sorted_face[0], sorted_face[1]);
-                faces.insert(sorted_face);
-            };
-
-            addFace(edge.payload.triangleOppositeNodes[0]);
-            if (!edge.payload.border)
-            {
-                addFace(edge.payload.triangleOppositeNodes[1]);
-            }
-        }
-
-        // Write faces
-        std::vector<std::array<size_t, 3>> sorted_faces(faces.begin(), faces.end());
-        std::sort(sorted_faces.begin(), sorted_faces.end());
-        for (const auto &face : sorted_faces)
+        for (const auto &face : meshFaces(mesh))
         {
             size_t v0 = node_to_index[face[0]];
             size_t v1 = node_to_index[face[1]];

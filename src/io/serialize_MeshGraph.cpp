@@ -5,8 +5,8 @@
 #include <iostream>
 #include <limits>
 
+#include <algorithm>
 #include <ankerl/unordered_dense.h>
-#include <set>
 
 namespace
 {
@@ -27,6 +27,33 @@ struct ArrayHash
 namespace opencalibration
 {
 
+std::vector<std::array<size_t, 3>> meshFaces(const MeshGraph &graph)
+{
+    ankerl::unordered_dense::set<std::array<size_t, 3>, ArrayHash> faces;
+    for (auto it = graph.cedgebegin(); it != graph.cedgeend(); ++it)
+    {
+        const auto &edge = it->second;
+        auto addFace = [&](size_t oppositeCorner) {
+            std::array<size_t, 3> face{edge.getSource(), edge.getDest(), oppositeCorner};
+            std::sort(face.begin(), face.end());
+            std::array<Eigen::Vector3d, 3> corners;
+            for (size_t i = 0; i < 3; i++)
+                corners[i] = graph.getNode(face[i])->payload.location;
+            if (anticlockwise(corners))
+                std::swap(face[0], face[1]);
+            faces.insert(face);
+        };
+
+        addFace(edge.payload.triangleOppositeNodes[0]);
+        if (!edge.payload.border)
+            addFace(edge.payload.triangleOppositeNodes[1]);
+    }
+
+    std::vector<std::array<size_t, 3>> sorted(faces.begin(), faces.end());
+    std::sort(sorted.begin(), sorted.end());
+    return sorted;
+}
+
 template <> class Serializer<MeshGraph>
 {
   public:
@@ -42,48 +69,12 @@ template <> class Serializer<MeshGraph>
         out << "property double z" << newline;
         out << "property int nodeIndex" << newline;
 
-        auto nodes_anticlockwise = [&graph](const std::array<size_t, 3> &face) {
-            std::array<Eigen::Vector3d, 3> corners;
-            Eigen::Index i = 0;
-            for (size_t node_id : face)
-            {
-                corners[i++] = graph.getNode(node_id)->payload.location;
-            }
-            return anticlockwise(corners);
-        };
-
-        ankerl::unordered_dense::set<std::array<size_t, 3>, ArrayHash> faces;
+        const auto faces = meshFaces(graph);
         std::vector<size_t> sortedEdges;
         sortedEdges.reserve(graph.size_edges());
         std::transform(graph.cedgebegin(), graph.cedgeend(), std::back_inserter(sortedEdges),
                        [](const auto &iter) { return iter.first; });
         std::sort(sortedEdges.begin(), sortedEdges.end());
-        for (size_t edge_id : sortedEdges)
-        {
-            const auto &edge = *graph.getEdge(edge_id);
-            size_t source = edge.getSource();
-            size_t dest = edge.getDest();
-
-            auto addFace = [&](size_t oppositeCorner) {
-                std::array<size_t, 3> face;
-                face[0] = source;
-                face[1] = dest;
-                face[2] = oppositeCorner;
-
-                auto sortedFace = face;
-                std::sort(sortedFace.begin(), sortedFace.end());
-                if (nodes_anticlockwise(sortedFace))
-                    std::swap(sortedFace[0], sortedFace[1]);
-                faces.insert(sortedFace);
-            };
-
-            addFace(edge.payload.triangleOppositeNodes[0]);
-
-            if (!edge.payload.border)
-            {
-                addFace(edge.payload.triangleOppositeNodes[1]);
-            }
-        }
 
         out << "element face " << faces.size() << newline;
         out << "property list uchar int vertex_index" << newline;
@@ -113,9 +104,7 @@ template <> class Serializer<MeshGraph>
         }
         out.precision(originalPrecision);
 
-        std::vector<std::array<size_t, 3>> sortedFaces(faces.begin(), faces.end());
-        std::sort(sortedFaces.begin(), sortedFaces.end());
-        for (const auto &face : sortedFaces)
+        for (const auto &face : faces)
         {
             std::array<size_t, 3> mappedFace;
             for (size_t i = 0; i < face.size(); i++)

@@ -3,6 +3,7 @@ target_include_directories(oc_ortho PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 target_link_libraries(oc_ortho PUBLIC spdlog::spdlog
+                                      oc_io
                                       oc_performance
                                       oc_tile_ordering
                                       OpenMP::OpenMP_CXX
