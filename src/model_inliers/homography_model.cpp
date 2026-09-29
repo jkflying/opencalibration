@@ -5,6 +5,8 @@
 
 #include <cmath>
 
+#include "model_utils.hpp"
+
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core/eigen.hpp>
 
@@ -16,73 +18,43 @@ homography_model::homography_model()
 {
 }
 
+namespace
+{
+// Least squares DLT with H(2,2) fixed to 1
+template <typename Indices>
+Eigen::Matrix3d solveHomography(const std::vector<correspondence> &corrs, const Indices &indices)
+{
+    Eigen::Matrix<double, Eigen::Dynamic, 9> P(indices.size() * 2, 9);
+    Eigen::Index row = 0;
+    for (size_t idx : indices)
+    {
+        const Eigen::Vector2d p1 = corrs[idx].measurement1.hnormalized();
+        const Eigen::Vector2d p2 = corrs[idx].measurement2.hnormalized();
+        const double x = p1.x(), y = p1.y(), x_ = p2.x(), y_ = p2.y();
+        P.row(row++) << -x, -y, -1, 0, 0, 0, x * x_, y * x_, x_;
+        P.row(row++) << 0, 0, 0, -x, -y, -1, x * y_, y * y_, y_;
+    }
+
+    Eigen::Matrix<double, 9, 1> h;
+    h.head<8>() = P.leftCols<8>().colPivHouseholderQr().solve(-P.col(8));
+    h(8) = 1;
+    return Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>>(h.data());
+}
+} // namespace
+
 void homography_model::fit(const std::vector<correspondence> &corrs,
                            const std::array<size_t, MINIMUM_POINTS> &initial_indices)
 {
-    Eigen::Matrix<double, 9, 9> P;
-
-    for (size_t i = 0; i < 4; i++)
-    {
-        Eigen::Vector2d p1 = corrs[initial_indices[i]].measurement1.hnormalized();
-        const double x = p1.x();
-        const double y = p1.y();
-        Eigen::Vector2d p2 = corrs[initial_indices[i]].measurement2.hnormalized();
-        const double x_ = p2.x();
-        const double y_ = p2.y();
-
-        P.row(i * 2) << -x, -y, -1, 0, 0, 0, x * x_, y * x_, x_;
-        P.row(i * 2 + 1) << 0, 0, 0, -x, -y, -1, x * y_, y * y_, y_;
-    }
-
-    // add constraint that bottom right corner is 1
-    P.bottomRows<1>().setZero();
-    P.bottomRightCorner<1, 1>() << 1;
-    Eigen::Matrix<double, 9, 1> rhs;
-    rhs.setZero();
-    rhs.bottomRows<1>() << 1;
-
-    Eigen::Matrix<double, 9, 1> H_ = P.fullPivLu().solve(rhs);
-    homography.row(0) = H_.topRows<3>().transpose();
-    homography.row(1) = H_.middleRows<3>(3).transpose();
-    homography.row(2) = H_.bottomRows<3>().transpose();
-    homography /= homography(2, 2); // renormalize in case that constraint wasn't enough
+    homography = solveHomography(corrs, initial_indices);
     homography_inverse = homography.inverse();
 }
 
 void homography_model::fitInliers(const std::vector<correspondence> &corrs, const std::vector<bool> &inliers)
 {
-    size_t num_inliers = std::count(inliers.begin(), inliers.end(), true);
-    Eigen::Matrix<double, Eigen::Dynamic, 9> P(num_inliers * 2 + 1, 9);
-
-    for (size_t i = 0, j = 0; i < corrs.size(); i++)
-    {
-        if (inliers[i])
-        {
-            Eigen::Vector2d p1 = corrs[i].measurement1.hnormalized();
-            const double x = p1.x();
-            const double y = p1.y();
-            Eigen::Vector2d p2 = corrs[i].measurement2.hnormalized();
-            const double x_ = p2.x();
-            const double y_ = p2.y();
-
-            P.row(j * 2) << -x, -y, -1, 0, 0, 0, x * x_, y * x_, x_;
-            P.row(j * 2 + 1) << 0, 0, 0, -x, -y, -1, x * y_, y * y_, y_;
-
-            j++;
-        }
-    }
-
-    // add constraint that bottom right corner is 1
-    P.bottomRows<1>() << 0, 0, 0, 0, 0, 0, 0, 0, 1;
-    Eigen::Matrix<double, Eigen::Dynamic, 1> rhs(num_inliers * 2 + 1, 1);
-    rhs.setZero();
-    rhs.bottomRows<1>() << 1;
-
-    Eigen::Matrix<double, 9, 1> H_ = P.fullPivLu().solve(rhs);
-    homography.row(0) = H_.topRows<3>().transpose();
-    homography.row(1) = H_.middleRows<3>(3).transpose();
-    homography.row(2) = H_.bottomRows<3>().transpose();
-    homography /= homography(2, 2); // renormalize in case that constraint wasn't enough
+    const auto indices = inlierIndices(inliers);
+    if (indices.size() < MINIMUM_POINTS)
+        return;
+    homography = solveHomography(corrs, indices);
     homography_inverse = homography.inverse();
 }
 
@@ -98,23 +70,7 @@ double homography_model::error(const correspondence &corr)
 
 double homography_model::evaluate(const std::vector<correspondence> &corrs, std::vector<bool> &inliers)
 {
-    inliers.resize(corrs.size());
-    double total_score = 0;
-    for (size_t i = 0; i < corrs.size(); i++)
-    {
-        double e = error(corrs[i]);
-        if (e < inlier_threshold)
-        {
-            inliers[i] = true;
-            double ratio = e / inlier_threshold;
-            total_score += 1.0 - ratio * ratio;
-        }
-        else
-        {
-            inliers[i] = false;
-        }
-    }
-    return total_score;
+    return evaluateMsac(*this, corrs, inliers);
 }
 
 bool homography_model::checkSampleDegeneracy(const std::vector<correspondence> &corrs,

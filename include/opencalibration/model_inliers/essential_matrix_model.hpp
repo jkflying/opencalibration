@@ -16,7 +16,7 @@ struct essential_matrix_model
 {
     essential_matrix_model();
 
-    static constexpr size_t MINIMUM_POINTS = 5;
+    static constexpr size_t MINIMUM_POINTS = 8;
 
     void fit(const std::vector<correspondence> &corrs, const std::array<size_t, MINIMUM_POINTS> &initial_indices);
     void fitInliers(const std::vector<correspondence> &corrs, const std::vector<bool> &inliers);

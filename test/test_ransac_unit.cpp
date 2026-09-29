@@ -2,7 +2,54 @@
 
 #include <gtest/gtest.h>
 
+#include <random>
+
 using namespace opencalibration;
+
+namespace
+{
+struct EssentialScene
+{
+    std::vector<correspondence> matches;
+    Eigen::Matrix3d E;
+};
+
+// Camera 2 sees world point X at R * X + t, so x2^T [t]x R x1 = 0
+EssentialScene makeEssentialScene(const std::vector<Eigen::Vector3d> &points)
+{
+    const Eigen::Matrix3d R = Eigen::AngleAxisd(0.2, Eigen::Vector3d(0.3, -1, 0.5).normalized()).toRotationMatrix();
+    const Eigen::Vector3d t(1, 0.2, -0.3);
+    Eigen::Matrix3d t_x;
+    t_x << 0, -t.z(), t.y(), t.z(), 0, -t.x(), -t.y(), t.x(), 0;
+
+    EssentialScene scene;
+    scene.E = t_x * R;
+    for (const auto &X : points)
+        scene.matches.push_back(correspondence{X.normalized(), (R * X + t).normalized()});
+    return scene;
+}
+
+Eigen::Vector3d scenePoint(size_t i, double depth_variation)
+{
+    const double a = static_cast<double>(i);
+    return {std::sin(a * 1.7) * 3, std::cos(a * 2.3) * 3, 8 + std::sin(a * 0.9) * depth_variation};
+}
+
+EssentialScene makeEssentialScene(size_t n)
+{
+    std::vector<Eigen::Vector3d> points;
+    for (size_t i = 0; i < n; i++)
+        points.push_back(scenePoint(i, 2));
+    return makeEssentialScene(points);
+}
+
+double essentialDistanceUpToScale(const Eigen::Matrix3d &a, const Eigen::Matrix3d &b)
+{
+    const Eigen::Matrix3d an = a / a.norm();
+    const Eigen::Matrix3d bn = b / b.norm();
+    return std::min((an - bn).norm(), (an + bn).norm());
+}
+} // namespace
 
 TEST(ransac_homography, ransac_compiles)
 {
@@ -281,6 +328,8 @@ TEST(ransac_essential_matrix, fits_identity)
     matches.push_back(correspondence{Eigen::Vector3d{1, 1, 1}, Eigen::Vector3d{1, 1, 1}});
     matches.push_back(correspondence{Eigen::Vector3d{1, 2, 3}, Eigen::Vector3d{1, 2, 3}});
     matches.push_back(correspondence{Eigen::Vector3d{2, 2, 2}, Eigen::Vector3d{2, 2, 2}});
+    matches.push_back(correspondence{Eigen::Vector3d{3, 1, 2}, Eigen::Vector3d{3, 1, 2}});
+    matches.push_back(correspondence{Eigen::Vector3d{1, 3, 2}, Eigen::Vector3d{1, 3, 2}});
     for (auto &m : matches)
     {
         m.measurement1.normalize();
@@ -293,7 +342,7 @@ TEST(ransac_essential_matrix, fits_identity)
     double score = ransac(matches, model, inliers);
 
     EXPECT_GE(score, 0.16);
-    EXPECT_EQ(inliers.size(), 6);
+    EXPECT_EQ(inliers.size(), 8);
     EXPECT_GE(std::count(inliers.begin(), inliers.end(), true), 1);
 }
 
@@ -308,13 +357,15 @@ TEST(ransac_essential_matrix, fitInliers_uses_correct_subset)
     matches.push_back(correspondence{Eigen::Vector3d{1, 1, 1}, Eigen::Vector3d{1, 1, 1}});
     matches.push_back(correspondence{Eigen::Vector3d{1.5, 1.5, 1}, Eigen::Vector3d{1.5, 1.5, 1}});
     matches.push_back(correspondence{Eigen::Vector3d{1, 2, 3}, Eigen::Vector3d{1, 2, 3}});
+    matches.push_back(correspondence{Eigen::Vector3d{3, 1, 2}, Eigen::Vector3d{3, 1, 2}});
+    matches.push_back(correspondence{Eigen::Vector3d{1, 3, 2}, Eigen::Vector3d{1, 3, 2}});
     for (auto &m : matches)
     {
         m.measurement1.normalize();
         m.measurement2.normalize();
     }
 
-    std::vector<bool> inliers = {true, false, true, false, true, true, true, true};
+    std::vector<bool> inliers = {true, false, true, false, true, true, true, true, true, true};
 
     essential_matrix_model model;
     model.fitInliers(matches, inliers);
@@ -345,6 +396,127 @@ TEST(ransac_essential_matrix, fitInliers_uses_correct_subset)
 
     EXPECT_LT(avg_inlier_error, 0.01);
     EXPECT_GT(avg_outlier_error, avg_inlier_error * 2);
+}
+
+TEST(ransac_homography, fitInliers_with_too_few_points_keeps_model)
+{
+    // GIVEN: a homography fitted from 4 points
+    EssentialScene scene = makeEssentialScene(10);
+    homography_model model;
+    model.fit(scene.matches, {0, 1, 2, 3});
+    const Eigen::Matrix3d fitted = model.homography;
+
+    // WHEN: refitting from only 3 inliers
+    std::vector<bool> inliers(scene.matches.size(), false);
+    inliers[4] = inliers[5] = inliers[6] = true;
+    model.fitInliers(scene.matches, inliers);
+
+    // THEN: the underdetermined refit is skipped
+    EXPECT_TRUE(model.homography.isApprox(fitted));
+}
+
+TEST(ransac_homography, fitInliers_is_least_squares_on_noisy_points)
+{
+    // GIVEN: noisy correspondences of a plane
+    std::vector<Eigen::Vector3d> points;
+    for (size_t i = 0; i < 60; i++)
+        points.push_back(scenePoint(i, 0));
+    EssentialScene scene = makeEssentialScene(points);
+    std::mt19937 rng(3);
+    std::normal_distribution<double> noise(0, 1e-3);
+    for (auto &m : scene.matches)
+        m.measurement2 = (m.measurement2.hnormalized() + Eigen::Vector2d(noise(rng), noise(rng))).homogeneous();
+
+    // WHEN: fitting on all of them
+    homography_model model;
+    model.fitInliers(scene.matches, std::vector<bool>(scene.matches.size(), true));
+
+    // THEN: the least-squares fit explains the data at least as well as the true plane homography
+    const Eigen::Matrix3d R = Eigen::AngleAxisd(0.2, Eigen::Vector3d(0.3, -1, 0.5).normalized()).toRotationMatrix();
+    homography_model truth;
+    truth.homography = R + Eigen::Vector3d(1, 0.2, -0.3) * Eigen::Vector3d(0, 0, 1.0 / 8).transpose();
+    truth.homography_inverse = truth.homography.inverse();
+    auto rms = [&](homography_model &h) {
+        double sum_sq = 0;
+        for (const auto &m : scene.matches)
+            sum_sq += std::pow(h.error(m), 2);
+        return std::sqrt(sum_sq / scene.matches.size());
+    };
+    EXPECT_LE(rms(model), rms(truth));
+}
+
+TEST(ransac_fundamental_matrix, fitInliers_recovers_ground_truth)
+{
+    // GIVEN: noise-free correspondences from a known relative pose, in normalized coordinates so F == E
+    EssentialScene scene = makeEssentialScene(20);
+    std::vector<bool> inliers(scene.matches.size(), true);
+
+    // WHEN: fitting on all of them
+    fundamental_matrix_model model;
+    model.fitInliers(scene.matches, inliers);
+
+    // THEN: the ground truth is recovered and every match has ~zero error
+    EXPECT_LT(essentialDistanceUpToScale(model.fundamental_matrix, scene.E), 1e-6);
+    for (const auto &m : scene.matches)
+        EXPECT_LT(model.error(m), 1e-9);
+}
+
+TEST(ransac_fundamental_matrix, checkDegeneracy_recovers_F_from_dominant_plane)
+{
+    // GIVEN: a scene dominated by a plane, with the off-plane points listed first
+    std::vector<Eigen::Vector3d> points;
+    for (size_t i = 0; i < 8; i++)
+        points.push_back(scenePoint(i, 0) * 0.5);
+    for (size_t i = 8; i < 48; i++)
+    {
+        Eigen::Vector3d p = scenePoint(i, 0);
+        p.z() += 0.1 * p.x();
+        points.push_back(p);
+    }
+    EssentialScene scene = makeEssentialScene(points);
+
+    // AND: a model which currently explains none of it
+    fundamental_matrix_model model;
+    model.fundamental_matrix.setZero();
+    std::vector<bool> inliers(scene.matches.size(), true);
+
+    // WHEN: checking for plane degeneracy
+    model.checkDegeneracy(scene.matches, inliers);
+
+    // THEN: F is recovered from the plane homography and the off-plane epipole
+    EXPECT_LT(essentialDistanceUpToScale(model.fundamental_matrix, scene.E), 1e-6);
+    EXPECT_EQ(std::count(inliers.begin(), inliers.end(), true), 48);
+}
+
+TEST(ransac_essential_matrix, fitInliers_recovers_ground_truth)
+{
+    // GIVEN: noise-free correspondences from a known relative pose
+    EssentialScene scene = makeEssentialScene(20);
+    std::vector<bool> inliers(scene.matches.size(), true);
+
+    // WHEN: fitting on all of them
+    essential_matrix_model model;
+    model.fitInliers(scene.matches, inliers);
+
+    // THEN: the ground truth essential matrix is recovered and every match has ~zero error
+    EXPECT_LT(essentialDistanceUpToScale(model.essential_matrix, scene.E), 1e-6);
+    for (const auto &m : scene.matches)
+        EXPECT_LT(model.error(m), 1e-9);
+}
+
+TEST(ransac_essential_matrix, ransac_recovers_ground_truth)
+{
+    // GIVEN: noise-free correspondences from a known relative pose
+    EssentialScene scene = makeEssentialScene(30);
+
+    // WHEN: running ransac
+    essential_matrix_model model;
+    std::vector<bool> inliers;
+    ransac(scene.matches, model, inliers);
+
+    // THEN: every match is an inlier of the ground truth essential matrix
+    EXPECT_EQ(std::count(inliers.begin(), inliers.end(), true), 30);
+    EXPECT_LT(essentialDistanceUpToScale(model.essential_matrix, scene.E), 1e-6);
 }
 
 INSTANTIATE_TEST_SUITE_P(

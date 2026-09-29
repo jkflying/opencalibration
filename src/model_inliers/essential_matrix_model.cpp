@@ -1,38 +1,19 @@
 #include <opencalibration/model_inliers/essential_matrix_model.hpp>
 
-#include <eigen3/Eigen/Dense>
-#include <eigen3/Eigen/Geometry>
-
-#include <cmath>
-#include <iostream>
-#include <limits>
-
-namespace
-{
-template <int D> void calculateEssentialMatrix(const Eigen::Matrix<double, D, 9> &A, Eigen::Matrix3d &essential_matrix)
-{
-    Eigen::Matrix<double, 9, 9> AtA = A.transpose() * A;
-
-    Eigen::Matrix<double, 9, 1> E_ = AtA.jacobiSvd(Eigen::ComputeFullV).matrixV().rightCols<1>().eval();
-    essential_matrix.row(0) = E_.topRows<3>().transpose();
-    essential_matrix.row(1) = E_.middleRows<3>(3).transpose();
-    essential_matrix.row(2) = E_.bottomRows<3>().transpose();
-
-    Eigen::JacobiSVD<Eigen::Matrix3d> svd;
-    svd.compute(essential_matrix, Eigen::ComputeFullV | Eigen::ComputeFullU);
-    Eigen::Vector3d singularValues = svd.singularValues();
-
-    double avg = (singularValues(0) + singularValues(1)) / 2.0;
-    singularValues(0) = avg;
-    singularValues(1) = avg;
-    singularValues(2) = 0;
-
-    essential_matrix = svd.matrixU() * singularValues.asDiagonal() * svd.matrixV().transpose();
-}
-} // namespace
+#include "model_utils.hpp"
 
 namespace opencalibration
 {
+namespace
+{
+Eigen::Matrix3d toEssential(const Eigen::Matrix3d &M)
+{
+    return adjustSingularValues(M, [](Eigen::Vector3d &s) {
+        const double avg = (s(0) + s(1)) / 2.0;
+        s << avg, avg, 0;
+    });
+}
+} // namespace
 
 essential_matrix_model::essential_matrix_model() : essential_matrix(Eigen::Matrix3d::Constant(NAN))
 {
@@ -41,85 +22,25 @@ essential_matrix_model::essential_matrix_model() : essential_matrix(Eigen::Matri
 void essential_matrix_model::fit(const std::vector<correspondence> &corrs,
                                  const std::array<size_t, MINIMUM_POINTS> &initial_indices)
 {
-
-    Eigen::Matrix<double, MINIMUM_POINTS, 9> A;
-
-    for (size_t i = 0; i < MINIMUM_POINTS; i++)
-    {
-
-        Eigen::Vector2d p1 = corrs[initial_indices[i]].measurement1.hnormalized();
-        const double x = p1.x();
-        const double y = p1.y();
-        Eigen::Vector2d p2 = corrs[initial_indices[i]].measurement2.hnormalized();
-        const double x_ = p2.x();
-        const double y_ = p2.y();
-
-        A.row(i) << x * x_, x * y_, x, y * x_, y * y_, y, x_, y_, 1;
-    }
-
-    calculateEssentialMatrix(A, essential_matrix);
+    essential_matrix = toEssential(solveEpipolarConstraint(corrs, initial_indices));
 }
 
 void essential_matrix_model::fitInliers(const std::vector<correspondence> &corrs, const std::vector<bool> &inliers)
 {
-    size_t num_inliers = std::count(inliers.begin(), inliers.end(), true);
-
-    if (num_inliers < MINIMUM_POINTS)
+    const auto indices = inlierIndices(inliers);
+    if (indices.size() < MINIMUM_POINTS)
         return;
-
-    Eigen::Matrix<double, Eigen::Dynamic, 9> A(num_inliers, 9);
-
-    for (size_t i = 0, j = 0; i < corrs.size(); i++)
-    {
-        if (inliers[i])
-        {
-            Eigen::Vector2d p1 = corrs[i].measurement1.hnormalized();
-            const double x = p1.x();
-            const double y = p1.y();
-            Eigen::Vector2d p2 = corrs[i].measurement2.hnormalized();
-            const double x_ = p2.x();
-            const double y_ = p2.y();
-
-            A.row(j) << x * x_, x * y_, x, y * x_, y * y_, y, x_, y_, 1;
-            j++;
-        }
-    }
-
-    calculateEssentialMatrix(A, essential_matrix);
+    essential_matrix = toEssential(solveEpipolarConstraint(corrs, indices));
 }
 
 double essential_matrix_model::evaluate(const std::vector<correspondence> &corrs, std::vector<bool> &inliers)
 {
-    inliers.resize(corrs.size());
-    double total_score = 0;
-    for (size_t i = 0; i < corrs.size(); i++)
-    {
-        double e = error(corrs[i]);
-        if (e < inlier_threshold)
-        {
-            inliers[i] = true;
-            double ratio = e / inlier_threshold;
-            total_score += 1.0 - ratio * ratio;
-        }
-        else
-        {
-            inliers[i] = false;
-        }
-    }
-    return total_score;
+    return evaluateMsac(*this, corrs, inliers);
 }
 
 double essential_matrix_model::error(const correspondence &cor)
 {
-    Eigen::Vector3d x1 = cor.measurement1 / cor.measurement1.z();
-    Eigen::Vector3d x2 = cor.measurement2 / cor.measurement2.z();
-    double x2tEx1 = x2.transpose() * essential_matrix * x1;
-    Eigen::Vector3d Ex1 = essential_matrix * x1;
-    Eigen::Vector3d Etx2 = essential_matrix.transpose() * x2;
-    double denom = Ex1[0] * Ex1[0] + Ex1[1] * Ex1[1] + Etx2[0] * Etx2[0] + Etx2[1] * Etx2[1];
-    if (denom < 1e-20)
-        return std::numeric_limits<double>::max();
-    return std::sqrt((x2tEx1 * x2tEx1) / denom);
+    return sampsonError(essential_matrix, cor);
 }
 
 bool essential_matrix_model::decompose(const std::vector<correspondence> & /*corrs*/,
