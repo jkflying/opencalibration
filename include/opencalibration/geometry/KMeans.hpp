@@ -201,11 +201,11 @@ template <typename T, size_t D> class KMeans
     void reassign_centroids()
     {
         size_t num_to_redistribute = 0;
-        const double ratio = 2.71828;
+        constexpr double max_cluster_size_ratio = 2.71828;
 
         for (; num_to_redistribute < _clusters.size() / 2; num_to_redistribute++)
         {
-            if (_clusters[num_to_redistribute].points.size() * ratio >
+            if (_clusters[num_to_redistribute].points.size() * max_cluster_size_ratio >
                 _clusters[_clusters.size() - 1 - num_to_redistribute].points.size())
             {
                 break;

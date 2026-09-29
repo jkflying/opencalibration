@@ -118,6 +118,10 @@ set(OPENCALIBRATION_LIBRARIES
     oc_io oc_match oc_model_inliers oc_ortho oc_performance
     oc_pipeline oc_relax oc_surface oc_tile_ordering)
 
+foreach(_target IN LISTS OPENCALIBRATION_LIBRARIES)
+    target_link_libraries(${_target} PUBLIC Eigen3::Eigen)
+endforeach()
+
 # Namespace aliases for add_subdirectory() consumers
 foreach(_target IN LISTS OPENCALIBRATION_LIBRARIES)
     add_library(opencalibration::${_target} ALIAS ${_target})
@@ -181,11 +185,11 @@ set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Open source camera calibration and orthop
 set(CPACK_PACKAGE_CONTACT "maintainer@opencalibration.org")
 
 set(CPACK_DEBIAN_PACKAGE_DEPENDS
-    "libeigen3-dev, libceres-dev, libopencv-dev, libgdal-dev, rapidjson-dev, libspdlog-dev, libtinyxml2-dev")
+    "libeigen3-dev, libceres-dev, libopencv-dev, libgdal-dev, rapidjson-dev, libspdlog-dev, libtinyxml2-dev, libzstd-dev, libmimalloc-dev")
 set(CPACK_DEBIAN_PACKAGE_SECTION "science")
 
 set(CPACK_RPM_PACKAGE_REQUIRES
-    "eigen3-devel, ceres-solver-devel, opencv-devel, gdal-devel, rapidjson-devel, spdlog-devel, tinyxml2-devel")
+    "eigen3-devel, ceres-solver-devel, opencv-devel, gdal-devel, rapidjson-devel, spdlog-devel, tinyxml2-devel, libzstd-devel, mimalloc-devel")
 set(CPACK_RPM_PACKAGE_LICENSE "MIT")
 
 include(CPack)

@@ -1,10 +1,4 @@
-# cv_raster_conversion.cpp uses cv::Mat::at<uint32_t> which clang rejects (no DataType<unsigned int>)
-add_library(cv_raster_obj OBJECT cv_raster_conversion.cpp)
-set_target_properties(cv_raster_obj PROPERTIES CXX_CLANG_TIDY "")
-target_include_directories(cv_raster_obj SYSTEM PRIVATE ${OpenCV_INCLUDE_DIRS})
-target_include_directories(cv_raster_obj PRIVATE $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>)
-
-add_library(oc_io $<TARGET_OBJECTS:cv_raster_obj>
+add_library(oc_io cv_raster_conversion.cpp
                   serialize_MeasurementGraph.cpp
                   serialize_MeshGraph.cpp
                   deserialize_MeasurementGraph.cpp
@@ -15,4 +9,5 @@ add_library(oc_io $<TARGET_OBJECTS:cv_raster_obj>
 target_include_directories(oc_io PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+target_include_directories(oc_io SYSTEM PRIVATE ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(oc_io PUBLIC spdlog::spdlog PRIVATE zstd)
