@@ -1,4 +1,5 @@
 #include <opencalibration/ortho/ortho.hpp>
+#include <opencalibration/ortho/patch_sampler.hpp>
 
 #include "thumbnail_encode.hpp"
 
@@ -71,23 +72,31 @@ std::pair<float, float> normalizedImagePosition(double pixel_x, double pixel_y, 
     return {std::clamp(nx, -1.0f, 1.0f), std::clamp(ny, -1.0f, 1.0f)};
 }
 
-opencalibration::orthomosaic::SampleGeometry sampleGeometry(const opencalibration::image &payload,
-                                                            const Eigen::Vector3d &world_point,
-                                                            const Eigen::Vector2d &pixel)
+} // namespace
+
+namespace opencalibration::orthomosaic
+{
+
+SampleGeometry sampleGeometry(const image &payload, const Eigen::Vector3d &world_point, const Eigen::Vector2d &pixel)
 {
     const int cols = payload.model->pixels_cols;
     const int rows = payload.model->pixels_rows;
-    opencalibration::orthomosaic::SampleGeometry g;
+    SampleGeometry g;
     g.normalized_radius = normalizedImageRadius(pixel.x(), pixel.y(), cols, rows);
     std::tie(g.normalized_x, g.normalized_y) = normalizedImagePosition(pixel.x(), pixel.y(), cols, rows);
 
     const Eigen::Vector3d view_dir = (world_point - payload.position).normalized();
-    const Eigen::Vector3d camera_down = payload.orientation.inverse() * Eigen::Vector3d(0, 0, 1);
+    const Eigen::Vector3d camera_down = payload.orientation * Eigen::Vector3d::UnitZ();
     g.view_angle_rad = static_cast<float>(std::acos(std::clamp(camera_down.dot(view_dir), -1.0, 1.0)));
-    g.horizontal_view_dir_x = static_cast<float>(view_dir.x());
-    g.horizontal_view_dir_y = static_cast<float>(view_dir.y());
+    g.view_dir_x = static_cast<float>(view_dir.x());
+    g.view_dir_y = static_cast<float>(view_dir.y());
     return g;
 }
+
+} // namespace opencalibration::orthomosaic
+
+namespace
+{
 
 bool applyColorBalance(const opencalibration::orthomosaic::ColorBalanceResult &color_balance, size_t camera_id,
                        uint32_t model_id, const opencalibration::orthomosaic::SampleGeometry &geometry, cv::Vec3f &lab)
@@ -132,149 +141,130 @@ cv::Vec3b labToRgb(const cv::Vec3f &lab)
     return rgb.at<cv::Vec3b>(0, 0);
 }
 
-class PatchSampler
-{
-  public:
-    static constexpr int MAX_PATCH_RADIUS = 16;
-
-    static Eigen::Matrix2d computeJacobian(const Eigen::Vector3d &world_point,
-                                           const opencalibration::DifferentiableCameraModel<double> &model,
-                                           const Eigen::Vector3d &camera_position,
-                                           const Eigen::Matrix3d &camera_orientation_inverse)
-    {
-        using JetT = ceres::Jet<double, 2>;
-
-        Eigen::Matrix<JetT, 3, 1> world_point_jet;
-        world_point_jet[0] = JetT(world_point.x(), 0);
-        world_point_jet[1] = JetT(world_point.y(), 1);
-        world_point_jet[2] = JetT(world_point.z());
-
-        opencalibration::DifferentiableCameraModel<JetT> model_jet;
-        model_jet.focal_length_pixels = JetT(model.focal_length_pixels);
-        model_jet.principle_point = model.principle_point.cast<JetT>();
-        model_jet.radial_distortion = model.radial_distortion.cast<JetT>();
-        model_jet.tangential_distortion = model.tangential_distortion.cast<JetT>();
-        model_jet.pixels_cols = model.pixels_cols;
-        model_jet.pixels_rows = model.pixels_rows;
-        model_jet.projection_type = model.projection_type;
-
-        Eigen::Matrix<JetT, 3, 1> camera_position_jet = camera_position.cast<JetT>();
-        Eigen::Matrix<JetT, 3, 3> camera_orientation_inverse_jet = camera_orientation_inverse.cast<JetT>();
-
-        Eigen::Matrix<JetT, 2, 1> pixel_jet = opencalibration::image_from_3d(
-            world_point_jet, model_jet, camera_position_jet, camera_orientation_inverse_jet);
-
-        Eigen::Matrix2d J;
-        J(0, 0) = pixel_jet[0].v[0];
-        J(0, 1) = pixel_jet[0].v[1];
-        J(1, 0) = pixel_jet[1].v[0];
-        J(1, 1) = pixel_jet[1].v[1];
-
-        return J;
-    }
-
-    struct BlockSample
-    {
-        Eigen::Vector2d pixel;
-        cv::Vec3b *out;
-    };
-
-    void sampleBlock(const cv::Mat &bgr_image, const Eigen::Vector3d &reference_point,
-                     const opencalibration::DifferentiableCameraModel<double> &model,
-                     const Eigen::Vector3d &camera_position, const Eigen::Matrix3d &camera_orientation_inverse,
-                     double output_gsd, const std::vector<BlockSample> &samples)
-    {
-        auto nearest = [&](const Eigen::Vector2d &pixel) {
-            return bgr_image.at<cv::Vec3b>(static_cast<int>(pixel.y()), static_cast<int>(pixel.x()));
-        };
-
-        Eigen::Matrix2d J = computeJacobian(reference_point, model, camera_position, camera_orientation_inverse);
-        Eigen::Matrix2d M = output_gsd * output_gsd * J * J.transpose();
-
-        Eigen::SelfAdjointEigenSolver<Eigen::Matrix2d> solver(M);
-        const double a = std::sqrt(std::max(solver.eigenvalues()(1), 1e-6));
-        const double b = std::sqrt(std::max(solver.eigenvalues()(0), 1e-6));
-
-        if ((a < 1.0 && b < 1.0) || M.determinant() < 1e-12)
-        {
-            for (const auto &sample : samples)
-                *sample.out = nearest(sample.pixel);
-            return;
-        }
-
-        const int radius = std::min(static_cast<int>(std::ceil(a)), MAX_PATCH_RADIUS);
-        const Eigen::Matrix2d M_inv = M.inverse();
-
-        int x_min = bgr_image.cols - 1, y_min = bgr_image.rows - 1, x_max = 0, y_max = 0;
-        for (const auto &sample : samples)
-        {
-            x_min = std::min(x_min, static_cast<int>(sample.pixel.x()) - radius);
-            y_min = std::min(y_min, static_cast<int>(sample.pixel.y()) - radius);
-            x_max = std::max(x_max, static_cast<int>(sample.pixel.x()) + radius);
-            y_max = std::max(y_max, static_cast<int>(sample.pixel.y()) + radius);
-        }
-        x_min = std::max(0, x_min);
-        y_min = std::max(0, y_min);
-        x_max = std::min(bgr_image.cols - 1, x_max);
-        y_max = std::min(bgr_image.rows - 1, y_max);
-
-        cv::cvtColor(bgr_image(cv::Rect(x_min, y_min, x_max - x_min + 1, y_max - y_min + 1)), _lab_roi,
-                     cv::COLOR_BGR2Lab);
-
-        _lab_avg.create(1, static_cast<int>(samples.size()), CV_8UC3);
-        _averaged.assign(samples.size(), false);
-        for (size_t i = 0; i < samples.size(); i++)
-        {
-            const Eigen::Vector2d &pixel = samples[i].pixel;
-            const int cx = static_cast<int>(pixel.x());
-            const int cy = static_cast<int>(pixel.y());
-
-            double sum_L = 0, sum_a = 0, sum_b = 0;
-            int count = 0;
-            for (int py = std::max(y_min, cy - radius); py <= std::min(y_max, cy + radius); py++)
-            {
-                for (int px = std::max(x_min, cx - radius); px <= std::min(x_max, cx + radius); px++)
-                {
-                    Eigen::Vector2d diff(px - pixel.x(), py - pixel.y());
-                    if (diff.transpose() * M_inv * diff <= 1.0)
-                    {
-                        const cv::Vec3b &lab = _lab_roi.at<cv::Vec3b>(py - y_min, px - x_min);
-                        sum_L += lab[0];
-                        sum_a += lab[1];
-                        sum_b += lab[2];
-                        count++;
-                    }
-                }
-            }
-
-            if (count == 0)
-            {
-                *samples[i].out = nearest(pixel);
-                continue;
-            }
-            _lab_avg.at<cv::Vec3b>(0, static_cast<int>(i)) =
-                cv::Vec3b(static_cast<uint8_t>(sum_L / count), static_cast<uint8_t>(sum_a / count),
-                          static_cast<uint8_t>(sum_b / count));
-            _averaged[i] = true;
-        }
-
-        cv::cvtColor(_lab_avg, _bgr_avg, cv::COLOR_Lab2BGR);
-        for (size_t i = 0; i < samples.size(); i++)
-            if (_averaged[i])
-                *samples[i].out = _bgr_avg.at<cv::Vec3b>(0, static_cast<int>(i));
-    }
-
-  private:
-    cv::Mat _lab_roi;
-    cv::Mat _lab_avg;
-    cv::Mat _bgr_avg;
-    std::vector<bool> _averaged;
-};
-
 } // namespace
 
 namespace opencalibration::orthomosaic
 {
+
+Eigen::Matrix2d PatchSampler::computeJacobian(const Eigen::Vector3d &world_point,
+                                              const DifferentiableCameraModel<double> &model,
+                                              const Eigen::Vector3d &camera_position,
+                                              const Eigen::Matrix3d &camera_orientation_inverse)
+{
+    using JetT = ceres::Jet<double, 2>;
+
+    Eigen::Matrix<JetT, 3, 1> world_point_jet;
+    world_point_jet[0] = JetT(world_point.x(), 0);
+    world_point_jet[1] = JetT(world_point.y(), 1);
+    world_point_jet[2] = JetT(world_point.z());
+
+    DifferentiableCameraModel<JetT> model_jet;
+    model_jet.focal_length_pixels = JetT(model.focal_length_pixels);
+    model_jet.principle_point = model.principle_point.cast<JetT>();
+    model_jet.radial_distortion = model.radial_distortion.cast<JetT>();
+    model_jet.tangential_distortion = model.tangential_distortion.cast<JetT>();
+    model_jet.pixels_cols = model.pixels_cols;
+    model_jet.pixels_rows = model.pixels_rows;
+    model_jet.projection_type = model.projection_type;
+
+    Eigen::Matrix<JetT, 3, 1> camera_position_jet = camera_position.cast<JetT>();
+    Eigen::Matrix<JetT, 3, 3> camera_orientation_inverse_jet = camera_orientation_inverse.cast<JetT>();
+
+    Eigen::Matrix<JetT, 2, 1> pixel_jet =
+        image_from_3d(world_point_jet, model_jet, camera_position_jet, camera_orientation_inverse_jet);
+
+    Eigen::Matrix2d J;
+    J(0, 0) = pixel_jet[0].v[0];
+    J(0, 1) = pixel_jet[0].v[1];
+    J(1, 0) = pixel_jet[1].v[0];
+    J(1, 1) = pixel_jet[1].v[1];
+
+    return J;
+}
+
+void PatchSampler::sampleBlock(const cv::Mat &bgr_image, const Eigen::Vector3d &reference_point,
+                               const DifferentiableCameraModel<double> &model, const Eigen::Vector3d &camera_position,
+                               const Eigen::Matrix3d &camera_orientation_inverse, double output_gsd,
+                               const std::vector<BlockSample> &samples)
+{
+    auto nearest = [&](const Eigen::Vector2d &pixel) {
+        return bgr_image.at<cv::Vec3b>(static_cast<int>(pixel.y()), static_cast<int>(pixel.x()));
+    };
+
+    Eigen::Matrix2d J = computeJacobian(reference_point, model, camera_position, camera_orientation_inverse);
+    Eigen::Matrix2d M = output_gsd * output_gsd * J * J.transpose();
+
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix2d> solver(M);
+    const double a = std::sqrt(std::max(solver.eigenvalues()(1), 1e-6));
+    const double b = std::sqrt(std::max(solver.eigenvalues()(0), 1e-6));
+
+    if ((a < 1.0 && b < 1.0) || M.determinant() < 1e-12)
+    {
+        for (const auto &sample : samples)
+            *sample.out = nearest(sample.pixel);
+        return;
+    }
+
+    const int radius = std::min(static_cast<int>(std::ceil(a)), MAX_PATCH_RADIUS);
+    const Eigen::Matrix2d M_inv = M.inverse();
+
+    int x_min = bgr_image.cols - 1, y_min = bgr_image.rows - 1, x_max = 0, y_max = 0;
+    for (const auto &sample : samples)
+    {
+        x_min = std::min(x_min, static_cast<int>(sample.pixel.x()) - radius);
+        y_min = std::min(y_min, static_cast<int>(sample.pixel.y()) - radius);
+        x_max = std::max(x_max, static_cast<int>(sample.pixel.x()) + radius);
+        y_max = std::max(y_max, static_cast<int>(sample.pixel.y()) + radius);
+    }
+    x_min = std::max(0, x_min);
+    y_min = std::max(0, y_min);
+    x_max = std::min(bgr_image.cols - 1, x_max);
+    y_max = std::min(bgr_image.rows - 1, y_max);
+
+    cv::cvtColor(bgr_image(cv::Rect(x_min, y_min, x_max - x_min + 1, y_max - y_min + 1)), _lab_roi, cv::COLOR_BGR2Lab);
+
+    _lab_avg.create(1, static_cast<int>(samples.size()), CV_8UC3);
+    _averaged.assign(samples.size(), false);
+    for (size_t i = 0; i < samples.size(); i++)
+    {
+        const Eigen::Vector2d &pixel = samples[i].pixel;
+        const int cx = static_cast<int>(pixel.x());
+        const int cy = static_cast<int>(pixel.y());
+
+        double sum_L = 0, sum_a = 0, sum_b = 0;
+        int count = 0;
+        for (int py = std::max(y_min, cy - radius); py <= std::min(y_max, cy + radius); py++)
+        {
+            for (int px = std::max(x_min, cx - radius); px <= std::min(x_max, cx + radius); px++)
+            {
+                Eigen::Vector2d diff(px - pixel.x(), py - pixel.y());
+                if (diff.transpose() * M_inv * diff <= 1.0)
+                {
+                    const cv::Vec3b &lab = _lab_roi.at<cv::Vec3b>(py - y_min, px - x_min);
+                    sum_L += lab[0];
+                    sum_a += lab[1];
+                    sum_b += lab[2];
+                    count++;
+                }
+            }
+        }
+
+        if (count == 0)
+        {
+            *samples[i].out = nearest(pixel);
+            continue;
+        }
+        _lab_avg.at<cv::Vec3b>(0, static_cast<int>(i)) =
+            cv::Vec3b(static_cast<uint8_t>(sum_L / count), static_cast<uint8_t>(sum_a / count),
+                      static_cast<uint8_t>(sum_b / count));
+        _averaged[i] = true;
+    }
+
+    cv::cvtColor(_lab_avg, _bgr_avg, cv::COLOR_Lab2BGR);
+    for (size_t i = 0; i < samples.size(); i++)
+        if (_averaged[i])
+            *samples[i].out = _bgr_avg.at<cv::Vec3b>(0, static_cast<int>(i));
+}
 
 Eigen::Vector2d pixelCentre(const OrthoMosaicBounds &bounds, double gsd, double col, double row)
 {
@@ -285,7 +275,9 @@ void rasterSizeCovering(const OrthoMosaicBounds &bounds, double gsd, int &width,
 {
     auto pixels = [gsd](double extent) {
         const double n = std::ceil(extent / gsd);
-        return std::isfinite(n) && n >= 1 ? static_cast<int>(n) : 100;
+        if (!std::isfinite(n))
+            return 100;
+        return std::max(1, static_cast<int>(n));
     };
     width = pixels(bounds.max_x - bounds.min_x);
     height = pixels(bounds.max_y - bounds.min_y);
@@ -298,6 +290,11 @@ uint64_t pixelCount(int width, int height)
 
 void coarsenGsdToFit(double &gsd, int &width, int &height, const OrthoMosaicBounds &bounds, uint64_t max_pixels)
 {
+    const bool size_depends_on_gsd =
+        gsd > 0 && std::isfinite(bounds.max_x - bounds.min_x) && std::isfinite(bounds.max_y - bounds.min_y);
+    if (!size_depends_on_gsd || max_pixels == 0)
+        return;
+
     constexpr double kRoundUpMargin = 1 + 1e-6;
     for (uint64_t pixels = pixelCount(width, height); pixels > max_pixels; pixels = pixelCount(width, height))
     {
@@ -416,6 +413,14 @@ OrthoMosaicBounds calculateBoundsAndMeanZ(const std::vector<surface_model> &surf
     return {min_x, max_x, min_y, max_y, mean_surface_z};
 }
 
+double arcPerPixel(const CameraModel &model)
+{
+    const double h = 0.001;
+    Eigen::Vector2d pixel = image_from_3d({0, 0, 1}, model);
+    Eigen::Vector2d pixelShift = image_from_3d({h, 0, 1}, model);
+    return h / (pixel - pixelShift).norm();
+}
+
 double calculateGSD(const MeasurementGraph &graph, const ankerl::unordered_dense::set<size_t> &involved_nodes,
                     double mean_surface_z, ImageResolution resolution)
 {
@@ -429,10 +434,7 @@ double calculateGSD(const MeasurementGraph &graph, const ankerl::unordered_dense
         if (!node)
             continue;
         const auto &payload = node->payload;
-        const double h = 0.001;
-        Eigen::Vector2d pixel = image_from_3d({0, 0, 1}, *payload.model);
-        Eigen::Vector2d pixelShift = image_from_3d({h, 0, 1}, *payload.model);
-        double arc_pixel = h / (pixel - pixelShift).norm();
+        double arc_pixel = arcPerPixel(*payload.model);
 
         if (resolution == ImageResolution::Thumbnail && payload.model->pixels_rows > 0)
         {
@@ -485,26 +487,17 @@ OrthoMosaicContext prepareOrthoMosaicContext(const std::vector<surface_model> &s
 
     context.average_camera_elevation = context.mean_camera_z - context.bounds.mean_surface_z;
 
-    // Initialize ray trace context
-    context.rayTraceContext.init(surfaces);
-
     return context;
 }
 
-// RayTraceContext implementation
 RayTraceContext::RayTraceContext(const std::vector<surface_model> &surfaces)
 {
-    init(surfaces);
-}
-
-void RayTraceContext::init(const std::vector<surface_model> &surfaces)
-{
-    _searchers.clear();
     for (const auto &surface : surfaces)
     {
         _searchers.emplace_back();
         if (!_searchers.back().init(surface.mesh))
         {
+            spdlog::error("Could not initialize searcher on mesh surface");
             _searchers.pop_back();
         }
     }
@@ -532,18 +525,6 @@ double RayTraceContext::traceHeight(double x, double y, double mean_camera_z)
     }
 
     return NAN;
-}
-
-double rayTraceHeight(double x, double y, double mean_camera_z, RayTraceContext &context)
-{
-    return context.traceHeight(x, y, mean_camera_z);
-}
-
-double rayTraceHeight(double x, double y, double mean_camera_z, const std::vector<surface_model> &surfaces)
-{
-    // Convenience overload - creates temporary context for simple use cases
-    RayTraceContext context(surfaces);
-    return context.traceHeight(x, y, mean_camera_z);
 }
 
 namespace
@@ -613,6 +594,28 @@ ankerl::unordered_dense::map<size_t, CameraPosition> cameraPositions(
     }
     return positions;
 }
+void applyThumbnailColorBalance(const ColorBalanceResult &balance, const std::vector<ThumbnailSample> &pixel_sources,
+                                const Eigen::Matrix<int32_t, Eigen::Dynamic, Eigen::Dynamic> &cameraUUID,
+                                MultiLayerRaster<uint8_t> &pixelValues)
+{
+    constexpr uint32_t noSource = std::numeric_limits<uint32_t>::max();
+#pragma omp parallel for schedule(dynamic)
+    for (int row = 0; row < cameraUUID.rows(); row++)
+    {
+        Eigen::Vector<uint8_t, Eigen::Dynamic> color(4);
+        for (int col = 0; col < cameraUUID.cols(); col++)
+        {
+            if (static_cast<uint32_t>(cameraUUID(row, col)) == noSource)
+                continue;
+            ThumbnailSample source = pixel_sources[static_cast<size_t>(row) * cameraUUID.cols() + col];
+            if (!applyColorBalance(balance, source.camera_id, source.model_id, source.geometry, source.lab))
+                continue;
+            const cv::Vec3b rgb = labToRgb(source.lab);
+            color << rgb[0], rgb[1], rgb[2], 255;
+            pixelValues.set(row, col, color);
+        }
+    }
+}
 } // namespace
 
 OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph,
@@ -644,7 +647,6 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
 
     PerformanceMeasure p("Generate thumbnail");
 
-    // Precompute inverse rotation matrices to avoid quaternion.inverse() per pixel
     struct CameraCache
     {
         Eigen::Matrix3d inv_rotation;
@@ -681,16 +683,7 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
 
 #pragma omp parallel
     {
-        std::vector<MeshIntersectionSearcher> searchers;
-        for (const auto &surface : surfaces)
-        {
-            searchers.emplace_back();
-            if (!searchers.back().init(surface.mesh))
-            {
-                spdlog::error("Could not initialize searcher on mesh surface");
-                searchers.pop_back();
-            }
-        }
+        RayTraceContext rayTrace(surfaces);
         auto cameraSearcher = context.imageGPSLocations.searcher();
         const std::vector<jk::tree::KDTree<size_t, 2>::DistancePayload> noCameras;
         std::vector<ColorCorrespondence> local_correspondences;
@@ -704,26 +697,7 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
                 const Eigen::Vector2d centre = pixelCentre(context.bounds, context.gsd, col, row);
                 const double x = centre.x(), y = centre.y();
 
-                // get height of pixel from mesh or nearest keypoint
-                const ray_d intersectionRay{{0, 0, -1}, {x, y, context.mean_camera_z}};
-                double z = NAN;
-                for (auto &searcher : searchers)
-                {
-                    if (searcher.lastResult().type != MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
-                    {
-                        if (!searcher.reinit())
-                        {
-                            continue;
-                        }
-                    }
-
-                    auto intersection = searcher.triangleIntersect(intersectionRay);
-                    if (intersection.type == MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
-                    {
-                        z = intersection.intersectionLocation.z();
-                        break;
-                    }
-                }
+                const double z = rayTrace.traceHeight(x, y, context.mean_camera_z);
 
                 Eigen::Vector3d sample_point(x, y, z);
 
@@ -783,12 +757,10 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
 
                 if (pixelSource == noSource)
                 {
-                    // background checkerboard
                     uint8_t grey = (row + col) % 2 == 0 ? 64 : 128;
-                    color << grey, grey, grey, 0; // alpha 0 for background
+                    color << grey, grey, grey, 0;
                 }
 
-                // assign color to thumbnail pixel
                 pixelValues.set(row, col, color);
                 result.cameraUUID.pixels(row, col) = pixelSource;
                 result.overlap.pixels(row, col) = overlapCount;
@@ -816,23 +788,7 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
     if (!correspondences.empty())
         result.color_balance = solveColorBalance(correspondences, cameraPositions(graph, context.involved_nodes));
 
-#pragma omp parallel for schedule(dynamic)
-    for (int row = 0; row < image_dimensions.height; row++)
-    {
-        Eigen::Vector<uint8_t, Eigen::Dynamic> color(4);
-        for (int col = 0; col < image_dimensions.width; col++)
-        {
-            if (static_cast<uint32_t>(result.cameraUUID.pixels(row, col)) == noSource)
-                continue;
-            ThumbnailSample source = pixel_sources[static_cast<size_t>(row) * image_dimensions.width + col];
-            if (!applyColorBalance(result.color_balance, source.camera_id, source.model_id, source.geometry,
-                                   source.lab))
-                continue;
-            const cv::Vec3b rgb = labToRgb(source.lab);
-            color << rgb[0], rgb[1], rgb[2], 255;
-            pixelValues.set(row, col, color);
-        }
-    }
+    applyThumbnailColorBalance(result.color_balance, pixel_sources, result.cameraUUID.pixels, pixelValues);
 
     result.pixelValues = std::move(pixelValues);
     return result;
@@ -918,15 +874,7 @@ std::vector<float> computeDSMTile(int tile_x, int tile_y, int tile_size, const O
     {
         PerformanceMeasure thread_perf("DSM tile rows");
 
-        std::vector<MeshIntersectionSearcher> searchers;
-        for (const auto &surface : surfaces)
-        {
-            searchers.emplace_back();
-            if (!searchers.back().init(surface.mesh))
-            {
-                searchers.pop_back();
-            }
-        }
+        RayTraceContext rayTrace(surfaces);
 
 #pragma omp for schedule(dynamic)
         for (int local_row = 0; local_row < tile_height; local_row++)
@@ -939,25 +887,7 @@ std::vector<float> computeDSMTile(int tile_x, int tile_y, int tile_size, const O
                 const Eigen::Vector2d centre = pixelCentre(bounds, gsd, global_col, global_row);
                 const double x = centre.x(), y = centre.y();
 
-                const ray_d intersectionRay{{0, 0, -1}, {x, y, mean_camera_z}};
-                double z = NAN;
-                for (auto &searcher : searchers)
-                {
-                    if (searcher.lastResult().type != MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
-                    {
-                        if (!searcher.reinit())
-                        {
-                            continue;
-                        }
-                    }
-
-                    auto intersection = searcher.triangleIntersect(intersectionRay);
-                    if (intersection.type == MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
-                    {
-                        z = intersection.intersectionLocation.z();
-                        break;
-                    }
-                }
+                const double z = rayTrace.traceHeight(x, y, mean_camera_z);
 
                 int idx = local_row * tile_width + local_col;
                 tile_buffer[idx] = static_cast<float>(z);
@@ -968,12 +898,9 @@ std::vector<float> computeDSMTile(int tile_x, int tile_y, int tile_size, const O
     return tile_buffer;
 }
 
-namespace
-{
-
 ankerl::unordered_dense::set<size_t> findTileCameras(int tile_x, int tile_y, int tile_size,
-                                                     const opencalibration::orthomosaic::OrthoMosaicBounds &bounds,
-                                                     double gsd, int output_width, int output_height,
+                                                     const OrthoMosaicBounds &bounds, double gsd, int output_width,
+                                                     int output_height,
                                                      const jk::tree::KDTree<size_t, 2> &imageGPSLocations,
                                                      int num_neighbors)
 {
@@ -992,24 +919,20 @@ ankerl::unordered_dense::set<size_t> findTileCameras(int tile_x, int tile_y, int
     {
         for (int sx = 0; sx < N; sx++)
         {
-            int local_col = tile_width * sx / (N - 1);
-            int local_row = tile_height * sy / (N - 1);
-            local_col = std::min(local_col, tile_width);
-            local_row = std::min(local_row, tile_height);
+            const int global_col = x_offset + (tile_width - 1) * sx / (N - 1);
+            const int global_row = y_offset + (tile_height - 1) * sy / (N - 1);
+            const Eigen::Vector2d centre = pixelCentre(bounds, gsd, global_col, global_row);
 
-            int global_col = x_offset + local_col;
-            int global_row = y_offset + local_row;
-
-            double x = global_col * gsd + bounds.min_x;
-            double y = bounds.max_y - global_row * gsd;
-
-            for (const auto &closest : searcher.search({x, y}, INFINITY, num_neighbors))
+            for (const auto &closest : searcher.search({centre.x(), centre.y()}, INFINITY, num_neighbors))
                 camera_ids.insert(closest.payload);
         }
     }
 
     return camera_ids;
 }
+
+namespace
+{
 
 void loadImages(const ankerl::unordered_dense::set<size_t> &camera_ids, const opencalibration::MeasurementGraph &graph,
                 opencalibration::orthomosaic::FullResolutionImageCache &image_cache)
@@ -1139,6 +1062,8 @@ struct BlendSample
 };
 
 constexpr size_t kMaxBlendCameras = 3;
+constexpr size_t kBlockCandidates = 8;
+constexpr size_t kPixelCandidates = 5;
 
 std::vector<uint8_t> backgroundTile(int x_offset, int y_offset, int tile_width, int tile_height)
 {
@@ -1276,8 +1201,6 @@ std::vector<uint8_t> renderTile(int tile_x, int tile_y, int tile_size, const Ort
     std::vector<uint8_t> rgba_tile = backgroundTile(x_offset, y_offset, tile_width, tile_height);
 
     constexpr int kBlockSize = 8;
-    constexpr size_t kBlockCandidates = 8;
-    constexpr size_t kPixelCandidates = 5;
     const int blocks_x = (tile_width + kBlockSize - 1) / kBlockSize;
     const int blocks_y = (tile_height + kBlockSize - 1) / kBlockSize;
 
@@ -1440,7 +1363,9 @@ void generateGeoTIFF(const std::vector<surface_model> &surfaces, const Measureme
     const int tile_size = config.tile_size;
     const int block_size = blockSizeDividingTile(tile_size);
     const std::string wkt = coord_system.getWKT();
-    GDALDatasetPtr output_ds = createGeoTIFF(output_path, width, height, 4, GDT_Byte, block_size, bounds, gsd, wkt);
+    GDALDatasetPtr output_ds;
+    if (!output_path.empty())
+        output_ds = createGeoTIFF(output_path, width, height, 4, GDT_Byte, block_size, bounds, gsd, wkt);
     GDALDatasetPtr dsm_ds;
     if (!dsm_output_path.empty())
         dsm_ds = createGeoTIFF(dsm_output_path, width, height, 1, GDT_Float32, block_size, bounds, gsd, wkt);
@@ -1473,7 +1398,7 @@ void generateGeoTIFF(const std::vector<surface_model> &surfaces, const Measureme
         {
             size_t tile_idx = static_cast<size_t>(ty) * num_tiles_x + tx;
             tile_camera_map[tile_idx] = findTileCameras(tx, ty, tile_size, bounds, gsd, width, height,
-                                                        context.imageGPSLocations, kMaxBlendCameras);
+                                                        context.imageGPSLocations, kPixelCandidates);
         }
 
     const size_t image_cache_size = computeImageCacheSize(tile_camera_map);
@@ -1508,19 +1433,22 @@ void generateGeoTIFF(const std::vector<surface_model> &surfaces, const Measureme
             computeDSMTile(tile_x, tile_y, tile_size, bounds, gsd, width, height, surfaces, context.mean_camera_z);
         lap(dsm_s);
 
-        loadImages(tile_camera_map.at(static_cast<size_t>(tile_y) * num_tiles_x + tile_x), graph, image_cache);
-        lap(load_s);
-
-        std::vector<uint8_t> rgba_tile =
-            renderTile(tile_x, tile_y, tile_size, bounds, gsd, width, height, dsm_tile, graph,
-                       context.imageGPSLocations, inv_rotation_cache, image_cache, color_balance, feather_distance);
+        std::vector<uint8_t> rgba_tile;
+        if (output_ds)
+        {
+            loadImages(tile_camera_map.at(static_cast<size_t>(tile_y) * num_tiles_x + tile_x), graph, image_cache);
+            lap(load_s);
+            rgba_tile =
+                renderTile(tile_x, tile_y, tile_size, bounds, gsd, width, height, dsm_tile, graph,
+                           context.imageGPSLocations, inv_rotation_cache, image_cache, color_balance, feather_distance);
+        }
 
         const int x_off = tile_x * tile_size;
         const int y_off = tile_y * tile_size;
         const int tw = std::min(tile_size, width - x_off);
         const int th = std::min(tile_size, height - y_off);
 
-        if (tile_progress)
+        if (tile_progress && output_ds)
             tile_progress(tileUpdate(rgba_tile, x_off, y_off, tw, th, width, height, completed_tiles + 1, total_tiles,
                                      bounds, gsd));
         lap(process_s);
@@ -1533,7 +1461,8 @@ void generateGeoTIFF(const std::vector<surface_model> &surfaces, const Measureme
         auto dsm_tile_ptr = std::make_shared<std::vector<float>>(std::move(dsm_tile));
         write_future = std::async(std::launch::async, [&, rgba_tile_ptr, dsm_tile_ptr, x_off, y_off, tw, th] {
             PerformanceMeasure thread_perf("Ortho - write");
-            writeInterleavedWindow(output_ds.get(), x_off, y_off, tw, th, *rgba_tile_ptr);
+            if (output_ds)
+                writeInterleavedWindow(output_ds.get(), x_off, y_off, tw, th, *rgba_tile_ptr);
             if (dsm_ds)
                 writeInterleavedWindow(dsm_ds.get(), x_off, y_off, tw, th, *dsm_tile_ptr);
         });
@@ -1556,7 +1485,8 @@ void generateGeoTIFF(const std::vector<surface_model> &surfaces, const Measureme
         write_future.get();
 
     spdlog::info("Building overviews...");
-    buildOverviews(output_ds.get(), width, height);
+    if (output_ds)
+        buildOverviews(output_ds.get(), width, height);
     if (dsm_ds)
         buildOverviews(dsm_ds.get(), width, height);
 
@@ -1590,7 +1520,6 @@ void generateTexturedOBJ(const std::vector<surface_model> &surfaces, const std::
     double gsd_x = geotransform[1];
     double gsd_y = -geotransform[5]; // geotransform[5] is negative
 
-    // Derive output paths from obj_path
     std::string base_path = obj_path;
     if (base_path.size() >= 4 && base_path.substr(base_path.size() - 4) == ".obj")
     {
@@ -1599,7 +1528,6 @@ void generateTexturedOBJ(const std::vector<surface_model> &surfaces, const std::
     std::string mtl_path = base_path + ".mtl";
     std::string jpg_path = base_path + ".jpg";
 
-    // Extract just filenames for references within OBJ/MTL
     auto filename_only = [](const std::string &path) {
         size_t pos = path.find_last_of("/\\");
         return (pos != std::string::npos) ? path.substr(pos + 1) : path;
@@ -1607,7 +1535,6 @@ void generateTexturedOBJ(const std::vector<surface_model> &surfaces, const std::
     std::string mtl_filename = filename_only(mtl_path);
     std::string jpg_filename = filename_only(jpg_path);
 
-    // Read RGBA from GeoTIFF and write JPEG texture
     if (ds.GetRasterCount() < 3)
     {
         spdlog::error("Expected RGB bands in {}", geotiff_path);
@@ -1621,10 +1548,20 @@ void generateTexturedOBJ(const std::vector<surface_model> &surfaces, const std::
         spdlog::error("Failed to read texture from {}", geotiff_path);
         return;
     }
-    cv::imwrite(jpg_path, texture);
-    spdlog::info("Wrote texture: {} ({}x{})", jpg_path, img_width, img_height);
+    constexpr int MAX_JPEG_DIMENSION = 65500;
+    const int largest_dimension = std::max(img_width, img_height);
+    if (largest_dimension > MAX_JPEG_DIMENSION)
+    {
+        const double scale = static_cast<double>(MAX_JPEG_DIMENSION) / largest_dimension;
+        cv::resize(texture, texture, cv::Size(), scale, scale, cv::INTER_AREA);
+    }
+    if (!cv::imwrite(jpg_path, texture))
+    {
+        spdlog::error("Failed to write texture: {}", jpg_path);
+        return;
+    }
+    spdlog::info("Wrote texture: {} ({}x{})", jpg_path, texture.cols, texture.rows);
 
-    // Write MTL file
     {
         std::ofstream mtl(mtl_path);
         if (!mtl.is_open())
@@ -1640,7 +1577,6 @@ void generateTexturedOBJ(const std::vector<surface_model> &surfaces, const std::
     }
     spdlog::info("Wrote material: {}", mtl_path);
 
-    // Write OBJ file
     std::ofstream obj(obj_path);
     if (!obj.is_open())
     {
@@ -1662,17 +1598,14 @@ void generateTexturedOBJ(const std::vector<surface_model> &surfaces, const std::
         if (mesh.size_edges() == 0)
             continue;
 
-        // Collect and sort vertices
         std::vector<size_t> sorted_nodes;
         sorted_nodes.reserve(mesh.size_nodes());
         std::transform(mesh.cnodebegin(), mesh.cnodeend(), std::back_inserter(sorted_nodes),
                        [](const auto &iter) { return iter.first; });
         std::sort(sorted_nodes.begin(), sorted_nodes.end());
 
-        // Map from node ID to sequential index (1-based for OBJ, offset by global count)
         std::unordered_map<size_t, size_t> node_to_index;
 
-        // Write vertices and UVs
         for (size_t node_id : sorted_nodes)
         {
             const auto &loc = mesh.getNode(node_id)->payload.location;

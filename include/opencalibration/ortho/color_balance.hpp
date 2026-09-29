@@ -29,8 +29,8 @@ struct SampleGeometry
     float view_angle_rad = 0;
     float normalized_x = 0;
     float normalized_y = 0;
-    float horizontal_view_dir_x = 0;
-    float horizontal_view_dir_y = 0;
+    float view_dir_x = 0;
+    float view_dir_y = 0;
 };
 
 struct ColorCorrespondence

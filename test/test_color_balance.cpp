@@ -147,8 +147,8 @@ TEST(ColorBalance, radiometric_match_cost_view_direction_correction)
     const double view_dir_gain[2] = {0.3, 0.0};
     auto corr = makeCorrespondence(1, 2, observeWithLogCbrtGain(true_lab, 0.3 * 0.4),
                                    observeWithLogCbrtGain(true_lab, 0.3 * -0.4));
-    corr.geometry_a.horizontal_view_dir_x = 0.4f;
-    corr.geometry_b.horizontal_view_dir_x = -0.4f;
+    corr.geometry_a.view_dir_x = 0.4f;
+    corr.geometry_b.view_dir_x = -0.4f;
 
     // WHEN: Evaluating with the global view direction gain
     auto residuals = evaluate(corr, {}, {}, view_dir_gain);
@@ -230,6 +230,34 @@ TEST(ColorBalance, solve_three_cameras)
     double exp_c = result.per_image_params.at(3).log_cbrt_exposure;
     EXPECT_NEAR(exp_a - exp_b, 0.08, 0.015);
     EXPECT_NEAR(exp_b - exp_c, 0.04, 0.015);
+}
+
+TEST(ColorBalance, camera_positions_remove_planar_exposure_trend)
+{
+    // GIVEN: four cameras on a square whose exposure rises linearly across the survey
+    const ankerl::unordered_dense::map<size_t, CameraPosition> positions = {
+        {1, {0, 0}}, {2, {10, 0}}, {3, {0, 10}}, {4, {10, 10}}};
+    const auto gain = [&](size_t id) { return 0.01 * positions.at(id).x + 0.02 * positions.at(id).y; };
+    std::vector<ColorCorrespondence> correspondences;
+    for (const auto &[a, b] : std::vector<std::pair<size_t, size_t>>{{1, 2}, {1, 3}, {2, 4}, {3, 4}})
+        for (int i = 0; i < 100; i++)
+        {
+            const std::array<float, 3> true_lab = {40.0f + (i % 30), 0.0f, 0.0f};
+            correspondences.push_back(makeCorrespondence(a, b, observeWithLogCbrtGain(true_lab, gain(a)),
+                                                         observeWithLogCbrtGain(true_lab, gain(b))));
+        }
+
+    // WHEN: we solve with and without the camera positions
+    const auto trended = solveColorBalance(correspondences);
+    const auto detrended = solveColorBalance(correspondences, positions);
+
+    // THEN: the trend is only removed when positions are given
+    ASSERT_TRUE(trended.success);
+    ASSERT_TRUE(detrended.success);
+    EXPECT_NEAR(trended.per_image_params.at(4).log_cbrt_exposure - trended.per_image_params.at(1).log_cbrt_exposure,
+                0.3, 0.02);
+    for (const auto &[id, position] : positions)
+        EXPECT_NEAR(detrended.per_image_params.at(id).log_cbrt_exposure, 0, 0.02) << id;
 }
 
 TEST(ColorBalance, solve_empty_correspondences)
@@ -338,10 +366,10 @@ TEST(ColorBalance, solve_synthetic_view_direction_gain)
         auto corr = makeCorrespondence(cam_a, cam_b,
                                        observeWithLogCbrtGain(true_lab, true_gain[0] * vx_a + true_gain[1] * vy_a),
                                        observeWithLogCbrtGain(true_lab, true_gain[0] * vx_b + true_gain[1] * vy_b));
-        corr.geometry_a.horizontal_view_dir_x = vx_a;
-        corr.geometry_a.horizontal_view_dir_y = vy_a;
-        corr.geometry_b.horizontal_view_dir_x = vx_b;
-        corr.geometry_b.horizontal_view_dir_y = vy_b;
+        corr.geometry_a.view_dir_x = vx_a;
+        corr.geometry_a.view_dir_y = vy_a;
+        corr.geometry_b.view_dir_x = vx_b;
+        corr.geometry_b.view_dir_y = vy_b;
         correspondences.push_back(corr);
     }
 

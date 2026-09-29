@@ -21,23 +21,15 @@ class GeoCoord;
 namespace opencalibration::orthomosaic
 {
 
-// RAII context for ray tracing operations - manages mesh intersection searchers
+SampleGeometry sampleGeometry(const image &payload, const Eigen::Vector3d &world_point, const Eigen::Vector2d &pixel);
+
 class RayTraceContext
 {
   public:
-    RayTraceContext() = default;
     explicit RayTraceContext(const std::vector<surface_model> &surfaces);
 
-    // Reinitialize with new surfaces
-    void init(const std::vector<surface_model> &surfaces);
-
-    // Ray-trace to find height at world position (x, y)
+    // NaN when no surface is hit
     double traceHeight(double x, double y, double mean_camera_z);
-
-    [[nodiscard]] bool isValid() const
-    {
-        return !_searchers.empty();
-    }
 
   private:
     std::vector<MeshIntersectionSearcher> _searchers;
@@ -69,10 +61,17 @@ struct OrthoMosaicContext
     jk::tree::KDTree<size_t, 2> imageGPSLocations;
     double mean_camera_z;
     double average_camera_elevation;
-    RayTraceContext rayTraceContext;
 };
 
 OrthoMosaicBounds calculateBoundsAndMeanZ(const std::vector<surface_model> &surfaces);
+
+void coarsenGsdToFit(double &gsd, int &width, int &height, const OrthoMosaicBounds &bounds, uint64_t max_pixels);
+
+ankerl::unordered_dense::set<size_t> findTileCameras(int tile_x, int tile_y, int tile_size,
+                                                     const OrthoMosaicBounds &bounds, double gsd, int output_width,
+                                                     int output_height,
+                                                     const jk::tree::KDTree<size_t, 2> &imageGPSLocations,
+                                                     int num_neighbors);
 
 enum class ImageResolution
 {
@@ -80,18 +79,13 @@ enum class ImageResolution
     FullResolution
 };
 
+double arcPerPixel(const CameraModel &model);
+
 double calculateGSD(const MeasurementGraph &graph, const ankerl::unordered_dense::set<size_t> &involved_nodes,
                     double mean_surface_z, ImageResolution resolution = ImageResolution::Thumbnail);
 
 OrthoMosaicContext prepareOrthoMosaicContext(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph,
                                              ImageResolution resolution = ImageResolution::Thumbnail);
-
-// Ray-trace to find height at world position (x, y) using a context (preferred - RAII)
-double rayTraceHeight(double x, double y, double mean_camera_z, RayTraceContext &context);
-
-// Ray-trace to find height - convenience overload that creates temporary context
-// Note: Less efficient for repeated calls; prefer using RayTraceContext directly
-double rayTraceHeight(double x, double y, double mean_camera_z, const std::vector<surface_model> &surfaces);
 
 struct OrthoMosaicConfig
 {

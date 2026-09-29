@@ -1001,7 +1001,7 @@ Pipeline::Impl::Transition Pipeline::Impl::generate_thumbnail()
 
 Pipeline::Impl::Transition Pipeline::Impl::generate_orthomosaic()
 {
-    if (!generate_geotiff || geotiff_filename.empty())
+    if (!generate_geotiff || (geotiff_filename.empty() && dsm_filename.empty()))
     {
         USM_DECISION_TABLE(Transition::NEXT, USM_MAKE_DECISION(!generate_geotiff, Transition::NEXT));
     }

@@ -19,6 +19,9 @@ namespace opencalibration::orthomosaic
 
 namespace
 {
+constexpr double LAB_MATCH_HUBER_SCALE = 5.0;
+constexpr double PRIOR_WEIGHT_PER_SQRT_CORRESPONDENCE = 0.1;
+
 template <int N> void addZeroPrior(ceres::Problem &problem, double *params, double weight)
 {
     problem.AddResidualBlock(new ceres::AutoDiffCostFunction<ZeroPrior<N>, N, N>(new ZeroPrior<N>(weight)), nullptr,
@@ -76,30 +79,34 @@ ColorBalanceResult solveColorBalance(const std::vector<ColorCorrespondence> &cor
             auto *cost =
                 new ceres::AutoDiffCostFunction<RadiometricMatchCostSharedVig, 3, 1, 2, 1, 2, 1, 2, 1, 2, 3, 2>(
                     new RadiometricMatchCostSharedVig(corr));
-            problem.AddResidualBlock(cost, new ceres::HuberLoss(5.0), &a.log_cbrt_exposure, a.ab_offset.data(),
-                                     &a.brdf_coeff, a.slope.data(), &b.log_cbrt_exposure, b.ab_offset.data(),
-                                     &b.brdf_coeff, b.slope.data(), vig_a, view_dir_gain);
+            problem.AddResidualBlock(cost, new ceres::HuberLoss(LAB_MATCH_HUBER_SCALE), &a.log_cbrt_exposure,
+                                     a.ab_offset.data(), &a.brdf_coeff, a.slope.data(), &b.log_cbrt_exposure,
+                                     b.ab_offset.data(), &b.brdf_coeff, b.slope.data(), vig_a, view_dir_gain);
         }
         else
         {
             auto *cost = new ceres::AutoDiffCostFunction<RadiometricMatchCost, 3, 1, 2, 1, 2, 3, 1, 2, 1, 2, 3, 2>(
                 new RadiometricMatchCost(corr));
-            problem.AddResidualBlock(cost, new ceres::HuberLoss(5.0), &a.log_cbrt_exposure, a.ab_offset.data(),
-                                     &a.brdf_coeff, a.slope.data(), vig_a, &b.log_cbrt_exposure, b.ab_offset.data(),
-                                     &b.brdf_coeff, b.slope.data(), vig_b, view_dir_gain);
+            problem.AddResidualBlock(cost, new ceres::HuberLoss(LAB_MATCH_HUBER_SCALE), &a.log_cbrt_exposure,
+                                     a.ab_offset.data(), &a.brdf_coeff, a.slope.data(), vig_a, &b.log_cbrt_exposure,
+                                     b.ab_offset.data(), &b.brdf_coeff, b.slope.data(), vig_b, view_dir_gain);
         }
     }
 
     std::unordered_map<size_t, int> cam_corr_counts;
+    std::unordered_map<uint32_t, int> model_corr_counts;
     for (const auto &corr : correspondences)
     {
         cam_corr_counts[corr.camera_id_a]++;
         cam_corr_counts[corr.camera_id_b]++;
+        model_corr_counts[corr.model_id_a]++;
+        model_corr_counts[corr.model_id_b]++;
     }
 
     for (auto &[cam_id, params] : result.per_image_params)
     {
-        double ab_weight = 0.1 * std::sqrt(static_cast<double>(std::max(1, cam_corr_counts[cam_id])));
+        double ab_weight =
+            PRIOR_WEIGHT_PER_SQRT_CORRESPONDENCE * std::sqrt(static_cast<double>(std::max(1, cam_corr_counts[cam_id])));
         double log_cbrt_weight = ab_weight * L_UNITS_PER_LOG_CBRT_GAIN;
         addZeroPrior<1>(problem, &params.log_cbrt_exposure, log_cbrt_weight);
         addZeroPrior<2>(problem, params.ab_offset.data(), ab_weight);
@@ -107,20 +114,14 @@ ColorBalanceResult solveColorBalance(const std::vector<ColorCorrespondence> &cor
         addZeroPrior<2>(problem, params.slope.data(), log_cbrt_weight);
     }
 
-    std::unordered_map<uint32_t, int> model_corr_counts;
-    for (const auto &corr : correspondences)
-    {
-        model_corr_counts[corr.model_id_a]++;
-        model_corr_counts[corr.model_id_b]++;
-    }
-
     for (auto &[model_id, vig] : result.per_model_params)
     {
         double scale = std::sqrt(static_cast<double>(std::max(1, model_corr_counts[model_id])));
-        addZeroPrior<3>(problem, vig.log_cbrt_falloff_coeffs.data(), 0.1 * scale);
+        addZeroPrior<3>(problem, vig.log_cbrt_falloff_coeffs.data(), PRIOR_WEIGHT_PER_SQRT_CORRESPONDENCE * scale);
     }
 
-    addZeroPrior<2>(problem, view_dir_gain, 0.1 * std::sqrt(static_cast<double>(correspondences.size())));
+    addZeroPrior<2>(problem, view_dir_gain,
+                    PRIOR_WEIGHT_PER_SQRT_CORRESPONDENCE * std::sqrt(static_cast<double>(correspondences.size())));
 
     ceres::Solver::Options options;
     options.linear_solver_type = ceres::SPARSE_NORMAL_CHOLESKY;

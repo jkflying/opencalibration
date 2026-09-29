@@ -46,8 +46,8 @@ template <typename T> T totalLogCbrtGain(const RadiometricModel<T> &m, const Sam
 {
     return vignettingLogCbrtFalloff(m.vignetting, g.normalized_radius) + m.log_cbrt_exposure[0] +
            m.brdf[0] * T(g.view_angle_rad * g.view_angle_rad) + m.slope[0] * T(g.normalized_x) +
-           m.slope[1] * T(g.normalized_y) + m.horizontal_view_dir_gain[0] * T(g.horizontal_view_dir_x) +
-           m.horizontal_view_dir_gain[1] * T(g.horizontal_view_dir_y);
+           m.slope[1] * T(g.normalized_y) + m.horizontal_view_dir_gain[0] * T(g.view_dir_x) +
+           m.horizontal_view_dir_gain[1] * T(g.view_dir_y);
 }
 
 template <typename T>

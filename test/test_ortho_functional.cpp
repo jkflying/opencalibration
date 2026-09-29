@@ -11,9 +11,12 @@
 #include <opencalibration/types/node_pose.hpp>
 #include <opencalibration/types/point_cloud.hpp>
 
+#include <cpl_string.h>
 #include <gtest/gtest.h>
 #include <opencv2/imgcodecs.hpp>
 
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -257,7 +260,7 @@ struct ortho : public ::testing::Test
         std::vector<float> dsm;
     };
 
-    RenderedGeoTIFF renderNearestCameraScene(const std::string &prefix, int blend_transition_radius)
+    surface_model nearestCameraScene(const std::string &prefix)
     {
         surface_model points_surface;
         points_surface.cloud.push_back(generate_planar_points());
@@ -273,7 +276,12 @@ struct ortho : public ::testing::Test
             cv::imwrite(path, cv::Mat(100, 100, CV_8UC3, cameraColorBGR(i)));
             graph.getNode(id[i])->payload.path = path;
         }
+        return mesh_surface;
+    }
 
+    RenderedGeoTIFF renderNearestCameraScene(const std::string &prefix, int blend_transition_radius)
+    {
+        const surface_model mesh_surface = nearestCameraScene(prefix);
         GeoCoord coord_system;
         coord_system.setOrigin(0, 0);
         OrthoMosaicConfig config;
@@ -510,6 +518,25 @@ TEST_F(ortho, geotiff_feathers_colours_across_camera_seams)
     EXPECT_EQ(out_of_range, 0);
 }
 
+TEST_F(ortho, geotiff_writes_dsm_without_orthomosaic)
+{
+    // GIVEN: a scene and only a DSM output path
+    init_cameras();
+    const std::string dsm_path = TEST_DATA_OUTPUT_DIR "test_dsm_only.dsm.tif";
+    std::remove(dsm_path.c_str());
+    const surface_model mesh_surface = nearestCameraScene(TEST_DATA_OUTPUT_DIR "test_dsm_only");
+    GeoCoord coord_system;
+    coord_system.setOrigin(0, 0);
+
+    // WHEN: we generate with an empty orthomosaic path
+    generateGeoTIFF({mesh_surface}, graph, coord_system, ColorBalanceResult{}, "", dsm_path);
+
+    // THEN: the DSM is written
+    GDALDatasetPtr dsm_ds(GDALOpen(dsm_path.c_str(), GA_ReadOnly));
+    ASSERT_TRUE(dsm_ds);
+    EXPECT_GT(GDALGetRasterXSize(dsm_ds.get()), 0);
+}
+
 TEST_F(ortho, geotiff_respects_max_megapixel_limit)
 {
     // GIVEN: A scene with images and surface
@@ -572,20 +599,21 @@ TEST_F(ortho, pixel_values_with_known_colors)
     surface_model mesh_surface;
     mesh_surface.mesh = rebuildMesh(camera_locations, {points_surface});
 
-    // Create test images with known distinct colors
-    std::vector<std::string> temp_image_paths;
-    std::vector<cv::Scalar> colors = {
-        cv::Scalar(0, 0, 255), // Image 0: Pure red in RGB (0, 0, 255 in BGR)
-        cv::Scalar(0, 255, 0), // Image 1: Pure green in RGB (0, 255, 0 in BGR)
-        cv::Scalar(255, 0, 0)  // Image 2: Pure blue in RGB (255, 0, 0 in BGR)
+    const auto groundColor = [](const Eigen::Vector3d &p) {
+        return cv::Vec3b(p.x() < 10 && p.y() >= 10 ? 255 : 0, p.x() >= 10 && p.y() < 10 ? 255 : 0,
+                         p.x() < 10 && p.y() < 10 ? 255 : 0);
     };
-
     for (int i = 0; i < 3; i++)
     {
+        cv::Mat img(100, 100, CV_8UC3);
+        for (int row = 0; row < img.rows; row++)
+            for (int col = 0; col < img.cols; col++)
+            {
+                const Eigen::Vector3d ray = ground_ori[i] * image_to_3d(Eigen::Vector2d(col + 0.5, row + 0.5), *model);
+                img.at<cv::Vec3b>(row, col) = groundColor(ground_pos[i] + ray * (-10 - ground_pos[i].z()) / ray.z());
+            }
         std::string path = TEST_DATA_OUTPUT_DIR "test_color_image_" + std::to_string(i) + ".png";
-        cv::Mat img(100, 100, CV_8UC3, colors[i]);
         cv::imwrite(path, img);
-        temp_image_paths.push_back(path);
         graph.getNode(id[i])->payload.path = path;
     }
 
@@ -597,90 +625,32 @@ TEST_F(ortho, pixel_values_with_known_colors)
     // WHEN: we generate a GeoTIFF orthomosaic
     EXPECT_NO_THROW(generateOrthomosaicGeoTIFF({mesh_surface}, graph, coord_system, output_path, 512));
 
-    // THEN: verify the output file exists and has correct structure
-    EXPECT_TRUE(std::filesystem::exists(output_path));
-
+    // THEN: the mosaic reproduces the ground pattern away from its edges
     GDALDatasetPtr dataset = openGDALDataset(output_path);
     ASSERT_NE(dataset.get(), nullptr);
+    ASSERT_EQ(GDALGetRasterCount(dataset.get()), 4);
 
-    GDALDatasetWrapper ds_wrapper(dataset.get());
-    int width = ds_wrapper.GetRasterXSize();
-    int height = ds_wrapper.GetRasterYSize();
-    EXPECT_GT(width, 0);
-    EXPECT_GT(height, 0);
-    EXPECT_EQ(ds_wrapper.GetRasterCount(), 4); // RGBA
-
-    // Verify geotransform is valid and invertible
     double geotransform[6];
-    EXPECT_EQ(ds_wrapper.GetGeoTransform(geotransform), CE_None);
-    EXPECT_GT(geotransform[1], 0); // Pixel width (GSD)
-    EXPECT_LT(geotransform[5], 0); // Negative pixel height
-    double gsd = geotransform[1];
-    double origin_x = geotransform[0];
-    double origin_y = geotransform[3];
+    ASSERT_EQ(GDALGetGeoTransform(dataset.get(), geotransform), CE_None);
 
-    // Sample pixels from the center and corners to verify blending
-    std::vector<std::pair<int, int>> test_pixels = {
-        {width / 2, height / 2},        // Center of image
-        {width / 4, height / 4},        // Upper-left quadrant
-        {3 * width / 4, height / 4},    // Upper-right quadrant
-        {width / 4, 3 * height / 4},    // Lower-left quadrant
-        {3 * width / 4, 3 * height / 4} // Lower-right quadrant
-    };
-
-    // Read bands for sampled pixels
-    for (const auto &[px, py] : test_pixels)
+    for (const Eigen::Vector2d &ground :
+         {Eigen::Vector2d(7, 7), Eigen::Vector2d(13, 7), Eigen::Vector2d(7, 13), Eigen::Vector2d(13, 13)})
     {
-        // Read pixel from all 4 bands
-        uint8_t r, g, b, a;
-        GDALRasterBandH red_band = GDALGetRasterBand(dataset.get(), 1);
-        GDALRasterBandH green_band = GDALGetRasterBand(dataset.get(), 2);
-        GDALRasterBandH blue_band = GDALGetRasterBand(dataset.get(), 3);
-        GDALRasterBandH alpha_band = GDALGetRasterBand(dataset.get(), 4);
+        const int px = static_cast<int>((ground.x() - geotransform[0]) / geotransform[1]);
+        const int py = static_cast<int>((ground.y() - geotransform[3]) / geotransform[5]);
 
-        ASSERT_NE(red_band, nullptr);
-        ASSERT_NE(green_band, nullptr);
-        ASSERT_NE(blue_band, nullptr);
-        ASSERT_NE(alpha_band, nullptr);
+        std::array<uint8_t, 4> rgba{};
+        for (int band = 0; band < 4; band++)
+            ASSERT_EQ(GDALRasterIO(GDALGetRasterBand(dataset.get(), band + 1), GF_Read, px, py, 1, 1, &rgba[band], 1, 1,
+                                   GDT_Byte, 0, 0),
+                      CE_None);
 
-        // Read single pixel from each band
-        CPLErr err_r = GDALRasterIO(red_band, GF_Read, px, py, 1, 1, &r, 1, 1, GDT_Byte, 0, 0);
-        CPLErr err_g = GDALRasterIO(green_band, GF_Read, px, py, 1, 1, &g, 1, 1, GDT_Byte, 0, 0);
-        CPLErr err_b = GDALRasterIO(blue_band, GF_Read, px, py, 1, 1, &b, 1, 1, GDT_Byte, 0, 0);
-        CPLErr err_a = GDALRasterIO(alpha_band, GF_Read, px, py, 1, 1, &a, 1, 1, GDT_Byte, 0, 0);
-
-        EXPECT_EQ(err_r, CE_None);
-        EXPECT_EQ(err_g, CE_None);
-        EXPECT_EQ(err_b, CE_None);
-        EXPECT_EQ(err_a, CE_None);
-
-        // Verify alpha is either 255 (valid data) or 0 (no data)
-        // The test surface should be covered by at least some images
-        EXPECT_TRUE(a == 255 || a == 0) << "Alpha at (" << px << ", " << py << ") is " << (int)a
-                                        << ", expected 0 or 255";
-
-        // If pixel has valid data (alpha == 255), verify RGB values are reasonable
-        if (a == 255)
-        {
-            // The blended colors should be within reasonable range of the input colors
-            // Due to blending, we allow some variance (±50 to account for interpolation and blending)
-            EXPECT_TRUE((r < 255 && r > 0) || (g < 255 && g > 0) || (b < 255 && b > 0))
-                << "At least one channel should have significant value at (" << px << ", " << py << ")";
-        }
+        const cv::Vec3b bgr = groundColor({ground.x(), ground.y(), -10});
+        EXPECT_EQ(rgba[3], 255) << ground.transpose();
+        EXPECT_NEAR(rgba[0], bgr[2], 10) << ground.transpose();
+        EXPECT_NEAR(rgba[1], bgr[1], 10) << ground.transpose();
+        EXPECT_NEAR(rgba[2], bgr[0], 10) << ground.transpose();
     }
-
-    // Verify pixel coordinate to world coordinate transformation
-    // Pick a pixel and verify we can convert it to world coordinates
-    int test_px = width / 2;
-    int test_py = height / 2;
-    double world_x = origin_x + test_px * gsd;
-    double world_y = origin_y + test_py * geotransform[5]; // Note: geotransform[5] is negative
-
-    // World coordinates should be within the expected bounds
-    EXPECT_TRUE(world_x >= -50 && world_x <= 50) << "World X coordinate " << world_x << " out of expected range";
-    EXPECT_TRUE(world_y >= -50 && world_y <= 50) << "World Y coordinate " << world_y << " out of expected range";
-
-    // Clean up not needed - output directory is for test artifacts
 }
 
 TEST_F(ortho, single_image_coverage)
@@ -762,6 +732,32 @@ TEST_F(ortho, single_image_coverage)
     EXPECT_LE(valid_pixel_count, region_size * region_size) << "Valid pixel count exceeds region size";
 
     // Clean up not needed - output directory is for test artifacts
+}
+
+TEST(ortho_texture, textured_obj_downscales_texture_beyond_jpeg_limit)
+{
+    // GIVEN: an RGBA GeoTIFF wider than a JPEG can store
+    GDALAllRegister();
+    const std::string geotiff_path = TEST_DATA_OUTPUT_DIR "test_wide_texture.tif";
+    const std::string jpg_path = TEST_DATA_OUTPUT_DIR "test_wide_texture.jpg";
+    std::filesystem::remove(jpg_path);
+    {
+        char **options = CSLSetNameValue(nullptr, "SPARSE_OK", "YES");
+        GDALDatasetPtr ds(
+            GDALCreate(GDALGetDriverByName("GTiff"), geotiff_path.c_str(), 70000, 2, 4, GDT_Byte, options));
+        CSLDestroy(options);
+        ASSERT_TRUE(ds);
+        double geotransform[6] = {0, 0.1, 0, 0.2, 0, -0.1};
+        GDALSetGeoTransform(ds.get(), geotransform);
+    }
+
+    // WHEN: we export a textured OBJ from it
+    generateTexturedOBJ({}, geotiff_path, TEST_DATA_OUTPUT_DIR "test_wide_texture.obj");
+
+    // THEN: a texture is written within the JPEG size limit
+    const cv::Mat texture = cv::imread(jpg_path);
+    ASSERT_FALSE(texture.empty());
+    EXPECT_LE(texture.cols, 65500);
 }
 
 TEST_F(ortho, textured_obj_export)
