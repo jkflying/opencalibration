@@ -116,6 +116,8 @@ class RelaxProblem
                                            const RelaxOptionSet &options,
                                            MeshIntersectionSearcher &intersectionSearcher);
     std::vector<TrackRay> addTriangulatedTrackCost(const std::vector<TrackRay> &rays, bool fix_positions);
+    static std::vector<std::pair<double, size_t>> scoreRaysAgainstPlane(const std::vector<TrackRay> &rays,
+                                                                        const plane_3_corners_d &plane);
     static std::vector<TrackRay> selectInlierRays(std::vector<std::pair<double, size_t>> &ray_scores,
                                                   const std::vector<TrackRay> &rays);
     uint64_t trackCellKey(const Eigen::Vector2d &pixel, const CameraModel &model) const;
@@ -209,7 +211,6 @@ class RelaxProblem
     double _track_grid_fraction = 0.1;
     double _prior_scale = 1;
     MeshGraph _mesh;
-    std::vector<double> _mesh_initial_z;
     struct MeshHeight
     {
         size_t nodeId;

@@ -521,6 +521,26 @@ TEST_F(relax_group, measurement_3_images_points)
             << "g: " << ground_ori[i].coeffs().transpose();
 }
 
+TEST_F(relax_group, measurement_3_images_points_radial_without_focal)
+{
+    // GIVEN: a graph, 3 images with edges between them all, and a camera model with spurious radial distortion
+    init_cameras();
+    add_point_measurements(generate_3d_points());
+    const double initial_focal = cam_models[model->id].focal_length_pixels;
+    cam_models[model->id].radial_distortion = Eigen::Vector3d(0.01, 0, 0);
+
+    // WHEN: we relax radial distortion without optimizing focal length
+    const RelaxOptionSet options({Option::ORIENTATION, Option::POINTS_3D, Option::LENS_DISTORTIONS_RADIAL,
+                                  Option::LENS_DISTORTIONS_RADIAL_BROWN246_PARAMETERIZATION});
+    ankerl::unordered_dense::set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
+    relax(graph, np, cam_models, edges, options, {});
+
+    // THEN: radial distortion is optimized towards zero while focal length is held constant
+    EXPECT_LT(cam_models[model->id].radial_distortion.norm(), 0.005)
+        << cam_models[model->id].radial_distortion.transpose();
+    EXPECT_NEAR(cam_models[model->id].focal_length_pixels, initial_focal, 1e-6);
+}
+
 TEST_F(relax_group, measurement_3_images_triangulated_rays)
 {
     // GIVEN: a graph, 3 images with edges between them all observing non-planar points, with their rotation disturbed
@@ -604,10 +624,15 @@ TEST_F(relax_group, measurement_3_images_mesh_radial)
 {
     // GIVEN: a graph, 3 images with edges between them all, then with their rotation disturbed
     init_cameras();
-    cam_models[model->id].radial_distortion << 0.1, -0.1, 0.1;
-    add_point_measurements(generate_planar_points());
+    const Eigen::Vector3d expected_distortion(0.1, -0.1, 0.1);
+    model->radial_distortion = expected_distortion;
+    point_cloud wide_points;
+    for (int i = 0; i < 10; i++)
+        for (int j = 0; j < 10; j++)
+            wide_points.emplace_back(1 + 2 * i, 1 + 2 * j, -10 + 1e-3 * i + 1e-2 * j);
+    add_point_measurements(wide_points);
+    model->radial_distortion.fill(0);
     add_ori_noise({-0.1, 0.1, 0.1});
-    cam_models[model->id].radial_distortion.fill(0);
 
     // WHEN: we relax them with relative orientation
     const RelaxOptionSet options({Option::ORIENTATION, Option::LENS_DISTORTIONS_RADIAL,
@@ -618,16 +643,23 @@ TEST_F(relax_group, measurement_3_images_mesh_radial)
         // a few times...
         relax(graph, np, cam_models, edges, options, {});
 
-    // THEN: the solver optimizes the orientations toward ground truth
-    // Orientation error should be reduced from initial noise of 0.1 rad
+    // THEN: the orientations recover from the 0.1 rad noise
     for (int i = 0; i < 3; i++)
-    {
-        EXPECT_LT(Eigen::AngleAxisd(np[i].orientation.inverse() * ground_ori[i]).angle(), 0.1);
-    }
+        EXPECT_LT(Eigen::AngleAxisd(np[i].orientation.inverse() * ground_ori[i]).angle(), 0.05) << i;
 
-    // Radial distortion should be optimized toward the true value (0.1, -0.1, 0.1)
-    Eigen::Vector3d expected_distortion(0.1, -0.1, 0.1);
-    EXPECT_LT((cam_models[model->id].radial_distortion - expected_distortion).norm(), 0.2);
+    // AND: the radial displacement across the image matches the true lens much better than no distortion
+    const auto maxDisplacementError = [&](const Eigen::Vector3d &k) {
+        const double max_r = Eigen::Vector2d(400, 300).norm() / model->focal_length_pixels;
+        double worst = 0;
+        for (double r = 0; r <= max_r; r += max_r / 50)
+        {
+            const Eigen::Vector3d powers(r * r, std::pow(r, 4), std::pow(r, 6));
+            worst = std::max(worst, std::abs((k - expected_distortion).dot(powers)) * r * model->focal_length_pixels);
+        }
+        return worst;
+    };
+    EXPECT_LT(maxDisplacementError(cam_models[model->id].radial_distortion),
+              0.1 * maxDisplacementError(Eigen::Vector3d::Zero()));
 }
 
 TEST_F(relax_group, measurement_3_images_plane_focal_two_models)
@@ -726,6 +758,9 @@ TEST_F(relax_group, group_anchors_to_fixed_neighbours)
 class TestRelaxProblem : public RelaxProblem
 {
   public:
+    using RelaxProblem::scoreRaysAgainstPlane;
+    using RelaxProblem::selectInlierRays;
+
     track_vec test_get_tracks() const
     {
         track_vec tracks;
@@ -761,6 +796,33 @@ class TestRelaxProblem : public RelaxProblem
         return rho[1] * std::sqrt(s);
     }
 };
+
+TEST(relax_track, ray_inliers_found_when_outliers_come_first)
+{
+    // GIVEN: a track of 8 downward-looking rays hitting a flat plane, where the first 3 rays are outliers
+    const Eigen::Quaterniond down(Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()));
+    std::vector<TrackRay> rays;
+    for (size_t i = 0; i < 8; i++)
+    {
+        const Eigen::Vector3d loc(10.0 * i, 0, 100);
+        const Eigen::Vector3d target = i < 3 ? Eigen::Vector3d(40, 30, 0) : Eigen::Vector3d::Zero();
+        rays.push_back(
+            TrackRay{i, 0, 0, loc, down.inverse() * (target - loc), Eigen::Vector2d::Zero(), down, nullptr, true, 1});
+    }
+    plane_3_corners_d plane;
+    plane.corner[0] << -1000, -1000, 0;
+    plane.corner[1] << 1000, -1000, 0;
+    plane.corner[2] << 0, 1000, 0;
+
+    // WHEN: we score and select the inlier rays
+    auto scores = TestRelaxProblem::scoreRaysAgainstPlane(rays, plane);
+    const auto inliers = TestRelaxProblem::selectInlierRays(scores, rays);
+
+    // THEN: exactly the 5 consistent rays are kept
+    ASSERT_EQ(inliers.size(), 5);
+    for (const auto &r : inliers)
+        EXPECT_GE(r.node_id, 3);
+}
 
 TEST_F(relax_group, measurement_3_images_plane_with_uninitialized_image)
 {
@@ -892,6 +954,25 @@ TEST_F(relax_group, measurement_3_images_mesh_internals_multi_ray_tracks_include
     // AND: it should stay fixed
     rp.solve();
     EXPECT_EQ(graph.getNode(id[0])->payload.orientation.coeffs(), ground_ori[0].coeffs());
+}
+
+TEST_F(relax_group, measurement_3_images_mesh_focal_with_non_optimizable_model)
+{
+    // GIVEN: a graph, 3 images with edges between them all, where the camera model is not in the optimizable set
+    init_cameras();
+    add_point_measurements(generate_planar_points());
+    ankerl::unordered_dense::map<size_t, CameraModel> no_cam_models;
+
+    // WHEN: we set up and solve a ground mesh problem that asks for focal length optimization
+    ankerl::unordered_dense::set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
+    TestRelaxProblem rp;
+    rp.setupGroundMeshProblem(graph, np, no_cam_models, edges,
+                              {Option::ORIENTATION, Option::GROUND_MESH, Option::FOCAL_LENGTH}, {});
+    rp.solve();
+
+    // THEN: it completes and the shared camera model is untouched
+    EXPECT_GT(rp.test_num_multi_ray_measurements(), 0);
+    EXPECT_EQ(model->focal_length_pixels, 600);
 }
 
 TEST_F(relax_group, measurement_3_images_points_internals_point_triangulation_noise)
