@@ -1,6 +1,9 @@
 #include <opencalibration/model_inliers/ransac.hpp>
 
+#include "model_utils.hpp"
+
 #include <algorithm>
+#include <cmath>
 #include <numeric>
 #include <random>
 #include <type_traits>
@@ -29,37 +32,38 @@ struct has_check_degeneracy<
 {
 };
 
-template <int n> double fast_pow(double d);
-
-template <> inline double fast_pow<4>(double d)
+namespace
 {
-    double t = d * d;
-    return t * t;
+constexpr size_t MIN_ITERATIONS = 20;
+constexpr size_t MAX_ITERATIONS = 10000;
+constexpr double PROBABILITY = 0.999;
+} // namespace
+
+size_t ransacIterationsForConfidence(double inlier_ratio, size_t sample_size)
+{
+    const double good_sample_probability = std::pow(inlier_ratio, static_cast<double>(sample_size));
+    if (!(good_sample_probability > 0))
+        return MAX_ITERATIONS;
+    const double iterations = std::log(1 - PROBABILITY) / std::log1p(-good_sample_probability);
+    return static_cast<size_t>(
+        std::clamp(iterations, static_cast<double>(MIN_ITERATIONS), static_cast<double>(MAX_ITERATIONS)));
 }
 
-template <> inline double fast_pow<5>(double d)
+size_t prosacIterationsPerPoolSize(size_t pool_size, size_t sample_size)
 {
-    double t = d * d;
-    return t * t * d;
-}
+    const size_t MAX_ITERATIONS_PER_POOL_SIZE = 10;
 
-template <> inline double fast_pow<8>(double d)
-{
-    double t = d * d;
-    t = t * t;
-    return t * t;
+    // Distinct samples that contain the newest point: C(pool_size - 1, sample_size - 1)
+    size_t distinct_samples = 1;
+    for (size_t k = 1; k < sample_size && distinct_samples < MAX_ITERATIONS_PER_POOL_SIZE; k++)
+        distinct_samples = distinct_samples * (pool_size - sample_size + k) / k;
+    return std::min(distinct_samples, MAX_ITERATIONS_PER_POOL_SIZE);
 }
 
 template <typename Model>
 double ransac(const std::vector<correspondence> &matches, Model &model, std::vector<bool> &inliers)
 {
-
-    const size_t MIN_ITERATIONS = 20;
-    const size_t MAX_ITERATIONS = 10000;
     const size_t MAX_INNER_ITERATIONS = 5;
-    const double PROBABILITY = 0.999;
-
-    const double log_1m_p = std::log(1 - PROBABILITY);
 
     inliers.resize(matches.size());
     std::fill(inliers.begin(), inliers.end(), false);
@@ -159,10 +163,16 @@ double ransac(const std::vector<correspondence> &matches, Model &model, std::vec
 
     std::vector<bool> candidate_inliers(matches.size(), false);
 
+    size_t iterations_at_pool_size = 0;
     for (size_t i = 0; i < probability_iterations; i++)
     {
-        if (has_quality && prosac_n < matches.size() && i > 0 && i % 10 == 0)
+        if (has_quality && prosac_n < matches.size() &&
+            iterations_at_pool_size >= prosacIterationsPerPoolSize(prosac_n, Model::MINIMUM_POINTS))
+        {
             prosac_n++;
+            iterations_at_pool_size = 0;
+        }
+        iterations_at_pool_size++;
 
         std::array<size_t, Model::MINIMUM_POINTS> initial_indices;
         if (has_quality && prosac_n < matches.size() && prosac_n > Model::MINIMUM_POINTS)
@@ -178,8 +188,8 @@ double ransac(const std::vector<correspondence> &matches, Model &model, std::vec
 
         model.fit(matches, initial_indices);
 
-        // SPRT: evaluate in shuffled order, reject early if clearly worse than best
-        // MSAC scoring (1 - (e/t)^2) must match Model::evaluate()
+        constexpr size_t min_checked_before_bail = 20;
+        constexpr double bail_fraction_of_best = 0.6;
         double score = 0;
         size_t checked = 0;
         bool rejected = false;
@@ -190,12 +200,11 @@ double ransac(const std::vector<correspondence> &matches, Model &model, std::vec
             if (e < model.inlier_threshold)
             {
                 candidate_inliers[idx] = true;
-                double ratio = e / model.inlier_threshold;
-                score += 1.0 - ratio * ratio;
+                score += msacScore(e, model.inlier_threshold);
             }
             checked++;
-            if (checked > 20 && best_score > 0 &&
-                score < best_score * static_cast<double>(checked) / matches.size() * 0.6)
+            if (checked > min_checked_before_bail && best_score > 0 &&
+                score < best_score * static_cast<double>(checked) / matches.size() * bail_fraction_of_best)
             {
                 rejected = true;
                 break;
@@ -244,11 +253,7 @@ double ransac(const std::vector<correspondence> &matches, Model &model, std::vec
                 }
             }
 
-            double omega = best_score / matches.size();
-            double omega_n = fast_pow<Model::MINIMUM_POINTS>(omega);
-            double log_1m_omega_n = std::log(1 - omega_n);
-            probability_iterations =
-                std::max(MIN_ITERATIONS, std::min(MAX_ITERATIONS, static_cast<size_t>(log_1m_p / log_1m_omega_n)));
+            probability_iterations = ransacIterationsForConfidence(best_score / matches.size(), Model::MINIMUM_POINTS);
         }
     }
 

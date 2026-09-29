@@ -307,6 +307,36 @@ TEST(ransac_fundamental_matrix, evaluate_uses_absolute_error)
     EXPECT_GE(std::count(inliers.begin(), inliers.end(), true), 8);
 }
 
+TEST(ransac_iterations, required_iterations_follow_confidence_formula)
+{
+    // GIVEN/WHEN/THEN: 50% inliers with 4-point samples needs log(0.001) / log(1 - 0.5^4) iterations
+    EXPECT_EQ(ransacIterationsForConfidence(0.5, 4), 107);
+    EXPECT_EQ(ransacIterationsForConfidence(1.0, 4), 20);
+}
+
+TEST(ransac_iterations, tiny_inlier_ratio_saturates_at_maximum)
+{
+    // GIVEN: inlier ratios so small that 1 - ratio^n rounds to 1
+    // WHEN/THEN: the iteration count saturates instead of converting inf to an integer
+    EXPECT_EQ(ransacIterationsForConfidence(0.005, 8), 10000);
+    EXPECT_EQ(ransacIterationsForConfidence(1e-5, 4), 10000);
+    EXPECT_EQ(ransacIterationsForConfidence(0.0, 4), 10000);
+}
+
+TEST(ransac_iterations, prosac_does_not_repeat_the_initial_sample)
+{
+    // GIVEN: a PROSAC pool containing exactly one sample's worth of points
+    // WHEN/THEN: only one iteration is spent on it, since every draw would be identical
+    EXPECT_EQ(prosacIterationsPerPoolSize(4, 4), 1);
+    EXPECT_EQ(prosacIterationsPerPoolSize(8, 8), 1);
+
+    // AND: a pool one larger has only sample_size distinct samples containing the newest point
+    EXPECT_EQ(prosacIterationsPerPoolSize(5, 4), 4);
+
+    // AND: larger pools are capped
+    EXPECT_EQ(prosacIterationsPerPoolSize(50, 4), 10);
+}
+
 TEST(ransac_essential_matrix, ransac_compiles)
 {
     std::vector<correspondence> matches;

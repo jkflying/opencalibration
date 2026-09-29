@@ -12,6 +12,9 @@
 namespace opencalibration
 {
 
+size_t ransacIterationsForConfidence(double inlier_ratio, size_t sample_size);
+size_t prosacIterationsPerPoolSize(size_t pool_size, size_t sample_size);
+
 template <typename Model>
 double ransac(const std::vector<correspondence> &matches, Model &model, std::vector<bool> &inliers);
 
