@@ -8,6 +8,34 @@
 
 using namespace opencalibration;
 
+namespace
+{
+MeasurementGraph singleCameraGraph(const std::string &make)
+{
+    MeasurementGraph graph;
+    image img;
+    img.model = std::make_shared<CameraModel>();
+    img.model->id = 1;
+    img.model->pixels_cols = 4000;
+    img.model->pixels_rows = 3000;
+    img.model->principle_point = Eigen::Vector2d(2000, 1500);
+    img.model->focal_length_pixels = 3000;
+    img.metadata.camera_info.make = make;
+    img.metadata.camera_info.model = "NewModel";
+    img.metadata.camera_info.lens_model = "NewLens";
+    graph.addNode(std::move(img));
+    return graph;
+}
+
+std::string readFile(const std::string &path)
+{
+    std::ifstream file(path);
+    std::stringstream buf;
+    buf << file.rdbuf();
+    return buf.str();
+}
+} // namespace
+
 class CameraDatabaseTest : public ::testing::Test
 {
   protected:
@@ -301,14 +329,10 @@ TEST_F(CameraDatabaseTest, extract_entry_handles_missing_focal_length)
     // WHEN: we save to database
     ASSERT_TRUE(updateDatabaseFromGraph(graph, output_path));
 
-    // THEN: focal_length_scale should NOT be in JSON (remains NaN)
-    std::ifstream file(output_path);
-    ASSERT_TRUE(file.is_open());
-    std::stringstream buf;
-    buf << file.rdbuf();
-    std::string json = buf.str();
-
-    EXPECT_EQ(json.find("focal_length_scale"), std::string::npos);
+    // THEN: the camera is written without a focal length
+    const std::string json = readFile(output_path);
+    EXPECT_NE(json.find("TestMake"), std::string::npos);
+    EXPECT_EQ(json.find("focal_length_pixels"), std::string::npos);
 }
 
 TEST_F(CameraDatabaseTest, serialize_focal_length_pixels)
@@ -476,6 +500,96 @@ TEST_F(CameraDatabaseTest, apply_focal_length_at_original_resolution)
     // THEN: focal_length_pixels should be applied as-is (from database for same resolution)
     EXPECT_FALSE(std::isnan(model.focal_length_pixels));
     EXPECT_NEAR(model.focal_length_pixels, 5000.0, 0.01);
+}
+
+TEST_F(CameraDatabaseTest, apply_scales_focal_length_and_principal_point_to_resolution)
+{
+    // GIVEN: a database entry from a full-res camera and an image downscaled by half
+    CameraDBEntry entry;
+    entry.principal_point_offset = Eigen::Vector2d(20, -10);
+    entry.sensor_width_px = 5000;
+    entry.sensor_height_px = 3750;
+    entry.focal_length_pixels = 5000.0;
+
+    image_metadata::camera_info_t camera_info;
+    camera_info.width_px = 2500;
+    camera_info.height_px = 1875;
+
+    CameraModel model;
+    model.focal_length_pixels = NAN;
+
+    // WHEN: we apply the database entry
+    applyDatabaseEntry(entry, camera_info, model);
+
+    // THEN: focal length and principal point offset are both scaled to the image resolution
+    EXPECT_NEAR(model.focal_length_pixels, 2500.0, 0.01);
+    EXPECT_NEAR(model.principle_point.x(), 1250.0 + 10, 1e-9);
+    EXPECT_NEAR(model.principle_point.y(), 937.5 - 5, 1e-9);
+}
+
+TEST_F(CameraDatabaseTest, apply_entry_without_sensor_size_does_not_scale)
+{
+    // GIVEN: a database entry with unknown sensor size
+    CameraDBEntry entry;
+    entry.principal_point_offset = Eigen::Vector2d(20, -10);
+    entry.sensor_width_px = 0;
+    entry.sensor_height_px = 0;
+    entry.focal_length_pixels = 5000.0;
+
+    image_metadata::camera_info_t camera_info;
+    camera_info.width_px = 4000;
+    camera_info.height_px = 3000;
+
+    CameraModel model;
+    model.focal_length_pixels = NAN;
+
+    // WHEN: we apply the database entry
+    applyDatabaseEntry(entry, camera_info, model);
+
+    // THEN: values are applied unscaled rather than becoming inf/nan
+    EXPECT_NEAR(model.focal_length_pixels, 5000.0, 0.01);
+    EXPECT_NEAR(model.principle_point.x(), 2020.0, 1e-9);
+    EXPECT_NEAR(model.principle_point.y(), 1490.0, 1e-9);
+}
+
+TEST_F(CameraDatabaseTest, update_database_ignores_wrongly_typed_fields)
+{
+    // GIVEN: an existing database with hand-edited fields of the wrong JSON type
+    std::string output_path = TEST_DATA_OUTPUT_DIR "test_wrong_types.json";
+    {
+        std::ofstream out(output_path);
+        out << R"({"version":1,"cameras":[42,{"make":5,"model":"KeptModel","lens_model":null,)"
+            << R"("sensor_width_px":"4000","sensor_height_px":-3,"radial_distortion":"bad",)"
+            << R"("tangential_distortion":[0.25,"x"],"principal_point_offset":{},"focal_length_pixels":"f",)"
+            << R"("notes":7}]})";
+    }
+
+    // WHEN: we merge a new camera into it
+    ASSERT_TRUE(updateDatabaseFromGraph(singleCameraGraph("NewMake"), output_path));
+
+    // THEN: the valid parts of the old entry survive alongside the new one
+    std::string json = readFile(output_path);
+    EXPECT_NE(json.find("KeptModel"), std::string::npos);
+    EXPECT_NE(json.find("0.25"), std::string::npos);
+    EXPECT_NE(json.find("NewMake"), std::string::npos);
+}
+
+TEST_F(CameraDatabaseTest, update_database_replaces_database_with_non_array_cameras)
+{
+    // GIVEN: an existing database whose cameras member is not an array
+    std::string output_path = TEST_DATA_OUTPUT_DIR "test_cameras_not_array.json";
+    {
+        std::ofstream out(output_path);
+        out << R"({"version":1,"cameras":{"make":"Broken"}})";
+    }
+
+    // WHEN: we save a camera into it
+    ASSERT_TRUE(updateDatabaseFromGraph(singleCameraGraph("NewMake"), output_path));
+
+    // THEN: the unreadable content is replaced by a valid database
+    std::string json = readFile(output_path);
+    EXPECT_NE(json.find("NewMake"), std::string::npos);
+    EXPECT_EQ(json.find("Broken"), std::string::npos);
 }
 
 TEST_F(CameraDatabaseTest, update_database_preserves_focal_length_pixels)

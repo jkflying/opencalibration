@@ -11,10 +11,13 @@
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
 
+#include <opencalibration/io/json_fields.hpp>
+
 #include <zstd.h>
 
 #include <filesystem>
 #include <fstream>
+#include <limits>
 
 namespace opencalibration
 {
@@ -28,12 +31,6 @@ template <typename Writer, size_t N> void writeArray(Writer &writer, const std::
     for (double v : values)
         writer.Double(v);
     writer.EndArray();
-}
-
-template <size_t N> void readArray(const rapidjson::Value &value, std::array<double, N> &values)
-{
-    for (size_t i = 0; i < N && i < value.Size(); i++)
-        values[i] = value[static_cast<rapidjson::SizeType>(i)].GetDouble();
 }
 
 template <typename Writer> void writeColorBalance(Writer &writer, const orthomosaic::ColorBalanceResult &cb)
@@ -84,24 +81,33 @@ template <typename Writer> void writeColorBalance(Writer &writer, const orthomos
 
 void readColorBalance(const rapidjson::Value &value, orthomosaic::ColorBalanceResult &cb)
 {
-    cb.success = value["success"].GetBool();
-    cb.final_cost = value["final_cost"].GetDouble();
-    cb.num_iterations = value["num_iterations"].GetInt();
-    readArray(value["horizontal_view_dir_log_cbrt_gain"], cb.horizontal_view_dir_log_cbrt_gain);
+    readJsonField(value, "success", cb.success);
+    readJsonField(value, "final_cost", cb.final_cost);
+    readJsonField(value, "num_iterations", cb.num_iterations);
+    readJsonArrayField(value, "horizontal_view_dir_log_cbrt_gain", cb.horizontal_view_dir_log_cbrt_gain);
 
-    for (const auto &image : value["images"].GetArray())
-    {
-        auto &params = cb.per_image_params[image["id"].GetUint64()];
-        params.log_cbrt_exposure = image["log_cbrt_exposure"].GetDouble();
-        readArray(image["ab_offset"], params.ab_offset);
-        params.brdf_coeff = image["brdf_coeff"].GetDouble();
-        readArray(image["slope"], params.slope);
-    }
+    const auto *images = findJsonMember(value, "images");
+    if (images && images->IsArray())
+        for (const auto &image : images->GetArray())
+        {
+            uint64_t id = 0;
+            if (!readJsonField(image, "id", id))
+                continue;
+            auto &params = cb.per_image_params[id];
+            readJsonField(image, "log_cbrt_exposure", params.log_cbrt_exposure);
+            readJsonArrayField(image, "ab_offset", params.ab_offset);
+            readJsonField(image, "brdf_coeff", params.brdf_coeff);
+            readJsonArrayField(image, "slope", params.slope);
+        }
 
-    for (const auto &model : value["models"].GetArray())
-    {
-        readArray(model["log_cbrt_falloff_coeffs"], cb.per_model_params[model["id"].GetUint()].log_cbrt_falloff_coeffs);
-    }
+    const auto *models = findJsonMember(value, "models");
+    if (models && models->IsArray())
+        for (const auto &model : models->GetArray())
+        {
+            unsigned id = 0;
+            if (readJsonField(model, "id", id))
+                readJsonArrayField(model, "log_cbrt_falloff_coeffs", cb.per_model_params[id].log_cbrt_falloff_coeffs);
+        }
 }
 
 bool saveMetadata(const CheckpointData &data, const std::filesystem::path &path)
@@ -165,42 +171,22 @@ bool loadMetadata(CheckpointData &data, const std::filesystem::path &path, size_
         return false;
     }
 
-    if (!doc.HasMember("version") || doc["version"].GetInt() < 1 || doc["version"].GetInt() > 2)
+    int version = 0;
+    if (!readJsonField(doc, "version", version) || version < 1 || version > 2)
     {
         spdlog::error("Unsupported checkpoint version");
         return false;
     }
 
-    if (doc.HasMember("state"))
-    {
-        auto parsed_state = stringToPipelineState(doc["state"].GetString());
-        data.state = parsed_state.value_or(PipelineState::INITIAL_PROCESSING);
-    }
-
-    if (doc.HasMember("state_run_count"))
-    {
-        data.state_run_count = doc["state_run_count"].GetUint64();
-    }
-
-    if (doc.HasMember("origin_latitude"))
-    {
-        data.origin_latitude = doc["origin_latitude"].GetDouble();
-    }
-
-    if (doc.HasMember("origin_longitude"))
-    {
-        data.origin_longitude = doc["origin_longitude"].GetDouble();
-    }
-
-    if (doc.HasMember("surface_count"))
-    {
-        surface_count = doc["surface_count"].GetUint64();
-    }
-
-    if (doc.HasMember("color_balance"))
-    {
-        readColorBalance(doc["color_balance"], data.color_balance);
-    }
+    std::string state;
+    if (readJsonField(doc, "state", state))
+        data.state = stringToPipelineState(state).value_or(PipelineState::INITIAL_PROCESSING);
+    readJsonField(doc, "state_run_count", data.state_run_count);
+    readJsonField(doc, "origin_latitude", data.origin_latitude);
+    readJsonField(doc, "origin_longitude", data.origin_longitude);
+    readJsonField(doc, "surface_count", surface_count);
+    if (const auto *color_balance = findJsonMember(doc, "color_balance"))
+        readColorBalance(*color_balance, data.color_balance);
 
     return true;
 }
@@ -214,6 +200,7 @@ bool savePointCloud(const point_cloud &cloud, const std::filesystem::path &filep
         return false;
     }
 
+    out.precision(std::numeric_limits<double>::max_digits10);
     for (const auto &point : cloud)
     {
         out << point.x() << "," << point.y() << "," << point.z() << "\n";

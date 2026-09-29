@@ -7,12 +7,17 @@
 #include <rapidjson/prettywriter.h>
 #include <rapidjson/stringbuffer.h>
 
+#include <opencalibration/io/json_fields.hpp>
+
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <sstream>
+#include <tuple>
 
 namespace
 {
@@ -31,17 +36,20 @@ struct CameraKey
     size_t width_px;
     size_t height_px;
 
+    static CameraKey of(const opencalibration::CameraDBEntry &e)
+    {
+        return {e.make, e.model, e.lens_model, e.sensor_width_px, e.sensor_height_px};
+    }
+
     bool operator<(const CameraKey &other) const
     {
-        if (make != other.make)
-            return make < other.make;
-        if (model != other.model)
-            return model < other.model;
-        if (lens_model != other.lens_model)
-            return lens_model < other.lens_model;
-        if (width_px != other.width_px)
-            return width_px < other.width_px;
-        return height_px < other.height_px;
+        return std::tie(make, model, lens_model, width_px, height_px) <
+               std::tie(other.make, other.model, other.lens_model, other.width_px, other.height_px);
+    }
+    bool operator==(const CameraKey &other) const
+    {
+        return std::tie(make, model, lens_model, width_px, height_px) ==
+               std::tie(other.make, other.model, other.lens_model, other.width_px, other.height_px);
     }
 };
 
@@ -120,7 +128,7 @@ void writeDatabase(const std::string &path, const std::vector<opencalibration::C
             writer.Double(entry.focal_length_pixels);
         }
 
-        CameraKey key{entry.make, entry.model, entry.lens_model, entry.sensor_width_px, entry.sensor_height_px};
+        const CameraKey key = CameraKey::of(entry);
         auto notes_it = notes_map.find(key);
         if (notes_it != notes_map.end())
         {
@@ -145,78 +153,69 @@ void writeDatabase(const std::string &path, const std::vector<opencalibration::C
     spdlog::info("Wrote camera database to {}", path);
 }
 
-std::vector<opencalibration::CameraDBEntry> loadDatabaseEntries(const std::string &path,
-                                                                std::map<CameraKey, std::string> &notes_map)
+struct ParsedDatabase
 {
     std::vector<opencalibration::CameraDBEntry> entries;
+    std::map<CameraKey, std::string> notes;
+};
 
+std::optional<ParsedDatabase> parseDatabase(const std::string &path)
+{
     std::ifstream file(path);
     if (!file.is_open())
-    {
-        spdlog::info("No existing database at {}, will create new", path);
-        return entries;
-    }
+        return std::nullopt;
 
     std::stringstream buf;
     buf << file.rdbuf();
-    std::string json = buf.str();
 
     rapidjson::Document doc;
-    doc.Parse(json.c_str());
-
-    if (doc.HasParseError() || !doc.IsObject() || !doc.HasMember("cameras"))
+    doc.Parse(buf.str().c_str());
+    if (doc.HasParseError())
     {
-        spdlog::warn("Failed to parse existing database at {}", path);
-        return entries;
+        spdlog::warn("Failed to parse camera database {}: error at offset {}", path, doc.GetErrorOffset());
+        return std::nullopt;
     }
 
-    const auto &cameras = doc["cameras"].GetArray();
-    for (const auto &cam : cameras)
+    const auto *cameras = opencalibration::findJsonMember(doc, "cameras");
+    if (!cameras || !cameras->IsArray())
     {
+        spdlog::warn("Camera database {} has invalid structure", path);
+        return std::nullopt;
+    }
+    int version = 0;
+    if (!opencalibration::readJsonField(doc, "version", version) || version != 1)
+    {
+        spdlog::warn("Unsupported camera database version in {}", path);
+        return std::nullopt;
+    }
+
+    using opencalibration::readJsonArrayField;
+    using opencalibration::readJsonField;
+    ParsedDatabase db;
+    for (const auto &cam : cameras->GetArray())
+    {
+        if (!cam.IsObject())
+            continue;
+
         opencalibration::CameraDBEntry entry;
-        if (cam.HasMember("make"))
-            entry.make = cam["make"].GetString();
-        if (cam.HasMember("model"))
-            entry.model = cam["model"].GetString();
-        if (cam.HasMember("lens_model"))
-            entry.lens_model = cam["lens_model"].GetString();
-        if (cam.HasMember("sensor_width_px"))
-            entry.sensor_width_px = cam["sensor_width_px"].GetUint64();
-        if (cam.HasMember("sensor_height_px"))
-            entry.sensor_height_px = cam["sensor_height_px"].GetUint64();
+        readJsonField(cam, "make", entry.make);
+        readJsonField(cam, "model", entry.model);
+        readJsonField(cam, "lens_model", entry.lens_model);
+        readJsonField(cam, "sensor_width_px", entry.sensor_width_px);
+        readJsonField(cam, "sensor_height_px", entry.sensor_height_px);
+        readJsonArrayField(cam, "radial_distortion", entry.radial_distortion);
+        readJsonArrayField(cam, "tangential_distortion", entry.tangential_distortion);
+        readJsonArrayField(cam, "principal_point_offset", entry.principal_point_offset);
+        readJsonField(cam, "focal_length_pixels", entry.focal_length_pixels);
 
-        if (cam.HasMember("radial_distortion"))
-        {
-            const auto &rd = cam["radial_distortion"].GetArray();
-            for (size_t i = 0; i < std::min(rd.Size(), rapidjson::SizeType(3)); ++i)
-                entry.radial_distortion[i] = rd[i].GetDouble();
-        }
-        if (cam.HasMember("tangential_distortion"))
-        {
-            const auto &td = cam["tangential_distortion"].GetArray();
-            for (size_t i = 0; i < std::min(td.Size(), rapidjson::SizeType(2)); ++i)
-                entry.tangential_distortion[i] = td[i].GetDouble();
-        }
-        if (cam.HasMember("principal_point_offset"))
-        {
-            const auto &pp = cam["principal_point_offset"].GetArray();
-            for (size_t i = 0; i < std::min(pp.Size(), rapidjson::SizeType(2)); ++i)
-                entry.principal_point_offset[i] = pp[i].GetDouble();
-        }
-        if (cam.HasMember("focal_length_pixels"))
-        {
-            entry.focal_length_pixels = cam["focal_length_pixels"].GetDouble();
-        }
+        std::string notes;
+        readJsonField(cam, "notes", notes);
+        if (!notes.empty())
+            db.notes[CameraKey::of(entry)] = notes;
 
-        CameraKey key{entry.make, entry.model, entry.lens_model, entry.sensor_width_px, entry.sensor_height_px};
-        if (cam.HasMember("notes"))
-            notes_map[key] = cam["notes"].GetString();
-
-        entries.push_back(std::move(entry));
+        db.entries.push_back(std::move(entry));
     }
-    spdlog::info("Loaded existing database with {} entries", entries.size());
-
-    return entries;
+    return db;
 }
 
 } // namespace
@@ -232,7 +231,8 @@ CameraDatabase &CameraDatabase::instance()
 
 const std::string &CameraDatabase::defaultPath()
 {
-    static const std::string path = CAMERA_DATABASE_PATH;
+    static const std::string path =
+        std::filesystem::exists(CAMERA_DATABASE_PATH) ? CAMERA_DATABASE_PATH : CAMERA_DATABASE_INSTALL_PATH;
     return path;
 }
 
@@ -245,92 +245,13 @@ bool CameraDatabase::load(const std::string &path)
         return true;
     }
 
-    std::ifstream file(path);
-    if (!file.is_open())
+    auto db = parseDatabase(path);
+    if (!db)
     {
-        spdlog::warn("Camera database not found at: {}", path);
+        spdlog::warn("Camera database not loaded from: {}", path);
         return false;
     }
-
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    std::string json = buffer.str();
-
-    rapidjson::Document doc;
-    doc.Parse(json.c_str());
-
-    if (doc.HasParseError())
-    {
-        spdlog::error("Failed to parse camera database JSON: error at offset {}", doc.GetErrorOffset());
-        return false;
-    }
-
-    if (!doc.IsObject() || !doc.HasMember("version") || !doc.HasMember("cameras"))
-    {
-        spdlog::error("Camera database has invalid structure");
-        return false;
-    }
-
-    int version = doc["version"].GetInt();
-    if (version != 1)
-    {
-        spdlog::error("Unsupported camera database version: {}", version);
-        return false;
-    }
-
-    const auto &cameras = doc["cameras"].GetArray();
-    _entries.reserve(cameras.Size());
-
-    for (const auto &cam : cameras)
-    {
-        CameraDBEntry entry;
-
-        if (cam.HasMember("make"))
-            entry.make = cam["make"].GetString();
-        if (cam.HasMember("model"))
-            entry.model = cam["model"].GetString();
-        if (cam.HasMember("lens_model"))
-            entry.lens_model = cam["lens_model"].GetString();
-
-        if (cam.HasMember("sensor_width_px"))
-            entry.sensor_width_px = cam["sensor_width_px"].GetUint64();
-        if (cam.HasMember("sensor_height_px"))
-            entry.sensor_height_px = cam["sensor_height_px"].GetUint64();
-
-        if (cam.HasMember("radial_distortion"))
-        {
-            const auto &rd = cam["radial_distortion"].GetArray();
-            for (size_t i = 0; i < std::min(rd.Size(), rapidjson::SizeType(3)); ++i)
-            {
-                entry.radial_distortion[i] = rd[i].GetDouble();
-            }
-        }
-
-        if (cam.HasMember("tangential_distortion"))
-        {
-            const auto &td = cam["tangential_distortion"].GetArray();
-            for (size_t i = 0; i < std::min(td.Size(), rapidjson::SizeType(2)); ++i)
-            {
-                entry.tangential_distortion[i] = td[i].GetDouble();
-            }
-        }
-
-        if (cam.HasMember("principal_point_offset"))
-        {
-            const auto &pp = cam["principal_point_offset"].GetArray();
-            for (size_t i = 0; i < std::min(pp.Size(), rapidjson::SizeType(2)); ++i)
-            {
-                entry.principal_point_offset[i] = pp[i].GetDouble();
-            }
-        }
-
-        if (cam.HasMember("focal_length_pixels"))
-        {
-            entry.focal_length_pixels = cam["focal_length_pixels"].GetDouble();
-        }
-
-        _entries.push_back(std::move(entry));
-    }
+    _entries = std::move(db->entries);
 
     _loaded = true;
     spdlog::info("Loaded camera database with {} entries", _entries.size());
@@ -390,23 +311,15 @@ void applyDatabaseEntry(const CameraDBEntry &entry, const image_metadata::camera
     model.tangential_distortion = entry.tangential_distortion;
 
     Eigen::Vector2d center(camera_info.width_px / 2.0, camera_info.height_px / 2.0);
-
-    // Scale principal point offset if sensor dimensions differ
-    if (entry.sensor_width_px != camera_info.width_px || entry.sensor_height_px != camera_info.height_px)
-    {
-        double scale = static_cast<double>(camera_info.width_px) / entry.sensor_width_px;
-        model.principle_point = center + entry.principal_point_offset * scale;
-    }
-    else
-    {
-        model.principle_point = center + entry.principal_point_offset;
-    }
+    const double scale =
+        entry.sensor_width_px > 0 ? static_cast<double>(camera_info.width_px) / entry.sensor_width_px : 1.0;
+    model.principle_point = center + entry.principal_point_offset * scale;
 
     // Apply focal_length_pixels ONLY if EXIF didn't provide valid value
     if (!std::isnan(entry.focal_length_pixels) &&
         (std::isnan(model.focal_length_pixels) || model.focal_length_pixels <= 0))
     {
-        model.focal_length_pixels = entry.focal_length_pixels;
+        model.focal_length_pixels = entry.focal_length_pixels * scale;
         spdlog::debug("Applied database focal length: {} pixels", model.focal_length_pixels);
     }
 }
@@ -435,20 +348,18 @@ bool updateDatabaseFromGraph(const MeasurementGraph &graph, const std::string &d
 
     spdlog::info("Found {} unique camera model(s)", unique_models.size());
 
-    std::map<CameraKey, std::string> notes_map;
-    std::vector<CameraDBEntry> db_entries = loadDatabaseEntries(database_path, notes_map);
+    auto parsed = parseDatabase(database_path);
+    std::vector<CameraDBEntry> db_entries = parsed ? std::move(parsed->entries) : std::vector<CameraDBEntry>{};
+    std::map<CameraKey, std::string> notes_map = parsed ? std::move(parsed->notes) : std::map<CameraKey, std::string>{};
 
     for (const auto &[model_id, new_entry] : unique_models)
     {
-        CameraKey key{new_entry.make, new_entry.model, new_entry.lens_model, new_entry.sensor_width_px,
-                      new_entry.sensor_height_px};
+        const CameraKey key = CameraKey::of(new_entry);
 
         bool found = false;
         for (auto &existing : db_entries)
         {
-            CameraKey existing_key{existing.make, existing.model, existing.lens_model, existing.sensor_width_px,
-                                   existing.sensor_height_px};
-            if (!(existing_key < key) && !(key < existing_key))
+            if (CameraKey::of(existing) == key)
             {
                 existing.radial_distortion = new_entry.radial_distortion;
                 existing.tangential_distortion = new_entry.tangential_distortion;

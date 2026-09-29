@@ -19,4 +19,5 @@ target_include_directories(oc_extract SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/exter
 target_link_libraries(oc_extract PUBLIC opencv_core opencv_imgcodecs opencv_features2d spdlog::spdlog tinyxml2)
 
 target_compile_definitions(oc_extract PRIVATE
-    CAMERA_DATABASE_PATH="${CMAKE_BINARY_DIR}/camera_database.json")
+    CAMERA_DATABASE_PATH="${CMAKE_BINARY_DIR}/camera_database.json"
+    CAMERA_DATABASE_INSTALL_PATH="${CMAKE_INSTALL_FULL_DATADIR}/opencalibration/camera_database.json")

@@ -95,7 +95,7 @@ std::optional<image> extract_image(const std::string &path)
     img.model->pixels_rows = img.metadata.camera_info.height_px;
     img.model->principle_point = Eigen::Vector2d(img.model->pixels_cols, img.model->pixels_rows) / 2;
 
-    static bool db_loaded = CameraDatabase::instance().load(CAMERA_DATABASE_PATH);
+    static bool db_loaded = CameraDatabase::instance().load(CameraDatabase::defaultPath());
     (void)db_loaded;
 
     auto db_entry = CameraDatabase::instance().lookup(img.metadata.camera_info);

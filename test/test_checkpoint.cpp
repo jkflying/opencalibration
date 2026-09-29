@@ -57,7 +57,8 @@ TEST_F(CheckpointTest, save_and_load_with_surfaces)
     // Add some surfaces with point clouds
     surface_model surface1;
     point_cloud cloud1;
-    cloud1.push_back(Eigen::Vector3d(1.0, 2.0, 3.0));
+    const Eigen::Vector3d precise(1234.567891234, -2345.678912345, 98.7654321);
+    cloud1.push_back(precise);
     cloud1.push_back(Eigen::Vector3d(4.0, 5.0, 6.0));
     surface1.cloud.push_back(cloud1);
 
@@ -83,9 +84,7 @@ TEST_F(CheckpointTest, save_and_load_with_surfaces)
 
     EXPECT_EQ(2u, loaded.surfaces[0].cloud.size());
     ASSERT_EQ(2u, loaded.surfaces[0].cloud[0].size());
-    EXPECT_DOUBLE_EQ(1.0, loaded.surfaces[0].cloud[0][0].x());
-    EXPECT_DOUBLE_EQ(2.0, loaded.surfaces[0].cloud[0][0].y());
-    EXPECT_DOUBLE_EQ(3.0, loaded.surfaces[0].cloud[0][0].z());
+    EXPECT_EQ(precise, loaded.surfaces[0].cloud[0][0]);
 
     EXPECT_EQ(1u, loaded.surfaces[0].cloud[1].size());
     EXPECT_DOUBLE_EQ(7.0, loaded.surfaces[0].cloud[1][0].x());
@@ -93,6 +92,29 @@ TEST_F(CheckpointTest, save_and_load_with_surfaces)
     EXPECT_EQ(1u, loaded.surfaces[1].cloud.size());
     EXPECT_EQ(1u, loaded.surfaces[1].cloud[0].size());
     EXPECT_DOUBLE_EQ(10.0, loaded.surfaces[1].cloud[0][0].x());
+}
+
+TEST_F(CheckpointTest, load_ignores_wrongly_typed_metadata)
+{
+    // GIVEN: a saved checkpoint whose metadata was edited to hold fields of the wrong JSON type
+    CheckpointData data;
+    data.state = PipelineState::FINAL_GLOBAL_RELAX;
+    ASSERT_TRUE(saveCheckpoint(data, test_checkpoint_dir));
+    {
+        std::ofstream out(std::filesystem::path(test_checkpoint_dir) / "00_FINAL_GLOBAL_RELAX_metadata.json");
+        out << R"({"version":2,"state":5,"state_run_count":"x","origin_latitude":"north","origin_longitude":[],)"
+               R"("surface_count":-1,"color_balance":{"success":1,"final_cost":"x","num_iterations":1.5,)"
+               R"("horizontal_view_dir_log_cbrt_gain":"x","images":[{"id":"a"},7],"models":{}}})";
+    }
+
+    // WHEN: we load it
+    CheckpointData loaded;
+    const bool ok = loadCheckpoint(test_checkpoint_dir, loaded);
+
+    // THEN: loading succeeds and the malformed fields keep their defaults
+    EXPECT_TRUE(ok);
+    EXPECT_EQ(loaded.origin_latitude, 0.0);
+    EXPECT_TRUE(loaded.color_balance.per_image_params.empty());
 }
 
 TEST_F(CheckpointTest, save_and_load_color_balance)
