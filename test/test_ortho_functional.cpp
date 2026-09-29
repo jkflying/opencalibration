@@ -25,6 +25,21 @@ using namespace opencalibration::orthomosaic;
 
 // ==================== Image Cache Tests ====================
 
+TEST(ImageCache, failed_load_is_not_retried)
+{
+    // GIVEN: an image cache and a path that does not exist
+    FullResolutionImageCache cache(2);
+    const std::string missing = TEST_DATA_OUTPUT_DIR "does_not_exist.png";
+
+    // WHEN: the image is requested and prefetched repeatedly
+    EXPECT_TRUE(cache.getImage(1, missing).empty());
+    cache.tryPrefetch(1, missing);
+    EXPECT_TRUE(cache.getImage(1, missing).empty());
+
+    // THEN: only the first request tries to read from disc
+    EXPECT_EQ(cache.getCacheMisses(), 1u);
+}
+
 TEST(ImageCache, basic_cache)
 {
     // GIVEN: An image cache with max size 2

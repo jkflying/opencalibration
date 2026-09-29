@@ -19,10 +19,11 @@ cv::Mat FullResolutionImageCache::getImage(size_t node_id, const std::string &pa
 {
     std::unique_lock<std::mutex> lock(cache_mutex_);
 
-    // Wait if another thread is loading this image
     cv_.wait(lock, [this, node_id] { return loading_.count(node_id) == 0; });
 
-    // Check if image is now cached
+    if (failed_.count(node_id) > 0)
+        return cv::Mat();
+
     auto it = cache_.find(node_id);
     if (it != cache_.end())
     {
@@ -39,7 +40,7 @@ bool FullResolutionImageCache::tryPrefetch(size_t node_id, const std::string &pa
 {
     std::unique_lock<std::mutex> lock(cache_mutex_);
 
-    if (cache_.count(node_id) > 0 || loading_.count(node_id) > 0)
+    if (cache_.count(node_id) > 0 || loading_.count(node_id) > 0 || failed_.count(node_id) > 0)
         return true;
 
     if (cache_.size() >= max_cache_size_)
@@ -72,6 +73,7 @@ cv::Mat FullResolutionImageCache::loadAndInsert(std::unique_lock<std::mutex> &lo
     if (image.empty())
     {
         spdlog::warn("Failed to load image: {}", path);
+        failed_.insert(node_id);
         cv_.notify_all();
         return cv::Mat();
     }

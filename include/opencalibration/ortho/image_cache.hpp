@@ -22,6 +22,7 @@ class FullResolutionImageCache
 
     ankerl::unordered_dense::map<size_t, CachedImage> cache_;
     ankerl::unordered_dense::set<size_t> loading_;
+    ankerl::unordered_dense::set<size_t> failed_;
     size_t max_cache_size_;
     size_t access_counter_ = 0;
     mutable std::mutex cache_mutex_;
@@ -35,17 +36,14 @@ class FullResolutionImageCache
   public:
     explicit FullResolutionImageCache(size_t max_size = 10);
 
-    // Load image from path (uses cache if available)
     cv::Mat getImage(size_t node_id, const std::string &path);
 
     bool tryPrefetch(size_t node_id, const std::string &path);
 
     void setNextUse(std::function<size_t(size_t node_id)> next_use);
 
-    // Clear entire cache (between tiles)
     void clear();
 
-    // Get cache statistics
     size_t getCacheHits() const;
     size_t getCacheMisses() const;
 };
