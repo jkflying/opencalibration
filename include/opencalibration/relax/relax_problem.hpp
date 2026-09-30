@@ -56,7 +56,7 @@ class RelaxProblem
     void setupGroundPlaneProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                                  ankerl::unordered_dense::map<size_t, CameraModel> &cam_models,
                                  const ankerl::unordered_dense::set<size_t> &edges_to_optimize,
-                                 const RelaxOptionSet &options);
+                                 const RelaxOptionSet &options, const std::vector<NodePose> &fixed_nodes = {});
 
     void setupGroundMeshProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                                 ankerl::unordered_dense::map<size_t, CameraModel> &cam_models,
@@ -161,6 +161,7 @@ class RelaxProblem
     ceres::Solver _solver;
 
     ankerl::unordered_dense::map<size_t, NodePose *> _nodes_to_optimize;
+    ankerl::unordered_dense::map<size_t, const NodePose *> _fixed_nodes;
     std::map<size_t, std::array<double, 7>> _pose_blocks;
     ankerl::unordered_dense::map<size_t, CameraModel *> _cam_models_to_optimize;
     std::map<size_t, InverseDifferentiableCameraModel<double>> _inverse_cam_model_to_optimize;

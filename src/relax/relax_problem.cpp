@@ -196,9 +196,11 @@ void RelaxProblem::setupDecompositionProblem(const MeasurementGraph &graph, std:
 void RelaxProblem::setupGroundPlaneProblem(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                                            ankerl::unordered_dense::map<size_t, CameraModel> &cam_models,
                                            const ankerl::unordered_dense::set<size_t> &edges_to_optimize,
-                                           const RelaxOptionSet &options)
+                                           const RelaxOptionSet &options, const std::vector<NodePose> &fixed_nodes)
 {
     initialize(nodes, cam_models);
+    for (const NodePose &n : fixed_nodes)
+        _fixed_nodes.emplace(n.node_id, &n);
     initializeGroundPlane();
     _prior_scale = meanInverseSigma(graph, nodes);
     gridFilterMatchesPerImage(graph, edges_to_optimize, 0.15);
@@ -496,7 +498,14 @@ OptimizationPackage::PoseOpt RelaxProblem::nodeid2poseopt(const MeasurementGraph
     {
         po.optimize = false;
 
-        if (node != nullptr && node->payload.orientation.coeffs().allFinite() && node->payload.position.allFinite())
+        auto fixed_iter = _fixed_nodes.find(node_id);
+        if (fixed_iter != _fixed_nodes.end())
+        {
+            po.loc_ptr = const_cast<Eigen::Vector3d *>(&fixed_iter->second->position);
+            po.rot_ptr = const_cast<Eigen::Quaterniond *>(&fixed_iter->second->orientation);
+        }
+        else if (node != nullptr && node->payload.orientation.coeffs().allFinite() &&
+                 node->payload.position.allFinite())
         {
             // const_cast these, but mark as "don't optimize" so that they don't get changed downstream
             po.loc_ptr = const_cast<Eigen::Vector3d *>(&node->payload.position);
@@ -1441,14 +1450,16 @@ void RelaxProblem::initializeGroundPlane()
     Eigen::Vector2d xy_min(1e12, 1e12), xy_max(-1e12, -1e12);
     double height = 0;
 
+    auto extend = [&](const NodePose &pose) {
+        xy_min = xy_min.cwiseMin(pose.position.topRows<2>());
+        xy_max = xy_max.cwiseMax(pose.position.topRows<2>());
+        height += pose.position.z();
+    };
     for (const auto &[key, value] : _nodes_to_optimize)
-    {
-        const Eigen::Vector3d &loc = value->position;
-        xy_min = xy_min.cwiseMin(loc.topRows<2>());
-        xy_max = xy_max.cwiseMax(loc.topRows<2>());
-        height += loc.z();
-    }
-    height /= _nodes_to_optimize.size();
+        extend(*value);
+    for (const auto &[key, value] : _fixed_nodes)
+        extend(*value);
+    height /= _nodes_to_optimize.size() + _fixed_nodes.size();
 
     // place triangle to enclose bounding box entirely, 100m below avg height
     /*             A
