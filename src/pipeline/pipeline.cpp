@@ -929,9 +929,11 @@ Pipeline::Impl::Transition Pipeline::Impl::dense_mesh_relax()
         const bool unrefinedMesh = stateRunCount() == 0;
         if (unrefinedMesh)
             fitHeights();
-        totalRefined += refineByPointDensity(agreeingSurface.mesh, agreeingSurface.cloud, maxPointsPerTriangle,
-                                             minDistanceVariance, 1, reducedGsd);
-        fitHeights();
+        const size_t refined = refineByPointDensity(agreeingSurface.mesh, agreeingSurface.cloud,
+                                                    maxPointsPerTriangle, minDistanceVariance, 1, reducedGsd);
+        totalRefined += refined;
+        if (refined > 0)
+            fitHeights();
         surface.mesh = std::move(agreeingSurface.mesh);
     }
 
