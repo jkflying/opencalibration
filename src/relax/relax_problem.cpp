@@ -22,6 +22,7 @@ namespace opencalibration
 
 constexpr double GPS_HORIZONTAL_SIGMA_METERS = 2.1;
 constexpr double GPS_VERTICAL_SIGMA_METERS = 4.2;
+constexpr double NEAR_GAUSS_NEWTON_TRUST_REGION_RADIUS = 1e4;
 
 namespace
 {
@@ -227,6 +228,7 @@ void RelaxProblem::setupGroundMeshProblem(const MeasurementGraph &graph, std::ve
     initialize(nodes, cam_models);
     const MeshOrigin meshOrigin = initializeGroundMesh(previousSurfaces, options.get(Option::MINIMAL_MESH));
     _prior_scale = meanInverseSigma(graph, nodes);
+    _solver_options.initial_trust_region_radius = NEAR_GAUSS_NEWTON_TRUST_REGION_RADIUS;
 
     for (size_t edge_id : edges_to_optimize)
     {
@@ -292,6 +294,7 @@ void RelaxProblem::setupTriangulatedRaysProblem(const MeasurementGraph &graph, s
 {
     initialize(nodes, cam_models);
     _prior_scale = meanInverseSigma(graph, nodes);
+    _solver_options.initial_trust_region_radius = NEAR_GAUSS_NEWTON_TRUST_REGION_RADIUS;
 
     for (size_t edge_id : edges_to_optimize)
     {
@@ -332,7 +335,6 @@ void RelaxProblem::setupMeshHeightProblem(const surface_model &surface, double p
     _solver_options.callbacks = {_mesh_step_convergence.get()};
     _solver_options.update_state_every_iteration = true;
     _solver_options.function_tolerance = 0;
-    constexpr double NEAR_GAUSS_NEWTON_TRUST_REGION_RADIUS = 1e4;
     _solver_options.initial_trust_region_radius = NEAR_GAUSS_NEWTON_TRUST_REGION_RADIUS;
 
     const auto samples = sampleMeshPoints(_mesh, surface.cloud);
