@@ -36,6 +36,8 @@ namespace
 {
 
 constexpr int MESH_REFINEMENT_MAX_ITERATIONS = 20;
+constexpr int MESH_REFINEMENT_MAX_GRID_LEVEL = 2;
+constexpr size_t MESH_REFINEMENT_FINAL_POINTS_PER_TRIANGLE = 25;
 constexpr int RELAX_MAX_ITERATIONS = 5;       // initial global relax, camera parameter relax
 constexpr int FINAL_RELAX_MAX_ITERATIONS = 3; // final global relax
 
@@ -163,6 +165,7 @@ struct Pipeline::Impl : public usm::StateMachine<PipelineState, PipelineTransiti
     double orthomosaic_max_megapixels = 0.0;
 
     int mesh_refinement_grid_level = 0;
+    int mesh_refinement_level_iterations = 0;
     size_t mesh_refinement_level_triangles = 0;
 
     bool skip_mesh_refinement = false;
@@ -735,14 +738,15 @@ Pipeline::Impl::Transition Pipeline::Impl::mesh_refinement()
 
     PerformanceMeasure p("Mesh refinement");
 
-    const size_t maxPointsPerTriangle = 20;
     const double varianceGsdMultiplier = 2.0;
     const int maxIterations = MESH_REFINEMENT_MAX_ITERATIONS;
     const double baseGridFraction = 0.1;
+    const double minRefinedFractionToContinue = 0.02;
 
     if (stateRunCount() == 0)
     {
         mesh_refinement_grid_level = 0;
+        mesh_refinement_level_iterations = 0;
         mesh_refinement_level_triangles = 0;
         point_cloud cameraLocations;
         for (auto it = graph.cnodebegin(); it != graph.cnodeend(); ++it)
@@ -758,6 +762,8 @@ Pipeline::Impl::Transition Pipeline::Impl::mesh_refinement()
     }
 
     const double gridFraction = baseGridFraction / std::pow(2.0, mesh_refinement_grid_level);
+    const size_t maxPointsPerTriangle = MESH_REFINEMENT_FINAL_POINTS_PER_TRIANGLE
+                                        << (MESH_REFINEMENT_MAX_GRID_LEVEL - mesh_refinement_grid_level);
 
     RelaxConfig config{{Option::ORIENTATION, Option::GROUND_MESH}};
     config.ground_mesh_grid_fraction = gridFraction;
@@ -779,16 +785,19 @@ Pipeline::Impl::Transition Pipeline::Impl::mesh_refinement()
         std::sqrt(static_cast<double>(maxPointsPerTriangle) / 8.0) * gridFraction * meanImageSize * gsd;
     const double minDistanceStddev = varianceGsdMultiplier * gsd;
     const double minDistanceVariance = minDistanceStddev * minDistanceStddev;
-    spdlog::info("Mesh refinement level {}: GSD {:.4f}m, grid fraction {:.4f}, min triangle {:.4f}m",
-                 mesh_refinement_grid_level, gsd, gridFraction, reducedGsd);
+    spdlog::info("Mesh refinement level {}: GSD {:.4f}m, grid fraction {:.4f}, min triangle {:.4f}m, max {} "
+                 "points/triangle",
+                 mesh_refinement_grid_level, gsd, gridFraction, reducedGsd, maxPointsPerTriangle);
 
     size_t trianglesAboveThreshold = 0;
     size_t maxPoints = 0;
+    size_t triangleCount = 0;
     for (const auto &surface : surfaces)
     {
         if (surface.mesh.size_nodes() == 0)
             continue;
         auto stats = countPointsPerTriangle(surface.mesh, surface.cloud);
+        triangleCount += stats.size();
         for (const auto &[key, s] : stats)
         {
             maxPoints = std::max(maxPoints, s.count);
@@ -802,9 +811,10 @@ Pipeline::Impl::Transition Pipeline::Impl::mesh_refinement()
 
     bool levelConverged = (trianglesAboveThreshold == 0);
 
-    if (!levelConverged && stateRunCount() >= (uint64_t)(maxIterations - 1))
+    if (!levelConverged && ++mesh_refinement_level_iterations >= maxIterations)
     {
-        spdlog::warn("Mesh refinement reached max iterations ({}), advancing grid level", maxIterations);
+        spdlog::warn("Mesh refinement reached max iterations ({}) at grid level {}", maxIterations,
+                     mesh_refinement_grid_level);
         levelConverged = true;
     }
 
@@ -819,25 +829,31 @@ Pipeline::Impl::Transition Pipeline::Impl::mesh_refinement()
                                                  1, reducedGsd);
         }
 
-        if (totalRefined == 0)
-            levelConverged = true;
-        else
+        mesh_refinement_level_triangles += totalRefined;
+        spdlog::info("Mesh refinement: created {} triangles", totalRefined);
+        levelConverged = totalRefined < minRefinedFractionToContinue * triangleCount;
+        if (!levelConverged)
         {
-            mesh_refinement_level_triangles += totalRefined;
-            spdlog::info("Mesh refinement: created {} triangles", totalRefined);
             relax_stage->setSurfaceModels(surfaces);
             USM_DECISION_TABLE(Transition::REPEAT, );
         }
     }
 
-    if (mesh_refinement_level_triangles == 0)
+    if (mesh_refinement_grid_level >= MESH_REFINEMENT_MAX_GRID_LEVEL ||
+        mesh_refinement_level_triangles <= minRefinedFractionToContinue * triangleCount)
     {
-        spdlog::info("Mesh refinement complete: grid level {} (fraction {:.4f}) produced no new triangles",
-                     mesh_refinement_grid_level, gridFraction);
+        size_t vertexCount = 0;
+        for (const auto &surface : surfaces)
+            vertexCount += surface.mesh.size_nodes();
+        spdlog::info("Mesh refinement complete: grid level {} (fraction {:.4f}) produced {} of {} triangles, mesh has "
+                     "{} vertices",
+                     mesh_refinement_grid_level, gridFraction, mesh_refinement_level_triangles, triangleCount,
+                     vertexCount);
         USM_DECISION_TABLE(Transition::NEXT, );
     }
 
     mesh_refinement_grid_level++;
+    mesh_refinement_level_iterations = 0;
     mesh_refinement_level_triangles = 0;
     spdlog::info("Mesh refinement advancing to grid level {} (fraction {:.4f})", mesh_refinement_grid_level,
                  baseGridFraction / std::pow(2.0, mesh_refinement_grid_level));
