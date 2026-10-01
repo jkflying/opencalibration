@@ -245,7 +245,7 @@ size_t refineTriangle(MeshGraph &mesh, const TriangleId &tri, int maxDepth)
         auto vertices = getTriangleVertices(mesh, currentTri);
         if (vertices[0] == 0 && vertices[1] == 0 && vertices[2] == 0)
         {
-            spdlog::debug("refineTriangle: triangle (edge={}, side={}) has invalid vertices", currentTri.edgeId,
+            spdlog::trace("refineTriangle: triangle (edge={}, side={}) has invalid vertices", currentTri.edgeId,
                           currentTri.side);
             return trianglesCreated;
         }
@@ -253,7 +253,7 @@ size_t refineTriangle(MeshGraph &mesh, const TriangleId &tri, int maxDepth)
         size_t longestEdgeId = findLongestEdge(mesh, currentTri);
         if (longestEdgeId == 0)
         {
-            spdlog::debug("refineTriangle: could not find longest edge for triangle (edge={}, side={})",
+            spdlog::trace("refineTriangle: could not find longest edge for triangle (edge={}, side={})",
                           currentTri.edgeId, currentTri.side);
             return trianglesCreated;
         }
@@ -546,7 +546,7 @@ size_t refineByPointDensity(MeshGraph &mesh, const std::vector<point_cloud> &poi
                         if (maxEdge < minTriangleSizeMeters)
                         {
                             skippedSmall++;
-                            spdlog::debug("refineByPointDensity: skipping triangle at min size "
+                            spdlog::trace("refineByPointDensity: skipping triangle at min size "
                                           "(edge={}, side={}), {:.4f}m < {:.4f}m limit",
                                           tri.edgeId, tri.side, maxEdge, minTriangleSizeMeters);
                             continue;
@@ -554,7 +554,7 @@ size_t refineByPointDensity(MeshGraph &mesh, const std::vector<point_cloud> &poi
                     }
                 }
                 toRefine.emplace_back(tri, verts);
-                spdlog::debug("refineByPointDensity: triangle (edge={}, side={}) has {} points, variance {}",
+                spdlog::trace("refineByPointDensity: triangle (edge={}, side={}) has {} points, variance {}",
                               tri.edgeId, tri.side, s.count, s.distanceVariance);
             }
         }
@@ -575,13 +575,13 @@ size_t refineByPointDensity(MeshGraph &mesh, const std::vector<point_cloud> &poi
         {
             if (getTriangleVertices(mesh, tri) != queuedVerts)
             {
-                spdlog::debug("refineByPointDensity: skipping triangle already split (edge={}, side={})", tri.edgeId,
+                spdlog::trace("refineByPointDensity: skipping triangle already split (edge={}, side={})", tri.edgeId,
                               tri.side);
                 continue;
             }
 
             size_t created = refineTriangle(mesh, tri);
-            spdlog::debug("refineByPointDensity: refineTriangle returned {} for (edge={}, side={})", created,
+            spdlog::trace("refineByPointDensity: refineTriangle returned {} for (edge={}, side={})", created,
                           tri.edgeId, tri.side);
             createdThisIter += created;
         }

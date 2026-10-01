@@ -175,12 +175,13 @@ surface_model runTriangulatedRays(const MeasurementGraph &graph, std::vector<Nod
                                   const ankerl::unordered_dense::set<size_t> &edges_to_optimize,
                                   const RelaxOptionSet &options)
 {
-    PerformanceMeasure p("Relax runner triangulated rays");
+    PerformanceMeasure p("Relax runner triangulated rays init");
     RelaxOptionSet orientation_options = options;
     orientation_options.set(Option::POSITION, false);
 
     initializeOrientationsOnGroundPlane(graph, nodes, cam_models, edges_to_optimize, orientation_options);
 
+    p.reset("Relax runner triangulated rays solve");
     RelaxProblem rp;
     rp.setupTriangulatedRaysProblem(graph, nodes, cam_models, edges_to_optimize, orientation_options);
     rp.solve();

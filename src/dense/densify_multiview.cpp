@@ -2,6 +2,7 @@
 
 #include <opencalibration/distort/distort_keypoints.hpp>
 #include <opencalibration/geometry/intersection.hpp>
+#include <opencalibration/performance/performance.hpp>
 #include <opencalibration/surface/intersect.hpp>
 #include <opencalibration/surface/refine_mesh.hpp>
 #include <opencalibration/types/feature_2d.hpp>
@@ -14,6 +15,7 @@
 #include <omp.h>
 
 #include <algorithm>
+#include <chrono>
 #include <mutex>
 #include <numeric>
 
@@ -301,6 +303,15 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
 
     spdlog::info("Dense: {} images with dense features, {} surfaces", node_ids.size(), surfaces.size());
 
+    auto phase_start = std::chrono::steady_clock::now();
+    auto lapSeconds = [&phase_start] {
+        const auto now = std::chrono::steady_clock::now();
+        const double seconds = std::chrono::duration<double>(now - phase_start).count();
+        phase_start = now;
+        return seconds;
+    };
+    PerformanceMeasure p("Dense feature sort");
+
     jk::tree::KDTree<size_t, 3, 8> camera_tree;
     for (size_t nid : node_ids)
     {
@@ -352,6 +363,10 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
     auto measurementId = [&](size_t nid, size_t feat_idx) -> size_t {
         return node_id_to_offset.at(nid) + feat_idx - graph.getNode(nid)->payload.num_sparse_features;
     };
+
+    spdlog::info("Dense: sorted features of {} images into cells, {} measurements in {:.1f}s", node_ids.size(),
+                 id_to_measurement.size(), lapSeconds());
+    p.reset("Dense match");
 
     std::atomic<size_t> images_done{0};
     std::mutex uf_mutex;
@@ -465,6 +480,9 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
         }
     }
 
+    spdlog::info("Dense: matched {} images in {:.1f}s", node_ids.size(), lapSeconds());
+    p.reset("Dense track build");
+
     ankerl::unordered_dense::map<size_t, std::vector<size_t>> track_ids;
 
     for (size_t i = 0; i < id_to_measurement.size(); i++)
@@ -494,6 +512,10 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
         if (ids.size() >= 2 && !hasMultipleFeaturesFromOneImage(ids))
             multi_tracks.push_back(std::move(ids));
     }
+
+    spdlog::info("Dense: built {} tracks, {} multi-view in {:.1f}s", track_ids.size(), multi_tracks.size(),
+                 lapSeconds());
+    p.reset("Dense triangulate");
 
     std::vector<Eigen::Vector3d> track_results(multi_tracks.size());
     std::vector<char> track_valid(multi_tracks.size(), 0);
@@ -560,6 +582,9 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
         track_results[ti] = point;
         track_valid[ti] = true;
     }
+
+    spdlog::info("Dense: triangulated {} tracks in {:.1f}s", multi_tracks.size(), lapSeconds());
+    p.reset("Dense assign points");
 
     std::vector<point_cloud> surface_points(surfaces.size());
     for (int ti = 0; ti < num_tracks; ti++)

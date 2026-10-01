@@ -1177,12 +1177,18 @@ void buildOverviews(GDALDatasetH dataset, int width, int height)
     if (overview_levels.empty())
         return;
 
+    PerformanceMeasure p("Ortho - overviews");
+    const auto start = std::chrono::steady_clock::now();
     CPLSetThreadLocalConfigOption("GDAL_NUM_THREADS", "ALL_CPUS");
     CPLErr err = GDALBuildOverviews(dataset, "AVERAGE", static_cast<int>(overview_levels.size()),
                                     overview_levels.data(), 0, nullptr, nullptr, nullptr);
     CPLSetThreadLocalConfigOption("GDAL_NUM_THREADS", nullptr);
     if (err != CE_None)
         spdlog::warn("Failed to build overviews for {}", GDALGetDescription(dataset));
+    else
+        spdlog::info("Built {} overview levels for {} in {:.1f}s", overview_levels.size(),
+                     GDALGetDescription(dataset),
+                     std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
 }
 
 } // namespace

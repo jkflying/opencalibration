@@ -164,6 +164,8 @@ struct Pipeline::Impl : public usm::StateMachine<PipelineState, PipelineTransiti
     std::string textured_mesh_filename;
     double orthomosaic_max_megapixels = 0.0;
 
+    std::chrono::steady_clock::time_point stage_start = std::chrono::steady_clock::now();
+
     int mesh_refinement_grid_level = 0;
     int mesh_refinement_level_iterations = 0;
     size_t mesh_refinement_level_triangles = 0;
@@ -470,6 +472,8 @@ Pipeline::Impl::Transition Pipeline::Impl::runCurrentState(PipelineState current
 {
     Transition t = Transition::ERROR;
     spdlog::debug("Running {}", Pipeline::toString(currentState));
+    if (stateRunCount() == 0)
+        stage_start = std::chrono::steady_clock::now();
 
     // clang-format off
     USM_TABLE(currentState, Transition::ERROR, t,
@@ -485,6 +489,11 @@ Pipeline::Impl::Transition Pipeline::Impl::runCurrentState(PipelineState current
               USM_MAP(State::GENERATE_GEOTIFF, generate_orthomosaic(), t)
     );
     // clang-format on
+
+    if (t != Transition::REPEAT)
+        spdlog::info("{} finished in {:.1f}s over {} iterations", Pipeline::toString(currentState),
+                     std::chrono::duration<double>(std::chrono::steady_clock::now() - stage_start).count(),
+                     stateRunCount() + 1);
 
     float local = 1.0f;
     switch (currentState)
@@ -898,7 +907,7 @@ Pipeline::Impl::Transition Pipeline::Impl::dense_mesh_relax()
         USM_DECISION_TABLE(Transition::NEXT, USM_MAKE_DECISION(surfaces.empty(), Transition::NEXT));
     }
 
-    PerformanceMeasure p("Dense mesh refine");
+    PerformanceMeasure p("Dense mesh setup");
 
     const size_t maxPointsPerTriangle = 20;
     const double varianceGsdMultiplier = 2.0;
@@ -917,10 +926,20 @@ Pipeline::Impl::Transition Pipeline::Impl::dense_mesh_relax()
             continue;
         const double pointSigma = std::max(minDistanceStddev, estimatePointHeightSigma(surface.cloud));
         constexpr double HEIGHT_AGREEMENT_SIGMAS = 5;
+        p.reset("Dense mesh filter points");
         surface_model agreeingSurface{
             filterPointsWithoutHeightAgreement(surface.cloud, HEIGHT_AGREEMENT_SIGMAS * pointSigma),
             std::move(surface.mesh)};
-        auto fitHeights = [&agreeingSurface, pointSigma] {
+        auto countPoints = [](const std::vector<point_cloud> &clouds) {
+            size_t count = 0;
+            for (const auto &cloud : clouds)
+                count += cloud.size();
+            return count;
+        };
+        spdlog::info("Dense mesh relax: {} of {} points agree within {:.3f}m", countPoints(agreeingSurface.cloud),
+                     countPoints(surface.cloud), HEIGHT_AGREEMENT_SIGMAS * pointSigma);
+        auto fitHeights = [&agreeingSurface, pointSigma, &p] {
+            p.reset("Dense mesh fit heights");
             RelaxProblem rp;
             rp.setupMeshHeightProblem(agreeingSurface, pointSigma);
             rp.solveMeshHeights();
@@ -929,6 +948,7 @@ Pipeline::Impl::Transition Pipeline::Impl::dense_mesh_relax()
         const bool unrefinedMesh = stateRunCount() == 0;
         if (unrefinedMesh)
             fitHeights();
+        p.reset("Dense mesh refine");
         const size_t refined = refineByPointDensity(agreeingSurface.mesh, agreeingSurface.cloud,
                                                     maxPointsPerTriangle, minDistanceVariance, 1, reducedGsd);
         totalRefined += refined;

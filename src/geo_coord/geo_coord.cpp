@@ -100,7 +100,7 @@ Eigen::Vector3d GeoCoord::toLocalCS(double latitude, double longitude, double al
     }
     if (success)
     {
-        spdlog::debug("transformed global coordinate {},{},{} to local {},{},{}", latitude, longitude, altitude,
+        spdlog::trace("transformed global coordinate {},{},{} to local {},{},{}", latitude, longitude, altitude,
                       res.x(), res.y(), res.z());
     }
     else
@@ -122,7 +122,7 @@ Eigen::Vector3d GeoCoord::toWGS84(const Eigen::Vector3d &local) const
     }
     if (success)
     {
-        spdlog::debug("transformed local coordinate {},{},{} to wgs84 {},{},{}", local.x(), local.y(), local.z(),
+        spdlog::trace("transformed local coordinate {},{},{} to wgs84 {},{},{}", local.x(), local.y(), local.z(),
                       res.x(), res.y(), res.z());
     }
     else

@@ -1774,7 +1774,10 @@ void RelaxProblem::solve()
     spdlog::info("Thread {} end relax: iterations {}, cost ratio {}, time {}s", thread_stream.str(),
                  _summary.iterations.size(), static_cast<float>(_summary.final_cost / _summary.initial_cost),
                  static_cast<float>(_summary.total_time_in_seconds));
-    spdlog::debug(_summary.FullReport());
+    if (spdlog::should_log(spdlog::level::trace))
+        spdlog::trace(_summary.FullReport());
+    else
+        spdlog::debug(_summary.BriefReport());
 
     for (auto &p : _nodes_to_optimize)
     {
