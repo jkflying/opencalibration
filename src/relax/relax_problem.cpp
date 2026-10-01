@@ -225,7 +225,7 @@ void RelaxProblem::setupGroundMeshProblem(const MeasurementGraph &graph, std::ve
                                           const std::vector<surface_model> &previousSurfaces, double grid_fraction)
 {
     initialize(nodes, cam_models);
-    initializeGroundMesh(previousSurfaces, options.get(Option::MINIMAL_MESH));
+    const MeshOrigin meshOrigin = initializeGroundMesh(previousSurfaces, options.get(Option::MINIMAL_MESH));
     _prior_scale = meanInverseSigma(graph, nodes);
 
     for (size_t edge_id : edges_to_optimize)
@@ -254,6 +254,9 @@ void RelaxProblem::setupGroundMeshProblem(const MeasurementGraph &graph, std::ve
     addMeshFlatPrior();
     addMeshSmoothPrior();
     addMonotonicityCosts();
+
+    if (meshOrigin == MeshOrigin::PREVIOUS_SURFACE)
+        keepPreviousHeightsWhereUnmeasured();
 }
 
 void RelaxProblem::setup3dPointProblem(const MeasurementGraph &graph, std::vector<opencalibration::NodePose> &nodes,
@@ -1501,7 +1504,8 @@ void RelaxProblem::initializeGroundPlane()
     }
 }
 
-void RelaxProblem::initializeGroundMesh(const std::vector<surface_model> &previousSurfaces, bool useMinimalMesh)
+RelaxProblem::MeshOrigin RelaxProblem::initializeGroundMesh(const std::vector<surface_model> &previousSurfaces,
+                                                            bool useMinimalMesh)
 {
     point_cloud cameraLocations;
     cameraLocations.reserve(_nodes_to_optimize.size());
@@ -1527,6 +1531,7 @@ void RelaxProblem::initializeGroundMesh(const std::vector<surface_model> &previo
     {
         _mesh = *previousMesh;
         spdlog::info("Reusing previous mesh with {} nodes, {} edges", _mesh.size_nodes(), _mesh.size_edges());
+        return MeshOrigin::PREVIOUS_SURFACE;
     }
     else if (useMinimalMesh)
     {
@@ -1538,6 +1543,31 @@ void RelaxProblem::initializeGroundMesh(const std::vector<surface_model> &previo
         _mesh = rebuildMesh(cameraLocations, previousSurfaces);
         spdlog::info("Built grid mesh with {} nodes, {} edges", _mesh.size_nodes(), _mesh.size_edges());
     }
+    return MeshOrigin::NEWLY_BUILT;
+}
+
+void RelaxProblem::keepPreviousHeightsWhereUnmeasured()
+{
+    ankerl::unordered_dense::set<const double *> measuredParameters;
+    std::vector<double *> residualParameters;
+    for (const auto &block : _ray_residuals.blocks)
+    {
+        _problem->GetParameterBlocksForResidualBlock(block.id, &residualParameters);
+        measuredParameters.insert(residualParameters.begin(), residualParameters.end());
+    }
+
+    size_t unmeasuredHeights = 0;
+    for (auto iter = _mesh.nodebegin(); iter != _mesh.nodeend(); ++iter)
+    {
+        double *height = &iter->second.payload.location.z();
+        if (!measuredParameters.contains(height) && _problem->HasParameterBlock(height))
+        {
+            _problem->SetParameterBlockConstant(height);
+            unmeasuredHeights++;
+        }
+    }
+    spdlog::debug("Holding {} unmeasured of {} mesh heights at their previous values", unmeasuredHeights,
+                  _mesh.size_nodes());
 }
 
 void RelaxProblem::addDownwardsPrior(const RelaxOptionSet &options)

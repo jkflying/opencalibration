@@ -125,7 +125,12 @@ class RelaxProblem
                                  const CameraModel &source_model, const CameraModel &dest_model) const;
 
     void initializeGroundPlane();
-    void initializeGroundMesh(const std::vector<surface_model> &previousSurfaces, bool useMinimalMesh = false);
+    enum class MeshOrigin
+    {
+        PREVIOUS_SURFACE,
+        NEWLY_BUILT
+    };
+    MeshOrigin initializeGroundMesh(const std::vector<surface_model> &previousSurfaces, bool useMinimalMesh = false);
 
     void addDownwardsPrior(const RelaxOptionSet &options);
     void addGPSPositionPrior(const MeasurementGraph &graph, const RelaxOptionSet &options);
@@ -137,6 +142,7 @@ class RelaxProblem
 
     void trackRadialObservation(double *radial_data, size_t pixels_rows, size_t pixels_cols, double focal_length);
     void addMonotonicityCosts();
+    void keepPreviousHeightsWhereUnmeasured();
     void setRadialDistortionParameterization(double *radial_distortion, const RelaxOptionSet &options);
 
     ceres::Solver::Options _solver_options;
