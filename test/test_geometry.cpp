@@ -290,6 +290,30 @@ TEST(spectral, edges_spectralize)
     // THEN: it completes without error
 }
 
+TEST(spectral, large_survey_grid_spectralize)
+{
+    // GIVEN: a survey-sized 40x22 grid of images, each linked to itself and its overlapping neighbours
+    opencalibration::SpectralClustering<int, 3> spectral(17);
+    const int rows = 40, cols = 22;
+    for (int i = 0; i < rows; i++)
+    {
+        for (int j = 0; j < cols; j++)
+        {
+            const int id = cols * i + j;
+            spectral.add({(double)i, (double)j, 0.0}, id);
+            spectral.addLink(id, id, 0.1);
+            for (int di = 0; di <= 1; di++)
+                for (int dj = -1; dj <= 1; dj++)
+                    if ((di > 0 || dj > 0) && i + di < rows && j + dj >= 0 && j + dj < cols)
+                        spectral.addLink(id, cols * (i + di) + j + dj, 1);
+        }
+    }
+
+    // WHEN: we spectralize
+    // THEN: the eigen solver converges
+    EXPECT_TRUE(spectral.spectralize());
+}
+
 TEST(spectral, disconnected_subgraph_spectralize)
 {
     // GIVEN: two disconnected cliques with no edges between them.

@@ -135,14 +135,19 @@ template <typename T, size_t D> class SpectralClustering
             identity.setIdentity();
             const Sparse normalizedLaplacian = identity - normalizedAdjacency;
 
+            constexpr int num_eigenvectors = D + 1;
+            const int lanczos_basis_size = std::min<int>(_items.size(), 20);
+            if (lanczos_basis_size <= num_eigenvectors)
+                return false;
+
             using Op = Spectra::SparseSymMatProd<double>;
             Op op(normalizedLaplacian);
-            Spectra::SymEigsSolver<Op> eigen_solver(op, D + 1, D + 3);
+            Spectra::SymEigsSolver<Op> eigen_solver(op, num_eigenvectors, lanczos_basis_size);
 
             eigen_solver.init();
             int nconv = eigen_solver.compute(Spectra::SortRule::SmallestMagn);
 
-            if (eigen_solver.info() == Spectra::CompInfo::Successful && nconv == D + 1)
+            if (eigen_solver.info() == Spectra::CompInfo::Successful && nconv == num_eigenvectors)
             {
 
                 const Eigen::MatrixXd evectors = eigen_solver.eigenvectors();
