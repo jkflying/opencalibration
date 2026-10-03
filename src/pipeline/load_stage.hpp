@@ -3,6 +3,7 @@
 #include <jk/KDTree.h>
 #include <opencalibration/geo_coord/geo_coord.hpp>
 #include <opencalibration/io/checkpoint.hpp>
+#include <opencalibration/pipeline/progress.hpp>
 #include <opencalibration/types/image.hpp>
 #include <opencalibration/types/measurement_graph.hpp>
 
@@ -22,6 +23,7 @@ class LoadStage
                                  jk::tree::KDTree<size_t, 2> &imageGPSLocations);
 
     std::shared_ptr<ProjectStore> store;
+    ImageLoadedCallback on_loaded;
 
   private:
     std::mutex _images_mutex;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <jk/KDTree.h>
+#include <opencalibration/pipeline/progress.hpp>
 #include <opencalibration/types/measurement_graph.hpp>
 #include <opencalibration/types/node_links.hpp>
 
@@ -28,6 +29,8 @@ class LinkStage
     std::vector<std::function<void()>> get_runners(const MeasurementGraph &graph);
 
     std::vector<size_t> finalize(MeasurementGraph &graph);
+
+    EdgeLinkedCallback on_linked;
 
   private:
     std::vector<edge_payload> _all_inlier_measurements;

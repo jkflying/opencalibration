@@ -91,6 +91,8 @@ void RelaxGroup::init(const MeasurementGraph &graph, const std::vector<size_t> &
         }
     }
 
+    _fixed_node_ids.assign(fixed_nodes.begin(), fixed_nodes.end());
+
     std::sort(_local_poses.begin(), _local_poses.end(), [&graph](const NodePose &a, const NodePose &b) {
         const std::string &a_s = graph.getNode(a.node_id)->payload.path, &b_s = graph.getNode(b.node_id)->payload.path;
         return a_s < b_s;
@@ -140,6 +142,15 @@ bool RelaxGroup::modelChanged() const
 {
     return _config.options.hasAny({Option::FOCAL_LENGTH, Option::PRINCIPAL_POINT, Option::LENS_DISTORTIONS_RADIAL,
                                    Option::LENS_DISTORTIONS_TANGENTIAL});
+}
+
+std::vector<size_t> RelaxGroup::nodeIds() const
+{
+    std::vector<size_t> ids;
+    ids.reserve(_local_poses.size());
+    for (const auto &pose : _local_poses)
+        ids.push_back(pose.node_id);
+    return ids;
 }
 
 std::vector<size_t> RelaxGroup::finalize(MeasurementGraph &graph)

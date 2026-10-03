@@ -31,6 +31,8 @@ class Pipeline
     [[nodiscard]] const std::vector<surface_model> &getSurfaces() const;
 
     void set_callback(const StepCompletionCallback &step_complete);
+    void set_image_loaded_callback(const ImageLoadedCallback &image_loaded);
+    void set_edge_linked_callback(const EdgeLinkedCallback &edge_linked);
     void set_generate_thumbnails(bool generate);
     void set_thumbnail_filenames(const std::string &thumbnail, const std::string &source, const std::string &overlap);
     void set_geotiff_filename(const std::string &geotiff);

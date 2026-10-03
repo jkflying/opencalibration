@@ -25,9 +25,12 @@ class RelaxStage
 
     void trim_groups(size_t max_size);
 
+    std::vector<std::vector<size_t>> group_node_ids() const;
+    std::vector<size_t> fixed_node_ids() const;
+
     std::vector<std::function<void()>> get_runners(const MeasurementGraph &graph);
 
-    std::vector<std::vector<size_t>> finalize(MeasurementGraph &graph);
+    void finalize(MeasurementGraph &graph);
 
     const std::vector<surface_model> &getSurfaceModels();
     void setSurfaceModels(std::vector<surface_model> surfaces);

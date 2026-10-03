@@ -107,6 +107,7 @@ std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph
 
         auto &mtx = _measurement_mutex;
         auto &meas = _all_inlier_measurements;
+        const auto &on_linked = this->on_linked;
 
         for (size_t match_node_id : nearest)
         {
@@ -116,7 +117,7 @@ std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph
                 continue;
             }
             const image &near_image = node->payload;
-            auto run_func = [working_set, i, node_id, &near_image, match_node_id, &img, &mtx, &meas]() {
+            auto run_func = [working_set, i, node_id, &near_image, match_node_id, &img, &mtx, &meas, &on_linked]() {
                 PerformanceMeasure p("Link runner coarse match");
                 camera_relations relations;
                 const LinkFeatures &source = working_set->at(node_id);
@@ -151,6 +152,8 @@ std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph
                     assembleInliers(relations.matches, coarse_inliers, features, near_features,
                                     relations.inlier_matches);
                 }
+                if (on_linked && !relations.inlier_matches.empty())
+                    on_linked(node_id, match_node_id);
                 std::lock_guard<std::mutex> lock(mtx);
                 meas.emplace_back(edge_payload{i, node_id, match_node_id, std::move(relations)});
             };

@@ -46,9 +46,12 @@ struct StepCompletionInfo
     float local_fraction = 0.f;
     bool surfaces_updated = false;
     std::optional<TileUpdate> tile_update;
+    std::vector<size_t> fixed_ids;
 };
 
 using StepCompletionCallback = std::function<void(const StepCompletionInfo &)>;
+using ImageLoadedCallback = std::function<void(const std::string &path, double latitude, double longitude)>;
+using EdgeLinkedCallback = std::function<void(size_t node_id, size_t match_node_id)>;
 using TileProgressCallback = std::function<void(const TileUpdate &)>;
 
 } // namespace opencalibration

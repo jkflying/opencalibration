@@ -52,6 +52,8 @@ std::vector<std::function<void()>> LoadStage::get_runners()
             }
             if (img != std::nullopt)
             {
+                if (on_loaded)
+                    on_loaded(img->path, img->metadata.capture_info.latitude, img->metadata.capture_info.longitude);
                 std::lock_guard<std::mutex> lock(_images_mutex);
                 _images.emplace_back(i, std::move(*img));
             }

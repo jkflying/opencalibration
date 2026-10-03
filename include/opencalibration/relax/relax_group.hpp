@@ -22,11 +22,18 @@ class RelaxGroup
 
     std::vector<size_t> finalize(MeasurementGraph &graph);
 
+    std::vector<size_t> nodeIds() const;
+    const std::vector<size_t> &fixedNodeIds() const
+    {
+        return _fixed_node_ids;
+    }
+
     bool modelChanged() const;
 
   private:
     bool _incremental_relax;
     std::vector<NodePose> _local_poses;
+    std::vector<size_t> _fixed_node_ids;
     ankerl::unordered_dense::map<size_t, CameraModel> _camera_models;
 
     ankerl::unordered_dense::set<size_t> _edges_to_optimize;

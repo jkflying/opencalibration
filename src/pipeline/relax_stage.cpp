@@ -108,6 +108,23 @@ void RelaxStage::trim_groups(size_t max_size)
     }
 }
 
+std::vector<std::vector<size_t>> RelaxStage::group_node_ids() const
+{
+    std::vector<std::vector<size_t>> ids;
+    for (const auto &g : _groups)
+        if (auto group = g.nodeIds(); !group.empty())
+            ids.push_back(std::move(group));
+    return ids;
+}
+
+std::vector<size_t> RelaxStage::fixed_node_ids() const
+{
+    std::vector<size_t> ids;
+    for (const auto &g : _groups)
+        ids.insert(ids.end(), g.fixedNodeIds().begin(), g.fixedNodeIds().end());
+    return ids;
+}
+
 std::vector<std::function<void()>> RelaxStage::get_runners(const MeasurementGraph &graph)
 {
     std::vector<std::function<void()>> funcs;
@@ -126,14 +143,13 @@ std::vector<std::function<void()>> RelaxStage::get_runners(const MeasurementGrap
     return funcs;
 }
 
-std::vector<std::vector<size_t>> RelaxStage::finalize(MeasurementGraph &graph)
+void RelaxStage::finalize(MeasurementGraph &graph)
 {
     PerformanceMeasure p("Relax finalize");
-    std::vector<std::vector<size_t>> optimized_ids;
     bool model_changed = false;
     for (auto &g : _groups)
     {
-        optimized_ids.emplace_back(g.finalize(graph));
+        g.finalize(graph);
         model_changed = model_changed || g.modelChanged();
     }
     _groups.clear();
@@ -148,8 +164,6 @@ std::vector<std::vector<size_t>> RelaxStage::finalize(MeasurementGraph &graph)
         _surface_models.clear();
         _surface_models.push_back(std::move(merged));
     }
-
-    return optimized_ids;
 }
 
 const std::vector<surface_model> &RelaxStage::getSurfaceModels()

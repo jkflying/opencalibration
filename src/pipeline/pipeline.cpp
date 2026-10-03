@@ -154,6 +154,7 @@ struct Pipeline::Impl : public usm::StateMachine<PipelineState, PipelineTransiti
 
     std::vector<size_t> previous_loaded_ids, previous_linked_ids, next_loaded_ids, next_linked_ids;
     std::vector<std::vector<size_t>> next_relaxed_ids;
+    std::vector<size_t> next_fixed_ids;
 
     std::unique_ptr<LoadStage> load_stage;
     std::unique_ptr<LinkStage> link_stage;
@@ -223,6 +224,8 @@ struct Pipeline::Impl : public usm::StateMachine<PipelineState, PipelineTransiti
 
     void emit_progress(std::string activity, float local_fraction, bool surfaces_updated = false,
                        std::optional<TileUpdate> tile_update = std::nullopt);
+    void report_progress(bool starting);
+    void report_relax_groups();
     void rebuildGPSLocationsTree();
 
     void resetState(PipelineState state, uint64_t run_count = 0)
@@ -266,6 +269,16 @@ const std::vector<surface_model> &Pipeline::getSurfaces() const
 void Pipeline::set_callback(const StepCompletionCallback &cb)
 {
     _impl->step_callback = cb;
+}
+
+void Pipeline::set_image_loaded_callback(const ImageLoadedCallback &cb)
+{
+    _impl->load_stage->on_loaded = cb;
+}
+
+void Pipeline::set_edge_linked_callback(const EdgeLinkedCallback &cb)
+{
+    _impl->link_stage->on_linked = cb;
 }
 
 void Pipeline::set_generate_thumbnails(bool v)
@@ -525,6 +538,15 @@ Pipeline::Impl::Transition Pipeline::Impl::runCurrentState(PipelineState current
         logPhaseHotspots();
     }
 
+    report_progress(false);
+
+    return t;
+}
+
+void Pipeline::Impl::report_progress(bool starting)
+{
+    const PipelineState currentState = getState();
+    const int done = stateRunCount() + (starting ? 0 : 1);
     float local = 1.0f;
     switch (currentState)
     {
@@ -534,37 +556,42 @@ Pipeline::Impl::Transition Pipeline::Impl::runCurrentState(PipelineState current
         break;
     }
     case State::MESH_REFINEMENT:
-        local = std::min(1.f, float(stateRunCount()) / float(MESH_REFINEMENT_MAX_ITERATIONS));
-        emit_progress(Pipeline::toString(currentState), local, true);
-        return t;
+        local = std::min(1.f, float(done) / float(MESH_REFINEMENT_MAX_ITERATIONS));
+        emit_progress(Pipeline::toString(currentState), local, !starting);
+        return;
     case State::INITIAL_GLOBAL_RELAX:
-        local = std::min(1.f, float(stateRunCount() + 1) / float(RELAX_MAX_ITERATIONS));
+        local = std::min(1.f, float(done) / float(RELAX_MAX_ITERATIONS));
         emit_progress("Optimizing camera poses (iter " + std::to_string(stateRunCount() + 1) + "/" +
                           std::to_string(RELAX_MAX_ITERATIONS + 1) + ")",
-                      local, true);
-        return t;
+                      local, !starting);
+        return;
     case State::CAMERA_PARAMETER_RELAX:
-        local = std::min(1.f, float(stateRunCount() + 1) / float(RELAX_MAX_ITERATIONS));
+        local = std::min(1.f, float(done) / float(RELAX_MAX_ITERATIONS));
         emit_progress("Optimizing camera parameters (iter " + std::to_string(stateRunCount() + 1) + "/" +
                           std::to_string(RELAX_MAX_ITERATIONS + 1) + ")",
-                      local, true);
-        return t;
+                      local, !starting);
+        return;
     case State::FINAL_GLOBAL_RELAX:
-        local = std::min(1.f, float(stateRunCount() + 1) / float(FINAL_RELAX_MAX_ITERATIONS));
+        local = std::min(1.f, float(done) / float(FINAL_RELAX_MAX_ITERATIONS));
         emit_progress("Final global relaxation (iter " + std::to_string(stateRunCount() + 1) + "/" +
                           std::to_string(FINAL_RELAX_MAX_ITERATIONS + 1) + ")",
-                      local, true);
-        return t;
+                      local, !starting);
+        return;
     case State::DENSE_MESH_RELAX:
-        local = std::min(1.f, float(stateRunCount() + 1) / float(MESH_REFINEMENT_MAX_ITERATIONS));
-        emit_progress("Dense mesh relaxation (iter " + std::to_string(stateRunCount() + 1) + ")", local, true);
-        return t;
+        local = std::min(1.f, float(done) / float(MESH_REFINEMENT_MAX_ITERATIONS));
+        emit_progress("Dense mesh relaxation (iter " + std::to_string(stateRunCount() + 1) + ")", local, !starting);
+        return;
     default:
         break;
     }
     emit_progress(Pipeline::toString(currentState), local);
+}
 
-    return t;
+void Pipeline::Impl::report_relax_groups()
+{
+    next_relaxed_ids = relax_stage->group_node_ids();
+    if (!next_relaxed_ids.empty())
+        report_progress(true);
 }
 
 void Pipeline::Impl::emit_progress(std::string activity, float local_fraction, bool surfaces_updated,
@@ -598,9 +625,12 @@ void Pipeline::Impl::emit_progress(std::string activity, float local_fraction, b
     StepCompletionInfo info{next_loaded_ids,    next_linked_ids,     next_relaxed_ids,
                             graph.size_nodes(), queue_size(),        current,
                             stateRunCount(),    std::move(activity), completed_weight + current_weight * local_fraction,
-                            local_fraction,     surfaces_updated,    std::move(tile_update)};
+                            local_fraction,     surfaces_updated,    std::move(tile_update),
+                            next_fixed_ids};
     std::lock_guard<std::mutex> guard(progress_mutex);
     step_callback(info);
+    next_relaxed_ids.clear();
+    next_fixed_ids.clear();
 }
 
 Pipeline::Impl::Transition Pipeline::Impl::initial_processing()
@@ -628,6 +658,11 @@ Pipeline::Impl::Transition Pipeline::Impl::initial_processing()
         link_stage->init(graph, imageGPSLocations, previous_loaded_ids);
         relax_stage->init(graph, previous_linked_ids, imageGPSLocations, false, true,
                           {Option::ORIENTATION, Option::TRIANGULATED_RAYS});
+        next_linked_ids = previous_loaded_ids;
+        next_relaxed_ids = relax_stage->group_node_ids();
+        next_fixed_ids = relax_stage->fixed_node_ids();
+        report_progress(true);
+        next_linked_ids.clear();
 
         const auto batch_start = std::chrono::steady_clock::now();
         const auto elapsed = [batch_start] {
@@ -659,7 +694,7 @@ Pipeline::Impl::Transition Pipeline::Impl::initial_processing()
 
         next_loaded_ids = load_stage->finalize(coordinate_system, graph, imageGPSLocations);
         next_linked_ids = link_stage->finalize(graph);
-        next_relaxed_ids = relax_stage->finalize(graph);
+        relax_stage->finalize(graph);
 
         for (const auto &s : relax_stage->getSurfaceModels())
         {
@@ -667,8 +702,13 @@ Pipeline::Impl::Transition Pipeline::Impl::initial_processing()
         }
     }
 
-    USM_DECISION_TABLE(Transition::REPEAT,
-                       USM_MAKE_DECISION(next_loaded_ids.size() == 0 && next_linked_ids.size() == 0, Transition::NEXT));
+    const bool queue_empty = [this] {
+        std::lock_guard<std::mutex> guard(queue_mutex);
+        return add_queue.empty();
+    }();
+    USM_DECISION_TABLE(
+        Transition::REPEAT,
+        USM_MAKE_DECISION(queue_empty && next_loaded_ids.size() == 0 && next_linked_ids.size() == 0, Transition::NEXT));
 }
 
 Pipeline::Impl::Transition Pipeline::Impl::initial_global_relax()
@@ -681,10 +721,11 @@ Pipeline::Impl::Transition Pipeline::Impl::initial_global_relax()
 
     relax_stage->init(graph, {}, imageGPSLocations, true, false, {Option::ORIENTATION, Option::GROUND_MESH});
 
+    report_relax_groups();
     fvec relax_funcs = relax_stage->get_runners(graph);
     run_parallel(relax_funcs, parallelism);
     spdlog::info("global relaxed all");
-    next_relaxed_ids = relax_stage->finalize(graph);
+    relax_stage->finalize(graph);
     surfaces = relax_stage->getSurfaceModels();
 
     USM_DECISION_TABLE(Transition::REPEAT,
@@ -736,9 +777,10 @@ Pipeline::Impl::Transition Pipeline::Impl::camera_parameter_relax()
     relax_stage->init(graph, {}, imageGPSLocations, true, false, options);
     relax_stage->trim_groups(1);
 
+    report_relax_groups();
     fvec relax_funcs = relax_stage->get_runners(graph);
     run_parallel(relax_funcs, parallelism);
-    next_relaxed_ids = relax_stage->finalize(graph);
+    relax_stage->finalize(graph);
     surfaces = relax_stage->getSurfaceModels();
 
     USM_DECISION_TABLE(Transition::REPEAT,
@@ -756,9 +798,10 @@ Pipeline::Impl::Transition Pipeline::Impl::final_global_relax()
     relax_stage->init(graph, {}, imageGPSLocations, true, false,
                       {Option::ORIENTATION, Option::POSITION, Option::GROUND_MESH});
 
+    report_relax_groups();
     fvec relax_funcs = relax_stage->get_runners(graph);
     run_parallel(relax_funcs, parallelism);
-    next_relaxed_ids = relax_stage->finalize(graph);
+    relax_stage->finalize(graph);
     surfaces = relax_stage->getSurfaceModels();
 
     USM_DECISION_TABLE(Transition::REPEAT,
@@ -816,9 +859,10 @@ Pipeline::Impl::Transition Pipeline::Impl::mesh_refinement()
     config.ground_mesh_grid_fraction = gridFraction;
     relax_stage->init(graph, {}, imageGPSLocations, true, false, config);
 
+    report_relax_groups();
     fvec relax_funcs = relax_stage->get_runners(graph);
     run_parallel(relax_funcs, parallelism);
-    next_relaxed_ids = relax_stage->finalize(graph);
+    relax_stage->finalize(graph);
     surfaces = relax_stage->getSurfaceModels();
 
     if (surfaces.empty())
