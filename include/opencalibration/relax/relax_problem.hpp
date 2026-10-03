@@ -134,15 +134,18 @@ class RelaxProblem
 
     void addDownwardsPrior(const RelaxOptionSet &options);
     void addGPSPositionPrior(const MeasurementGraph &graph, const RelaxOptionSet &options);
-    void addMeshFlatPrior();
-    void addMeshSmoothPrior();
+    using HeightSet = ankerl::unordered_dense::set<const double *>;
+    void addMeshFlatPrior(const HeightSet *only_touching = nullptr);
+    void addMeshSmoothPrior(const HeightSet *only_touching = nullptr);
     void addMeshPointCosts(const std::vector<MeshPointSample> &samples, double pointSigma);
     void addMeshBendPrior(double weight, const MeshTriangleSet &dataTriangles);
-    void addMeshAnchorPrior(const std::function<double(size_t node_id)> &weight);
+    void addMeshAnchorPrior(const std::function<double(size_t node_id)> &weight,
+                            const HeightSet *only_touching = nullptr);
 
     void trackRadialObservation(double *radial_data, size_t pixels_rows, size_t pixels_cols, double focal_length);
     void addMonotonicityCosts();
-    void keepPreviousHeightsWhereUnmeasured();
+    HeightSet measuredMeshHeights() const;
+    void keepPreviousHeightsWhereUnmeasured(const HeightSet &measured);
     void setRadialDistortionParameterization(double *radial_distortion, const RelaxOptionSet &options);
 
     ceres::Solver::Options _solver_options;

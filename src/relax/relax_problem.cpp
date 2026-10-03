@@ -254,12 +254,19 @@ void RelaxProblem::setupGroundMeshProblem(const MeasurementGraph &graph, std::ve
     }
 
     addGPSPositionPrior(graph, options);
-    addMeshFlatPrior();
-    addMeshSmoothPrior();
-    addMonotonicityCosts();
-
     if (meshOrigin == MeshOrigin::PREVIOUS_SURFACE)
-        keepPreviousHeightsWhereUnmeasured();
+    {
+        const HeightSet measured = measuredMeshHeights();
+        addMeshFlatPrior(&measured);
+        addMeshSmoothPrior(&measured);
+        keepPreviousHeightsWhereUnmeasured(measured);
+    }
+    else
+    {
+        addMeshFlatPrior();
+        addMeshSmoothPrior();
+    }
+    addMonotonicityCosts();
 }
 
 void RelaxProblem::setup3dPointProblem(const MeasurementGraph &graph, std::vector<opencalibration::NodePose> &nodes,
@@ -1552,16 +1559,20 @@ RelaxProblem::MeshOrigin RelaxProblem::initializeGroundMesh(const std::vector<su
     return MeshOrigin::NEWLY_BUILT;
 }
 
-void RelaxProblem::keepPreviousHeightsWhereUnmeasured()
+RelaxProblem::HeightSet RelaxProblem::measuredMeshHeights() const
 {
-    ankerl::unordered_dense::set<const double *> measuredParameters;
+    HeightSet measuredParameters;
     std::vector<double *> residualParameters;
     for (const auto &block : _ray_residuals.blocks)
     {
         _problem->GetParameterBlocksForResidualBlock(block.id, &residualParameters);
         measuredParameters.insert(residualParameters.begin(), residualParameters.end());
     }
+    return measuredParameters;
+}
 
+void RelaxProblem::keepPreviousHeightsWhereUnmeasured(const HeightSet &measuredParameters)
+{
     size_t unmeasuredHeights = 0;
     for (auto iter = _mesh.nodebegin(); iter != _mesh.nodeend(); ++iter)
     {
@@ -1616,7 +1627,7 @@ void RelaxProblem::addGPSPositionPrior(const MeasurementGraph &graph, const Rela
     }
 }
 
-void RelaxProblem::addMeshFlatPrior()
+void RelaxProblem::addMeshFlatPrior(const HeightSet *only_touching)
 {
     for (auto iter = _mesh.edgebegin(); iter != _mesh.edgeend(); ++iter)
     {
@@ -1628,19 +1639,24 @@ void RelaxProblem::addMeshFlatPrior()
 
         double *h1 = &sourceNode->payload.location.z();
         double *h2 = &destNode->payload.location.z();
+        if (only_touching != nullptr && !only_touching->contains(h1) && !only_touching->contains(h2))
+            continue;
 
         _problem->AddResidualBlock(newAutoDiffDifferenceCost(1e-4 * _prior_scale), nullptr, h1, h2);
     }
 
     // Anchor to initial z to prevent gauge freedom drift
-    addMeshAnchorPrior([this](size_t) { return 1e-5 * _prior_scale; });
+    addMeshAnchorPrior([this](size_t) { return 1e-5 * _prior_scale; }, only_touching);
 }
 
-void RelaxProblem::addMeshAnchorPrior(const std::function<double(size_t node_id)> &weight)
+void RelaxProblem::addMeshAnchorPrior(const std::function<double(size_t node_id)> &weight,
+                                      const HeightSet *only_touching)
 {
     for (auto iter = _mesh.nodebegin(); iter != _mesh.nodeend(); ++iter)
     {
         double *h = &iter->second.payload.location.z();
+        if (only_touching != nullptr && !only_touching->contains(h))
+            continue;
         _problem->AddResidualBlock(newAutoDiffValuePrior(*h, weight(iter->first)), nullptr, h);
     }
 }
@@ -1672,7 +1688,7 @@ void RelaxProblem::addMeshBendPrior(double weight, const MeshTriangleSet &dataTr
     }
 }
 
-void RelaxProblem::addMeshSmoothPrior()
+void RelaxProblem::addMeshSmoothPrior(const HeightSet *only_touching)
 {
     for (auto iter = _mesh.edgebegin(); iter != _mesh.edgeend(); ++iter)
     {
@@ -1699,6 +1715,9 @@ void RelaxProblem::addMeshSmoothPrior()
         double *zB = &nodeB->payload.location.z();
         double *zC = &nodeC->payload.location.z();
         double *zD = &nodeD->payload.location.z();
+        if (only_touching != nullptr && !only_touching->contains(zA) && !only_touching->contains(zB) &&
+            !only_touching->contains(zC) && !only_touching->contains(zD))
+            continue;
 
         _problem->AddResidualBlock(newAutoDiffAdjacentTriangleNormalCost(xyA, xyB, xyC, xyD, 1e-4 * _prior_scale),
                                    nullptr, zA, zB, zC, zD);
