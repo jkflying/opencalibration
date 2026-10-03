@@ -1577,19 +1577,20 @@ void generateTexturedOBJ(const std::vector<surface_model> &surfaces, const std::
         return;
     }
     int rgb_bands_in_bgr_order[3] = {3, 2, 1};
-    cv::Mat texture(img_height, img_width, CV_8UC3);
-    if (GDALDatasetRasterIO(dataset.get(), GF_Read, 0, 0, img_width, img_height, texture.data, img_width, img_height,
-                            GDT_Byte, 3, rgb_bands_in_bgr_order, 3, static_cast<int>(texture.step), 1) != CE_None)
+    constexpr int MAX_TEXTURE_DIM = 16384;
+    const double tex_scale = std::min(1.0, static_cast<double>(MAX_TEXTURE_DIM) / std::max(img_width, img_height));
+    const int tex_width = std::max(1, static_cast<int>(std::lround(img_width * tex_scale)));
+    const int tex_height = std::max(1, static_cast<int>(std::lround(img_height * tex_scale)));
+    cv::Mat texture(tex_height, tex_width, CV_8UC3);
+    GDALRasterIOExtraArg extra_arg;
+    INIT_RASTERIO_EXTRA_ARG(extra_arg);
+    extra_arg.eResampleAlg = GRIORA_Average;
+    if (GDALDatasetRasterIOEx(dataset.get(), GF_Read, 0, 0, img_width, img_height, texture.data, tex_width, tex_height,
+                              GDT_Byte, 3, rgb_bands_in_bgr_order, 3, static_cast<GSpacing>(texture.step), 1,
+                              &extra_arg) != CE_None)
     {
         spdlog::error("Failed to read texture from {}", geotiff_path);
         return;
-    }
-    constexpr int MAX_JPEG_DIMENSION = 65500;
-    const int largest_dimension = std::max(img_width, img_height);
-    if (largest_dimension > MAX_JPEG_DIMENSION)
-    {
-        const double scale = static_cast<double>(MAX_JPEG_DIMENSION) / largest_dimension;
-        cv::resize(texture, texture, cv::Size(), scale, scale, cv::INTER_AREA);
     }
     if (!cv::imwrite(jpg_path, texture))
     {
