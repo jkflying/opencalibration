@@ -1,11 +1,13 @@
 #include "relax_stage.hpp"
 
-#include <opencalibration/geometry/spectral_cluster.hpp>
+#include <opencalibration/geometry/KMeans.hpp>
 #include <opencalibration/performance/performance.hpp>
 #include <opencalibration/relax/relax_group.hpp>
 #include <opencalibration/surface/refine_mesh.hpp>
 
 #include <spdlog/spdlog.h>
+
+#include <algorithm>
 
 namespace
 {
@@ -18,7 +20,7 @@ std::array<double, 3> to_array(const Eigen::Vector3d &v)
 namespace opencalibration
 {
 
-RelaxStage::RelaxStage() : _k_groups(new SpectralClustering<size_t, 3>(0))
+RelaxStage::RelaxStage()
 {
 }
 RelaxStage::~RelaxStage()
@@ -56,44 +58,31 @@ void RelaxStage::init(const MeasurementGraph &graph, const std::vector<size_t> &
             ? 1
             : std::max<size_t>(1, static_cast<size_t>(std::floor(actual_node_ids.size() / optimal_cluster_size)));
 
-    _k_groups->reset(num_groups);
+    KMeans<size_t, 3> k_groups(num_groups);
+
+    if (!actual_node_ids.empty())
+    {
+        const size_t first_seed_node = (_init_count++ * 7919) % actual_node_ids.size();
+        std::rotate(actual_node_ids.begin(), actual_node_ids.begin() + first_seed_node, actual_node_ids.end());
+    }
 
     for (size_t node_id : actual_node_ids)
     {
         auto location = to_array(graph.getNode(node_id)->payload.position);
-        _k_groups->add(location, node_id);
+        k_groups.add(location, node_id);
     }
 
     if (num_groups > 1)
     {
         spdlog::info("Splitting relax into {} group(s)", num_groups);
-
-        for (size_t node_id : actual_node_ids)
-        {
-            _k_groups->addLink(node_id, node_id, 0.1);
-            for (size_t edge_id : graph.getNode(node_id)->getEdges())
-            {
-                const auto *edge = graph.getEdge(edge_id);
-                _k_groups->addLink(edge->getSource(), edge->getDest(), 1);
-            }
-        }
-        if (!_k_groups->spectralize())
-        {
-            spdlog::info("Spectralize failed");
-            _k_groups->fallback();
-        }
         for (int i = 0; i < 10; i++) // 10 iterations should be enough for anybody
         {
-            _k_groups->iterate();
+            k_groups.iterate();
         }
-    }
-    else
-    {
-        _k_groups->fallback();
     }
 
     size_t graph_connection_depth = num_groups > 1 ? 0 : 2;
-    const auto &cluster = _k_groups->getClusters();
+    const auto &cluster = k_groups.getClusters();
 
     // k-means were smallest to biggest, but we want to process the big ones first to improve load balancing on really
     // large problem

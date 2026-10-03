@@ -152,8 +152,6 @@ install(DIRECTORY external/unordered_dense/include/ankerl
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(FILES external/usm/include/usm.hpp
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
-install(DIRECTORY external/spectra/include/Spectra
-    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(DIRECTORY external/jk-tree/include/jk
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 

@@ -1,6 +1,3 @@
 [submodule "test/test_data"]
 	path = test/test_data
 	url = git@github.com:jkflying/opencalibration_testdata.git
-[submodule "external/spectra"]
-	path = external/spectra
-	url = https://github.com/yixuan/spectra.git

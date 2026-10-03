@@ -3,7 +3,6 @@
 
 #include <opencalibration/geometry/KMeans.hpp>
 #include <opencalibration/geometry/intersection.hpp>
-#include <opencalibration/geometry/spectral_cluster.hpp>
 
 using namespace opencalibration;
 
@@ -242,121 +241,6 @@ TEST(kmeans, cube_split)
     for (const auto &c : clusters)
     {
         EXPECT_EQ(c.points.size(), 125);
-    }
-}
-
-TEST(spectral, no_edges_no_spectralize)
-{
-    opencalibration::SpectralClustering<size_t, 2> spectral(4);
-    for (size_t i = 0; i < 5; i++)
-        for (size_t j = 0; j < 10; j++)
-            spectral.add({(double)i, (double)j}, 10 * i + j);
-
-    EXPECT_FALSE(spectral.spectralize());
-
-    spectral.fallback();
-
-    for (int i = 0; i < 12; i++)
-    {
-        spectral.iterate();
-    }
-}
-
-TEST(spectral, edges_spectralize)
-{
-    // GIVEN: a 5x10 grid of nodes with edges to their neighbours
-    opencalibration::SpectralClustering<int, 2> spectral(4);
-    for (int i = 0; i < 5; i++)
-    {
-        for (int j = 0; j < 10; j++)
-        {
-            int id = 10 * i + j;
-            spectral.add({(double)i, (double)j}, id);
-            spectral.addLink(id, id + 1, 2);
-            spectral.addLink(id, id + 9, 1);
-            spectral.addLink(id, id + 10, 2);
-            spectral.addLink(id, id + 11, 1);
-        }
-    }
-
-    // WHEN: we spectralize and iterate
-    EXPECT_TRUE(spectral.spectralize());
-
-    for (int i = 0; i < 12; i++)
-    {
-        spectral.iterate();
-    }
-
-    // THEN: it completes without error
-}
-
-TEST(spectral, large_survey_grid_spectralize)
-{
-    // GIVEN: a survey-sized 40x22 grid of images, each linked to itself and its overlapping neighbours
-    opencalibration::SpectralClustering<int, 3> spectral(17);
-    const int rows = 40, cols = 22;
-    for (int i = 0; i < rows; i++)
-    {
-        for (int j = 0; j < cols; j++)
-        {
-            const int id = cols * i + j;
-            spectral.add({(double)i, (double)j, 0.0}, id);
-            spectral.addLink(id, id, 0.1);
-            for (int di = 0; di <= 1; di++)
-                for (int dj = -1; dj <= 1; dj++)
-                    if ((di > 0 || dj > 0) && i + di < rows && j + dj >= 0 && j + dj < cols)
-                        spectral.addLink(id, cols * (i + di) + j + dj, 1);
-        }
-    }
-
-    // WHEN: we spectralize
-    // THEN: the eigen solver converges
-    EXPECT_TRUE(spectral.spectralize());
-}
-
-TEST(spectral, disconnected_subgraph_spectralize)
-{
-    // GIVEN: two disconnected cliques with no edges between them.
-    opencalibration::SpectralClustering<int, 2> spectral(2);
-
-    for (int i = 0; i < 8; i++)
-    {
-        spectral.add({(double)i, 0.0}, i);
-        for (int j = 0; j < i; j++)
-            spectral.addLink(j, i, 1.0);
-    }
-    for (int i = 8; i < 16; i++)
-    {
-        spectral.add({(double)(i - 8), 10.0}, i);
-        for (int j = 8; j < i; j++)
-            spectral.addLink(j, i, 1.0);
-    }
-
-    // WHEN: we spectralize and iterate
-    EXPECT_TRUE(spectral.spectralize());
-
-    for (int i = 0; i < 12; i++)
-    {
-        spectral.iterate();
-    }
-
-    // THEN: each cluster contains nodes from only one component
-    const auto &clusters = spectral.getClusters();
-    ASSERT_EQ(clusters.size(), 2u);
-    EXPECT_EQ(clusters[0].points.size(), 8u);
-    EXPECT_EQ(clusters[1].points.size(), 8u);
-
-    for (const auto &cluster : clusters)
-    {
-        bool all_a = true, all_b = true;
-        for (const auto &point : cluster.points)
-        {
-            if (point.second >= 8)
-                all_a = false;
-            if (point.second < 8)
-                all_b = false;
-        }
-        EXPECT_TRUE(all_a || all_b) << "cluster contains nodes from both components";
     }
 }
 

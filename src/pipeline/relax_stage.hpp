@@ -14,8 +14,6 @@ namespace opencalibration
 {
 class RelaxGroup;
 
-template <typename, size_t> class SpectralClustering;
-
 class RelaxStage
 {
   public:
@@ -38,7 +36,7 @@ class RelaxStage
     std::vector<RelaxGroup> _groups;
     std::vector<surface_model> _surface_models, _previous_surface_models;
 
-    std::unique_ptr<SpectralClustering<size_t, 3>> _k_groups;
+    size_t _init_count = 0;
 };
 
 } // namespace opencalibration
