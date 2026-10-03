@@ -22,6 +22,8 @@ class RelaxGroup
 
     std::vector<size_t> finalize(MeasurementGraph &graph);
 
+    bool modelChanged() const;
+
   private:
     bool _incremental_relax;
     std::vector<NodePose> _local_poses;
@@ -37,5 +39,7 @@ class RelaxGroup
 
     RelaxConfig _config;
 };
+
+void refitEdgeInliers(MeasurementGraph &graph);
 
 } // namespace opencalibration

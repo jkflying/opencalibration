@@ -130,11 +130,15 @@ std::vector<std::vector<size_t>> RelaxStage::finalize(MeasurementGraph &graph)
 {
     PerformanceMeasure p("Relax finalize");
     std::vector<std::vector<size_t>> optimized_ids;
+    bool model_changed = false;
     for (auto &g : _groups)
     {
         optimized_ids.emplace_back(g.finalize(graph));
+        model_changed = model_changed || g.modelChanged();
     }
     _groups.clear();
+    if (model_changed)
+        refitEdgeInliers(graph);
 
     // Merge surface models from all groups if there are multiple
     if (_surface_models.size() > 1)

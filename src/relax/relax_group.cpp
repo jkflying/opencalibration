@@ -5,8 +5,11 @@
 #include <opencalibration/performance/performance.hpp>
 #include <opencalibration/relax/relax.hpp>
 #include <opencalibration/types/correspondence.hpp>
+#include <opencalibration/types/hilbert.hpp>
 
 #include <spdlog/spdlog.h>
+
+#include <chrono>
 
 namespace opencalibration
 {
@@ -133,12 +136,17 @@ surface_model opencalibration::RelaxGroup::run(const MeasurementGraph &graph,
     return relax(graph, _local_poses, _camera_models, _edges_to_optimize, _config, previousSurfaces);
 }
 
+bool RelaxGroup::modelChanged() const
+{
+    return _config.options.hasAny({Option::FOCAL_LENGTH, Option::PRINCIPAL_POINT, Option::LENS_DISTORTIONS_RADIAL,
+                                   Option::LENS_DISTORTIONS_TANGENTIAL});
+}
+
 std::vector<size_t> RelaxGroup::finalize(MeasurementGraph &graph)
 {
     std::vector<size_t> optimized_ids;
     optimized_ids.reserve(_local_poses.size());
-    bool model_changed = _config.options.hasAny({Option::FOCAL_LENGTH, Option::PRINCIPAL_POINT,
-                                                 Option::LENS_DISTORTIONS_RADIAL, Option::LENS_DISTORTIONS_TANGENTIAL});
+    const bool model_changed = modelChanged();
     for (const auto &pose : _local_poses)
     {
         auto *node = graph.getNode(pose.node_id);
@@ -151,18 +159,69 @@ std::vector<size_t> RelaxGroup::finalize(MeasurementGraph &graph)
         optimized_ids.push_back(pose.node_id);
     }
 
-    if (model_changed)
+    _local_poses.clear();
+    return optimized_ids;
+}
+
+void refitEdgeInliers(MeasurementGraph &graph)
+{
+    PerformanceMeasure p("Relax refit edge inliers");
+    const auto start = std::chrono::steady_clock::now();
+
+    std::vector<MeasurementGraph::Edge *> edges;
+    std::vector<Eigen::Vector2d> source_positions;
+    Eigen::AlignedBox2d bounds;
+    edges.reserve(graph.size_edges());
+    source_positions.reserve(graph.size_edges());
+    for (auto eiter = graph.edgebegin(); eiter != graph.edgeend(); ++eiter)
     {
-        // recalculate all of the edge inliers based on camera models changing. Just iterate from current inliers,
-        // recalculate model.
-        for (auto eiter = graph.edgebegin(); eiter != graph.edgeend(); ++eiter)
+        edges.push_back(&eiter->second);
+        source_positions.push_back(graph.getNode(eiter->second.getSource())->payload.position.head<2>());
+        bounds.extend(source_positions.back());
+    }
+    const std::vector<size_t> order = hilbertOrder(source_positions, bounds);
+
+    ankerl::unordered_dense::map<size_t, size_t> edges_left;
+    for (const auto *edge : edges)
+    {
+        edges_left[edge->getSource()]++;
+        edges_left[edge->getDest()]++;
+    }
+
+    ankerl::unordered_dense::map<size_t, std::vector<feature_2d>> window;
+    size_t loads = 0, peak = 0;
+    auto loadIntoWindow = [&](size_t node_id) {
+        if (!window.contains(node_id))
         {
-            auto &edge = eiter->second;
+            window.emplace(node_id, graph.getNode(node_id)->payload.features.load());
+            loads++;
+            peak = std::max(peak, window.size());
+        }
+    };
+    auto dropAfterLastEdge = [&](size_t node_id) {
+        if (--edges_left[node_id] == 0)
+            window.erase(node_id);
+    };
+
+    constexpr size_t edges_per_block = 256;
+    for (size_t block_begin = 0; block_begin < order.size(); block_begin += edges_per_block)
+    {
+        const size_t block_end = std::min(order.size(), block_begin + edges_per_block);
+        for (size_t i = block_begin; i < block_end; i++)
+        {
+            loadIntoWindow(edges[order[i]]->getSource());
+            loadIntoWindow(edges[order[i]]->getDest());
+        }
+
+#pragma omp parallel for schedule(dynamic)
+        for (size_t i = block_begin; i < block_end; i++)
+        {
+            auto &edge = *edges[order[i]];
             const auto *source = graph.getNode(edge.getSource());
             const auto *dest = graph.getNode(edge.getDest());
+            const auto &source_features = window.at(edge.getSource());
+            const auto &dest_features = window.at(edge.getDest());
 
-            const std::vector<feature_2d> source_features = source->payload.features.load();
-            const std::vector<feature_2d> dest_features = dest->payload.features.load();
             const std::vector<correspondence> correspondences = distort_keypoints(
                 source_features, dest_features, edge.payload.matches, *source->payload.model, *dest->payload.model);
 
@@ -175,7 +234,7 @@ std::vector<size_t> RelaxGroup::finalize(MeasurementGraph &graph)
 
             // do a sort of 'maximum likelihood' based on the previous inliers
             homography_model h;
-            for (int i = 0; i < 3; i++)
+            for (int iter = 0; iter < 3; iter++)
             {
                 h.fitInliers(correspondences, inliers);
                 h.evaluate(correspondences, inliers);
@@ -193,10 +252,17 @@ std::vector<size_t> RelaxGroup::finalize(MeasurementGraph &graph)
                                 edge.payload.inlier_matches);
             }
         }
+
+        for (size_t i = block_begin; i < block_end; i++)
+        {
+            dropAfterLastEdge(edges[order[i]]->getSource());
+            dropAfterLastEdge(edges[order[i]]->getDest());
+        }
     }
 
-    _local_poses.clear();
-    return optimized_ids;
+    spdlog::info("Refit inliers of {} edges: {} feature loads for {} images, peak {} held, {:.2f}s", edges.size(),
+                 loads, edges_left.size(), peak,
+                 std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
 }
 
 } // namespace opencalibration
