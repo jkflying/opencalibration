@@ -750,9 +750,7 @@ Pipeline::Impl::Transition Pipeline::Impl::final_global_relax()
         USM_DECISION_TABLE(Transition::NEXT, USM_MAKE_DECISION(skip_final_global_relax, Transition::NEXT));
     }
 
-    const bool lastIteration = stateRunCount() >= FINAL_RELAX_MAX_ITERATIONS;
-
-    relax_stage->init(graph, {}, imageGPSLocations, true, lastIteration,
+    relax_stage->init(graph, {}, imageGPSLocations, true, false,
                       {Option::ORIENTATION, Option::POSITION, Option::GROUND_MESH});
 
     fvec relax_funcs = relax_stage->get_runners(graph);
