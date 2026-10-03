@@ -307,7 +307,7 @@ TEST(cost_functions, triangulated_reprojection_fixed_position_matches_full_pose)
         poses[i] = {q.x(), q.y(), q.z(), q.w(), cams[i].x(), cams[i].y(), cams[i].z()};
     }
     std::unique_ptr<ceres::CostFunction> full(newAutoDiffTriangulatedReprojectionCost(rays));
-    std::unique_ptr<ceres::CostFunction> fixed(newAutoDiffTriangulatedReprojectionCost(rays, cams));
+    std::unique_ptr<ceres::CostFunction> fixed(newAutoDiffTriangulatedReprojectionCost_FixedPositions(rays, cams));
     EXPECT_EQ(full->parameter_block_sizes(), std::vector<int32_t>(3, 7));
     EXPECT_EQ(fixed->parameter_block_sizes(), std::vector<int32_t>(3, 4));
 
@@ -389,7 +389,7 @@ TEST(cost_functions, triangulated_reprojection_residuals_scale_with_inverse_sigm
         poses[i] = {q.x(), q.y(), q.z(), q.w(), cams[i].x(), cams[i].y(), cams[i].z()};
     }
     std::unique_ptr<ceres::CostFunction> unit(newAutoDiffTriangulatedReprojectionCost(rays));
-    std::unique_ptr<ceres::CostFunction> whitened(newAutoDiffTriangulatedReprojectionCost(rays, {}, {2, 3, 5}));
+    std::unique_ptr<ceres::CostFunction> whitened(newAutoDiffTriangulatedReprojectionCost(rays, {2, 3, 5}));
 
     const std::array<const double *, 3> pose_ptrs{poses[0].data(), poses[1].data(), poses[2].data()};
     Eigen::Matrix<double, 9, 1> unit_res, whitened_res;

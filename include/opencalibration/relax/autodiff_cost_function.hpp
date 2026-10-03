@@ -55,8 +55,11 @@ ceres::CostFunction *newAutoDiffPlaneIntersectionAngleCost_NRay_FocalRadial_Fixe
     const InverseDifferentiableCameraModel<double> &model, const std::vector<Eigen::Vector3d> &camera_positions);
 
 ceres::CostFunction *newAutoDiffTriangulatedReprojectionCost(const std::vector<Eigen::Vector3d> &camera_rays,
-                                                             const std::vector<Eigen::Vector3d> &camera_positions = {},
                                                              const std::vector<double> &inverse_sigmas = {});
+
+ceres::CostFunction *newAutoDiffTriangulatedReprojectionCost_FixedPositions(
+    const std::vector<Eigen::Vector3d> &camera_rays, const std::vector<Eigen::Vector3d> &camera_positions,
+    const std::vector<double> &inverse_sigmas = {});
 
 ceres::CostFunction *newAutoDiffPixelErrorCost_Orientation(const CameraModel &camera_model,
                                                            const Eigen::Vector2d &camera_pixel);
@@ -73,7 +76,9 @@ ceres::CostFunction *newAutoDiffDifferenceCost(double weight);
 
 ceres::CostFunction *newAutoDiffValuePrior(double target, double weight);
 
-ceres::CostFunction *newAutoDiffPointsDownwardsPrior(double weight, bool orientation_only = false);
+ceres::CostFunction *newAutoDiffPointsDownwardsPrior(double weight);
+
+ceres::CostFunction *newAutoDiffPointsDownwardsPrior_FixedPosition(double weight);
 
 ceres::CostFunction *newAutoDiffGPSPositionPrior(const Eigen::Vector3d &gps_position, double horizontal_weight,
                                                  double vertical_weight);

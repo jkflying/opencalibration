@@ -40,6 +40,42 @@ template <int N> std::array<double, N> unitSigmas()
     return a;
 }
 
+template <int N, typename T> std::array<Eigen::Matrix<T, 3, 1>, N> posePositions(const T *const *poses)
+{
+    std::array<Eigen::Matrix<T, 3, 1>, N> positions;
+    for (int i = 0; i < N; i++)
+        positions[i] = Eigen::Map<const Eigen::Matrix<T, 3, 1>>(poses[i] + 4);
+    return positions;
+}
+
+template <typename T, size_t N>
+std::array<Eigen::Matrix<T, 3, 1>, N> castPositions(const std::array<Eigen::Vector3d, N> &positions)
+{
+    std::array<Eigen::Matrix<T, 3, 1>, N> cast;
+    for (size_t i = 0; i < N; i++)
+        cast[i] = positions[i].template cast<T>();
+    return cast;
+}
+
+template <typename T> T pointsDownwardsResidual(const T *rotation, double weight)
+{
+    using Vector3T = Eigen::Matrix<T, 3, 1>;
+
+    const Eigen::Map<const Eigen::Quaternion<T>> rotation_em(rotation);
+
+    const Vector3T cam_center = Eigen::Vector3d(0, 0, 1).cast<T>();
+    const Vector3T down = Eigen::Vector3d(0, 0, -1).cast<T>();
+
+    Vector3T rotated_cam_center = rotation_em * cam_center;
+
+    constexpr double MAX_TILT = M_PI / 4, BEYOND_MAX_TILT_SCALE = 1000;
+    const T angle = angleBetweenUnitVectors<T>(rotated_cam_center, down);
+    T residual = T(weight) * angle;
+    if (angle > T(MAX_TILT))
+        residual += T(weight * BEYOND_MAX_TILT_SCALE) * (angle - T(MAX_TILT));
+    return residual;
+}
+
 struct PointsDownwardsPrior
 {
     static const int NUM_RESIDUALS = 1;
@@ -51,22 +87,26 @@ struct PointsDownwardsPrior
 
     template <typename T> bool operator()(const T *pose1, T *residuals) const
     {
-        using QuaterionT = Eigen::Quaternion<T>;
-        using Vector3T = Eigen::Matrix<T, 3, 1>;
-        using QuaterionTCM = Eigen::Map<const QuaterionT>;
+        residuals[0] = pointsDownwardsResidual(pose1, _weight);
+        return true;
+    }
 
-        const QuaterionTCM rotation_em(pose1);
+  private:
+    double _weight;
+};
 
-        const Vector3T cam_center = Eigen::Vector3d(0, 0, 1).cast<T>();
-        const Vector3T down = Eigen::Vector3d(0, 0, -1).cast<T>();
+struct PointsDownwardsPrior_FixedPosition
+{
+    static const int NUM_RESIDUALS = 1;
+    static const int NUM_PARAMETERS_1 = ORIENTATION_PARAMETERS;
 
-        Vector3T rotated_cam_center = rotation_em * cam_center;
+    PointsDownwardsPrior_FixedPosition(double weight) : _weight(weight)
+    {
+    }
 
-        constexpr double MAX_TILT = M_PI / 4, BEYOND_MAX_TILT_SCALE = 1000;
-        const T angle = angleBetweenUnitVectors<T>(rotated_cam_center, down);
-        residuals[0] = T(_weight) * angle;
-        if (angle > T(MAX_TILT))
-            residuals[0] += T(_weight * BEYOND_MAX_TILT_SCALE) * (angle - T(MAX_TILT));
+    template <typename T> bool operator()(const T *rotation, T *residuals) const
+    {
+        residuals[0] = pointsDownwardsResidual(rotation, _weight);
         return true;
     }
 
@@ -416,38 +456,59 @@ struct MultiDecomposedRotationCost_FixedPositions
     Eigen::Vector3d translation;
 };
 
-template <int N> struct TriangulatedReprojectionCost
+template <typename Cost, int N> struct PoseBlocks
+{
+    template <typename T> bool operator()(const T *p0, const T *p1, T *res) const
+    {
+        static_assert(N == 2);
+        const T *poses[]{p0, p1};
+        return static_cast<const Cost &>(*this).eval(poses, res);
+    }
+
+    template <typename T> bool operator()(const T *p0, const T *p1, const T *p2, T *res) const
+    {
+        static_assert(N == 3);
+        const T *poses[]{p0, p1, p2};
+        return static_cast<const Cost &>(*this).eval(poses, res);
+    }
+
+    template <typename T> bool operator()(const T *p0, const T *p1, const T *p2, const T *p3, T *res) const
+    {
+        static_assert(N == 4);
+        const T *poses[]{p0, p1, p2, p3};
+        return static_cast<const Cost &>(*this).eval(poses, res);
+    }
+
+    template <typename T> bool operator()(const T *p0, const T *p1, const T *p2, const T *p3, const T *p4, T *res) const
+    {
+        static_assert(N == 5);
+        const T *poses[]{p0, p1, p2, p3, p4};
+        return static_cast<const Cost &>(*this).eval(poses, res);
+    }
+};
+
+template <int N> struct TriangulatedReprojectionResiduals
 {
     static_assert(N >= 2 && N <= 5, "N must be between 2 and 5");
     static const int NUM_RESIDUALS = N * 3;
 
-    TriangulatedReprojectionCost(const std::array<Eigen::Vector3d, N> &camera_rays,
-                                 const std::array<double, N> &inverse_sigmas = unitSigmas<N>())
+    TriangulatedReprojectionResiduals(const std::array<Eigen::Vector3d, N> &camera_rays,
+                                      const std::array<double, N> &inverse_sigmas)
         : camera_ray(camera_rays), inverse_sigma(inverse_sigmas)
     {
     }
 
-    TriangulatedReprojectionCost(const std::array<Eigen::Vector3d, N> &camera_rays,
-                                 const std::array<Eigen::Vector3d, N> &camera_positions,
-                                 const std::array<double, N> &inverse_sigmas = unitSigmas<N>())
-        : camera_ray(camera_rays), inverse_sigma(inverse_sigmas), fixed_position(camera_positions), position_fixed(true)
-    {
-    }
-
-    template <typename T> bool eval(const T *const *poses, T *residuals) const
+    template <typename T>
+    bool computeResiduals(const T *const *rotations, const Eigen::Matrix<T, 3, 1> *positions, T *residuals) const
     {
         using Vector3T = Eigen::Matrix<T, 3, 1>;
         using Matrix3T = Eigen::Matrix<T, 3, 3>;
         using QuaternionTCM = Eigen::Map<const Eigen::Quaternion<T>>;
-        using Vector3TCM = Eigen::Map<const Vector3T>;
         using Vector3TM = Eigen::Map<Vector3T>;
 
-        std::array<Vector3T, N> dirs, positions;
+        std::array<Vector3T, N> dirs;
         for (int i = 0; i < N; i++)
-        {
-            dirs[i] = (QuaternionTCM(poses[i]) * camera_ray[i].template cast<T>()).normalized();
-            positions[i] = position_fixed ? fixed_position[i].template cast<T>() : Vector3T(Vector3TCM(poses[i] + 4));
-        }
+            dirs[i] = (QuaternionTCM(rotations[i]) * camera_ray[i].template cast<T>()).normalized();
 
         const auto triangulate = [&](const std::array<T, N> &weights, Vector3T &point) {
             Matrix3T normal_matrix = Matrix3T::Zero();
@@ -496,7 +557,7 @@ template <int N> struct TriangulatedReprojectionCost
 
         for (int i = 0; i < N; i++)
         {
-            const Vector3T p_cam = QuaternionTCM(poses[i]).inverse() * (point - positions[i]);
+            const Vector3T p_cam = QuaternionTCM(rotations[i]).inverse() * (point - positions[i]);
             const Vector3T chord = p_cam.normalized() - camera_ray[i].template cast<T>().normalized();
             Vector3TM(residuals + i * 3) = chordScaledToAngle(chord) * T(inverse_sigma[i]);
         }
@@ -513,38 +574,51 @@ template <int N> struct TriangulatedReprojectionCost
         return chord * scale;
     }
 
-    template <typename T> bool operator()(const T *p0, const T *p1, T *res) const
-    {
-        static_assert(N == 2);
-        const T *poses[]{p0, p1};
-        return eval(poses, res);
-    }
-
-    template <typename T> bool operator()(const T *p0, const T *p1, const T *p2, T *res) const
-    {
-        static_assert(N == 3);
-        const T *poses[]{p0, p1, p2};
-        return eval(poses, res);
-    }
-
-    template <typename T> bool operator()(const T *p0, const T *p1, const T *p2, const T *p3, T *res) const
-    {
-        static_assert(N == 4);
-        const T *poses[]{p0, p1, p2, p3};
-        return eval(poses, res);
-    }
-
-    template <typename T> bool operator()(const T *p0, const T *p1, const T *p2, const T *p3, const T *p4, T *res) const
-    {
-        static_assert(N == 5);
-        const T *poses[]{p0, p1, p2, p3, p4};
-        return eval(poses, res);
-    }
-
     const std::array<Eigen::Vector3d, N> camera_ray;
     const std::array<double, N> inverse_sigma;
-    const std::array<Eigen::Vector3d, N> fixed_position{};
-    const bool position_fixed = false;
+};
+
+template <int N> struct TriangulatedReprojectionCost : PoseBlocks<TriangulatedReprojectionCost<N>, N>
+{
+    static const int NUM_RESIDUALS = TriangulatedReprojectionResiduals<N>::NUM_RESIDUALS;
+
+    TriangulatedReprojectionCost(const std::array<Eigen::Vector3d, N> &camera_rays,
+                                 const std::array<double, N> &inverse_sigmas = unitSigmas<N>())
+        : _impl(camera_rays, inverse_sigmas)
+    {
+    }
+
+    template <typename T> bool eval(const T *const *poses, T *residuals) const
+    {
+        const auto positions = posePositions<N>(poses);
+        return _impl.computeResiduals(poses, positions.data(), residuals);
+    }
+
+  private:
+    TriangulatedReprojectionResiduals<N> _impl;
+};
+
+template <int N>
+struct TriangulatedReprojectionCost_FixedPositions : PoseBlocks<TriangulatedReprojectionCost_FixedPositions<N>, N>
+{
+    static const int NUM_RESIDUALS = TriangulatedReprojectionResiduals<N>::NUM_RESIDUALS;
+
+    TriangulatedReprojectionCost_FixedPositions(const std::array<Eigen::Vector3d, N> &camera_rays,
+                                                const std::array<Eigen::Vector3d, N> &camera_positions,
+                                                const std::array<double, N> &inverse_sigmas = unitSigmas<N>())
+        : _impl(camera_rays, inverse_sigmas), _positions(camera_positions)
+    {
+    }
+
+    template <typename T> bool eval(const T *const *rotations, T *residuals) const
+    {
+        const auto positions = castPositions<T>(_positions);
+        return _impl.computeResiduals(rotations, positions.data(), residuals);
+    }
+
+  private:
+    TriangulatedReprojectionResiduals<N> _impl;
+    std::array<Eigen::Vector3d, N> _positions;
 };
 
 template <typename T>
@@ -680,23 +754,6 @@ struct PixelErrorCost_OrientationFocalRadialTangential
     const CameraModel &model;
     const Eigen::Vector2d pixel; // unique to this measurement, keep a local copy to avoid cache thrashing
 };
-
-template <int N, typename T> std::array<Eigen::Matrix<T, 3, 1>, N> posePositions(const T *const *poses)
-{
-    std::array<Eigen::Matrix<T, 3, 1>, N> positions;
-    for (int i = 0; i < N; i++)
-        positions[i] = Eigen::Map<const Eigen::Matrix<T, 3, 1>>(poses[i] + 4);
-    return positions;
-}
-
-template <typename T, size_t N>
-std::array<Eigen::Matrix<T, 3, 1>, N> castPositions(const std::array<Eigen::Vector3d, N> &positions)
-{
-    std::array<Eigen::Matrix<T, 3, 1>, N> cast;
-    for (size_t i = 0; i < N; i++)
-        cast[i] = positions[i].template cast<T>();
-    return cast;
-}
 
 template <int N> struct MultiRayPlaneIntersectionAngleCost_FocalRadial
 {

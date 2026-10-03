@@ -558,15 +558,16 @@ void RelaxProblem::addTriangulatedRaysCost(const MeasurementGraph &graph, size_t
         if (coveredByMultiRayTracks(edge, inlier, *pkg.source.model_ptr, *pkg.dest.model_ptr))
             continue;
 
-        addRobustBlock(
-            _ray_residuals,
-            newAutoDiffTriangulatedReprojectionCost(
-                {image_to_3d(inlier.pixel_1, *pkg.source.model_ptr), image_to_3d(inlier.pixel_2, *pkg.dest.model_ptr)},
-                !options.hasAll({Option::POSITION})
-                    ? std::vector<Eigen::Vector3d>{*pkg.source.loc_ptr, *pkg.dest.loc_ptr}
-                    : std::vector<Eigen::Vector3d>{},
-                {inverseSigma(*pkg.source.model_ptr), inverseSigma(*pkg.dest.model_ptr)}),
-            1, {pkg.source.pose_ptr, pkg.dest.pose_ptr});
+        const std::vector<Eigen::Vector3d> camera_rays{image_to_3d(inlier.pixel_1, *pkg.source.model_ptr),
+                                                       image_to_3d(inlier.pixel_2, *pkg.dest.model_ptr)};
+        const std::vector<double> inverse_sigmas{inverseSigma(*pkg.source.model_ptr),
+                                                 inverseSigma(*pkg.dest.model_ptr)};
+        addRobustBlock(_ray_residuals,
+                       options.hasAll({Option::POSITION})
+                           ? newAutoDiffTriangulatedReprojectionCost(camera_rays, inverse_sigmas)
+                           : newAutoDiffTriangulatedReprojectionCost_FixedPositions(
+                                 camera_rays, {*pkg.source.loc_ptr, *pkg.dest.loc_ptr}, inverse_sigmas),
+                       1, {pkg.source.pose_ptr, pkg.dest.pose_ptr});
         points_added = true;
     }
 
@@ -1348,12 +1349,13 @@ std::vector<TrackRay> RelaxProblem::addTriangulatedTrackCost(const std::vector<T
     {
         camera_rays.push_back(r.camera_ray);
         inverse_sigmas.push_back(r.inverse_sigma);
-        if (fix_positions)
-            camera_positions.push_back(r.camera_loc);
+        camera_positions.push_back(r.camera_loc);
         param_blocks.push_back(r.pose_ptr);
     }
     addRobustBlock(_ray_residuals,
-                   newAutoDiffTriangulatedReprojectionCost(camera_rays, camera_positions, inverse_sigmas),
+                   fix_positions ? newAutoDiffTriangulatedReprojectionCost_FixedPositions(camera_rays, camera_positions,
+                                                                                          inverse_sigmas)
+                                 : newAutoDiffTriangulatedReprojectionCost(camera_rays, inverse_sigmas),
                    2 * static_cast<int>(good_rays.size()) - 3, param_blocks);
     return good_rays;
 }
@@ -1730,9 +1732,12 @@ void RelaxProblem::addDownwardsPrior(const RelaxOptionSet &options)
         if (!p.second->orientation.coeffs().hasNaN() && !p.second->position.hasNaN())
         {
             double *d = poseBlock(p.first, p.second->orientation, p.second->position);
-            const bool orientation_only = _problem->HasParameterBlock(d) && _problem->ParameterBlockSize(d) == 4;
-            _problem->AddResidualBlock(newAutoDiffPointsDownwardsPrior(1e-3 * _prior_scale, orientation_only), nullptr,
-                                       d);
+            const double weight = 1e-3 * _prior_scale;
+            const bool position_fixed =
+                _problem->HasParameterBlock(d) && _problem->ParameterBlockSize(d) == ORIENTATION_PARAMETERS;
+            _problem->AddResidualBlock(position_fixed ? newAutoDiffPointsDownwardsPrior_FixedPosition(weight)
+                                                      : newAutoDiffPointsDownwardsPrior(weight),
+                                       nullptr, d);
             setPoseParameterization(d, true, options);
         }
     }

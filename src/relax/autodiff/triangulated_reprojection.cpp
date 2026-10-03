@@ -7,59 +7,75 @@ namespace opencalibration
 {
 namespace
 {
-template <int N, int... PoseSizes>
-ceres::CostFunction *makeTriangulatedReprojectionCost(const std::vector<Eigen::Vector3d> &camera_rays,
-                                                      const std::vector<Eigen::Vector3d> &camera_positions,
-                                                      const std::vector<double> &inverse_sigmas)
+template <int N, typename V> std::array<V, N> firstN(const std::vector<V> &values)
 {
-    using F = TriangulatedReprojectionCost<N>;
-    std::array<Eigen::Vector3d, N> rays;
-    std::copy_n(camera_rays.begin(), N, rays.begin());
-    std::array<double, N> sigmas = unitSigmas<N>();
-    if (!inverse_sigmas.empty())
-        std::copy_n(inverse_sigmas.begin(), N, sigmas.begin());
-    if (camera_positions.empty())
-        return new ceres::AutoDiffCostFunction<F, F::NUM_RESIDUALS, PoseSizes...>(new F(rays, sigmas));
-    std::array<Eigen::Vector3d, N> positions;
-    std::copy_n(camera_positions.begin(), N, positions.begin());
-    return new ceres::AutoDiffCostFunction<F, F::NUM_RESIDUALS, PoseSizes...>(new F(rays, positions, sigmas));
+    std::array<V, N> first;
+    std::copy_n(values.begin(), N, first.begin());
+    return first;
 }
 
-template <int N, int P, size_t... I>
-ceres::CostFunction *makeWithPoseSize(const std::vector<Eigen::Vector3d> &camera_rays,
-                                      const std::vector<Eigen::Vector3d> &camera_positions,
-                                      const std::vector<double> &inverse_sigmas, std::index_sequence<I...>)
+template <int N> std::array<double, N> sigmasOrUnit(const std::vector<double> &inverse_sigmas)
 {
-    return makeTriangulatedReprojectionCost<N, (static_cast<void>(I), P)...>(camera_rays, camera_positions,
-                                                                             inverse_sigmas);
+    return inverse_sigmas.empty() ? unitSigmas<N>() : firstN<N>(inverse_sigmas);
+}
+
+template <typename F, int BlockSize, size_t... I> ceres::CostFunction *autoDiff(F *functor, std::index_sequence<I...>)
+{
+    return new ceres::AutoDiffCostFunction<F, F::NUM_RESIDUALS, (static_cast<void>(I), BlockSize)...>(functor);
 }
 
 template <int N>
-ceres::CostFunction *make(const std::vector<Eigen::Vector3d> &camera_rays,
-                          const std::vector<Eigen::Vector3d> &camera_positions,
-                          const std::vector<double> &inverse_sigmas)
+ceres::CostFunction *newCost(const std::vector<Eigen::Vector3d> &camera_rays, const std::vector<double> &inverse_sigmas)
 {
-    if (camera_positions.empty())
-        return makeWithPoseSize<N, POSE_PARAMETERS>(camera_rays, camera_positions, inverse_sigmas,
-                                                    std::make_index_sequence<N>{});
-    return makeWithPoseSize<N, 4>(camera_rays, camera_positions, inverse_sigmas, std::make_index_sequence<N>{});
+    using F = TriangulatedReprojectionCost<N>;
+    return autoDiff<F, POSE_PARAMETERS>(new F(firstN<N>(camera_rays), sigmasOrUnit<N>(inverse_sigmas)),
+                                        std::make_index_sequence<N>{});
+}
+
+template <int N>
+ceres::CostFunction *newFixedPositionsCost(const std::vector<Eigen::Vector3d> &camera_rays,
+                                           const std::vector<Eigen::Vector3d> &camera_positions,
+                                           const std::vector<double> &inverse_sigmas)
+{
+    using F = TriangulatedReprojectionCost_FixedPositions<N>;
+    return autoDiff<F, ORIENTATION_PARAMETERS>(
+        new F(firstN<N>(camera_rays), firstN<N>(camera_positions), sigmasOrUnit<N>(inverse_sigmas)),
+        std::make_index_sequence<N>{});
 }
 } // namespace
 
 ceres::CostFunction *newAutoDiffTriangulatedReprojectionCost(const std::vector<Eigen::Vector3d> &camera_rays,
-                                                             const std::vector<Eigen::Vector3d> &camera_positions,
                                                              const std::vector<double> &inverse_sigmas)
 {
     switch (camera_rays.size())
     {
     case 2:
-        return make<2>(camera_rays, camera_positions, inverse_sigmas);
+        return newCost<2>(camera_rays, inverse_sigmas);
     case 3:
-        return make<3>(camera_rays, camera_positions, inverse_sigmas);
+        return newCost<3>(camera_rays, inverse_sigmas);
     case 4:
-        return make<4>(camera_rays, camera_positions, inverse_sigmas);
+        return newCost<4>(camera_rays, inverse_sigmas);
     case 5:
-        return make<5>(camera_rays, camera_positions, inverse_sigmas);
+        return newCost<5>(camera_rays, inverse_sigmas);
+    default:
+        return nullptr;
+    }
+}
+
+ceres::CostFunction *newAutoDiffTriangulatedReprojectionCost_FixedPositions(
+    const std::vector<Eigen::Vector3d> &camera_rays, const std::vector<Eigen::Vector3d> &camera_positions,
+    const std::vector<double> &inverse_sigmas)
+{
+    switch (camera_rays.size())
+    {
+    case 2:
+        return newFixedPositionsCost<2>(camera_rays, camera_positions, inverse_sigmas);
+    case 3:
+        return newFixedPositionsCost<3>(camera_rays, camera_positions, inverse_sigmas);
+    case 4:
+        return newFixedPositionsCost<4>(camera_rays, camera_positions, inverse_sigmas);
+    case 5:
+        return newFixedPositionsCost<5>(camera_rays, camera_positions, inverse_sigmas);
     default:
         return nullptr;
     }
