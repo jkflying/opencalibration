@@ -52,7 +52,7 @@ ceres::CostFunction *newAutoDiffDifferenceCost(double weight);
 
 ceres::CostFunction *newAutoDiffValuePrior(double target, double weight);
 
-ceres::CostFunction *newAutoDiffPointsDownwardsPrior(double weight);
+ceres::CostFunction *newAutoDiffPointsDownwardsPrior(double weight, bool orientation_only = false);
 
 ceres::CostFunction *newAutoDiffGPSPositionPrior(const Eigen::Vector3d &gps_position, double horizontal_weight,
                                                  double vertical_weight);

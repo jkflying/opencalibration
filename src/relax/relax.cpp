@@ -4,7 +4,10 @@
 #include <opencalibration/relax/relax_problem.hpp>
 #include <opencalibration/types/surface_model.hpp>
 
+#include <spdlog/spdlog.h>
+
 #include <algorithm>
+#include <optional>
 
 namespace
 {
@@ -12,6 +15,17 @@ namespace
 using namespace opencalibration;
 
 static const Eigen::Quaterniond DOWN_ORIENTED_NORTH(Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()));
+
+bool withinNadirCone(const Eigen::Quaterniond &orientation)
+{
+    constexpr double NADIR_CONE_HALF_ANGLE = M_PI / 4;
+    return (orientation * Eigen::Vector3d::UnitZ()).z() < -std::cos(NADIR_CONE_HALF_ANGLE);
+}
+
+double tiltDegrees(const Eigen::Quaterniond &orientation)
+{
+    return std::acos(std::clamp(-(orientation * Eigen::Vector3d::UnitZ()).z(), -1.0, 1.0)) * 180 / M_PI;
+}
 
 surface_model runRelativeOrientation(const MeasurementGraph &graph, std::vector<NodePose> &nodes,
                                      ankerl::unordered_dense::map<size_t, CameraModel> &cam_models,
@@ -64,6 +78,67 @@ std::vector<NodePose> placedNeighboursInBatch(const MeasurementGraph &graph, siz
     return neighbours;
 }
 
+std::optional<Eigen::Quaterniond> decomposedOrientation(
+    const MeasurementGraph &graph, const NodePose &node, const ankerl::unordered_dense::set<size_t> &edges_to_optimize,
+    const ankerl::unordered_dense::map<size_t, const NodePose *> &batch)
+{
+    constexpr double MAX_BASELINE_ANGLE = 15 * M_PI / 180, AGREEMENT_ANGLE = 3 * M_PI / 180;
+
+    std::vector<std::pair<Eigen::Quaterniond, double>> candidates;
+    for (size_t edge_id : graph.getNode(node.node_id)->getEdges())
+    {
+        if (!edges_to_optimize.contains(edge_id))
+            continue;
+        const auto *edge = graph.getEdge(edge_id);
+        const bool node_is_source = edge->getSource() == node.node_id;
+        auto neighbour = batch.find(node_is_source ? edge->getDest() : edge->getSource());
+        if (neighbour == batch.end() || !isPlaced(*neighbour->second))
+            continue;
+        const NodePose &other = *neighbour->second;
+
+        const Eigen::Vector3d baseline =
+            (node_is_source ? other.position - node.position : node.position - other.position);
+        double best_angle = MAX_BASELINE_ANGLE;
+        std::optional<Eigen::Quaterniond> best;
+        for (const auto &pose : edge->payload.relative_poses)
+        {
+            if (pose.score <= 0 || !pose.orientation.coeffs().allFinite() || !pose.position.allFinite())
+                continue;
+            const Eigen::Quaterniond relative = pose.orientation.normalized();
+            const Eigen::Quaterniond source = node_is_source ? other.orientation * relative : other.orientation;
+            const double cosine = std::abs((source.inverse() * baseline).normalized().dot(pose.position.normalized()));
+            const double angle = std::acos(std::min(cosine, 1.0));
+            if (angle < best_angle)
+            {
+                best_angle = angle;
+                best = node_is_source ? source : other.orientation * relative.inverse();
+            }
+        }
+        if (best)
+            candidates.emplace_back(*best, edge->payload.inlier_matches.size());
+    }
+
+    double best_weight = 0;
+    std::optional<Eigen::Quaterniond> mean;
+    for (const auto &[pivot, _] : candidates)
+    {
+        double weight = 0;
+        Eigen::Vector4d sum = Eigen::Vector4d::Zero();
+        for (const auto &[q, w] : candidates)
+            if (pivot.angularDistance(q) < AGREEMENT_ANGLE)
+            {
+                weight += w;
+                sum += (pivot.dot(q) < 0 ? -w : w) * q.coeffs();
+            }
+        if (weight > best_weight)
+        {
+            best_weight = weight;
+            mean = Eigen::Quaterniond(sum.normalized());
+        }
+    }
+    return mean;
+}
+
 void solveAloneAgainstPlacedNeighbours(const MeasurementGraph &graph, NodePose &node,
                                        ankerl::unordered_dense::map<size_t, CameraModel> &cam_models,
                                        const ankerl::unordered_dense::set<size_t> &edges_to_optimize,
@@ -79,6 +154,8 @@ void solveAloneAgainstPlacedNeighbours(const MeasurementGraph &graph, NodePose &
 
     RelaxProblem rp;
     rp.setupGroundPlaneProblem(graph, justThis, cam_models, own_edges, options, neighbours);
+    constexpr double LOOSE_TOLERANCE_FOR_SEEDING = 1e-3;
+    rp.setFunctionTolerance(LOOSE_TOLERANCE_FOR_SEEDING);
     rp.relaxObservedModelOnly();
     rp.solve();
     node = justThis[0];
@@ -112,14 +189,28 @@ void initializeOrientationsOnGroundPlane(const MeasurementGraph &graph, std::vec
     {
         if (!isPlaced(node))
         {
-            node.orientation = previous_node_orientation;
-
-            const bool enough_placed_to_solve_alone =
-                graph.size_nodes() > 2 * nodes.size() || placed_count >= min_placed_to_solve_alone;
-            if (enough_placed_to_solve_alone)
-                solveAloneAgainstPlacedNeighbours(graph, node, cam_models, edges_to_optimize, options, batch);
+            auto seed = decomposedOrientation(graph, node, edges_to_optimize, batch);
+            if (seed && withinNadirCone(*seed))
+            {
+                node.orientation = *seed;
+                spdlog::debug("Seed node {}: decomposed, tilt {:.1f}°", node.node_id, tiltDegrees(node.orientation));
+            }
             else
-                solveAllPlacedTogether(graph, nodes, cam_models, edges_to_optimize, options);
+            {
+                const bool from_previous = withinNadirCone(previous_node_orientation);
+                node.orientation = from_previous ? previous_node_orientation : DOWN_ORIENTED_NORTH;
+                const bool enough_placed_to_solve_alone =
+                    graph.size_nodes() > 2 * nodes.size() || placed_count >= min_placed_to_solve_alone;
+                if (enough_placed_to_solve_alone)
+                    solveAloneAgainstPlacedNeighbours(graph, node, cam_models, edges_to_optimize, options, batch);
+                else
+                    solveAllPlacedTogether(graph, nodes, cam_models, edges_to_optimize, options);
+                spdlog::debug("Seed node {}: {}, started from {}, solved {}, tilt {:.1f}°", node.node_id,
+                              seed ? fmt::format("decomposed tilted {:.1f}° rejected", tiltDegrees(*seed))
+                                   : std::string("no decomposition"),
+                              from_previous ? "previous" : "down", enough_placed_to_solve_alone ? "alone" : "together",
+                              tiltDegrees(node.orientation));
+            }
             placed_count++;
         }
         previous_node_orientation = node.orientation;

@@ -458,10 +458,9 @@ TEST_F(relax_group, prior_2_images)
     std::vector<NodePose> np;
     ankerl::unordered_dense::map<size_t, CameraModel> cam_models;
 
-    // NB! relative translation of the two images is on the X axis, so the rotation around the X axis is unconstrained
-    // Only put disturbances on the Y axis!
 
-    Eigen::Quaterniond ori(Eigen::AngleAxisd(M_PI_2, Eigen::Vector3d::UnitY()));
+    const Eigen::Quaterniond down(Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()));
+    Eigen::Quaterniond ori = down * Eigen::AngleAxisd(0.3, Eigen::Vector3d::UnitX());
     Eigen::Vector3d pos(9, 9, 9);
     image img;
     img.orientation = ori;
@@ -470,7 +469,7 @@ TEST_F(relax_group, prior_2_images)
     const size_t id = graph.addNode(std::move(img));
     np.emplace_back(NodePose{id, ori, pos});
 
-    ori = Eigen::Quaterniond(Eigen::AngleAxisd(-M_PI_4, Eigen::Vector3d::UnitY()));
+    ori = down * Eigen::AngleAxisd(-0.3, Eigen::Vector3d::UnitX());
     pos << 11, 9, 9;
 
     image img2;
@@ -562,15 +561,46 @@ TEST_F(relax_group, measurement_3_images_triangulated_rays)
     ankerl::unordered_dense::set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
     relax(graph, np, cam_models, edges, {Option::ORIENTATION, Option::TRIANGULATED_RAYS}, {});
 
-    // THEN: it should put them back into the original orientation
+    // THEN: it should put them back into the original orientation, less the downwards prior's slight pull on the
+    // tilted cameras
     for (int i = 0; i < 3; i++)
-        EXPECT_LT(Eigen::AngleAxisd(np[i].orientation.inverse() * ground_ori[i]).angle(), 1e-6)
+        EXPECT_LT(Eigen::AngleAxisd(np[i].orientation.inverse() * ground_ori[i]).angle(), 1e-4)
             << i << ": " << np[i].orientation.coeffs().transpose() << std::endl
             << "g: " << ground_ori[i].coeffs().transpose();
 
     // AND: the positions should not move, since they aren't being optimized
     for (int i = 0; i < 3; i++)
         EXPECT_EQ(np[i].position, ground_pos[i]) << i;
+}
+
+TEST_F(relax_group, measurement_3_images_triangulated_rays_collinear_roll_pulled_down)
+{
+    // GIVEN: 3 nadir cameras along one flight line, all started rolled 80° about it. With positions fixed, that roll
+    // changes no triangulation, so only the downwards prior can undo it
+    init_cameras();
+    const Eigen::Quaterniond down(Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()));
+    const Eigen::Quaterniond roll(Eigen::AngleAxisd(80 * M_PI / 180, Eigen::Vector3d::UnitX()));
+    for (int i = 0; i < 3; i++)
+    {
+        ground_ori[i] = down;
+        ground_pos[i] = Eigen::Vector3d(8 + 2 * i, 9, 9);
+        auto &img = graph.getNode(id[i])->payload;
+        img.orientation = ground_ori[i];
+        img.position = img.gps_position = ground_pos[i];
+        np[i] = NodePose{id[i], ground_ori[i], ground_pos[i]};
+    }
+    add_point_measurements(generate_3d_points());
+    for (int i = 0; i < 3; i++)
+        np[i].orientation = roll * ground_ori[i];
+
+    // WHEN: we relax them with triangulated rays
+    ankerl::unordered_dense::set<size_t> edges{edge_id[0], edge_id[1], edge_id[2]};
+    relax(graph, np, cam_models, edges, {Option::ORIENTATION, Option::TRIANGULATED_RAYS}, {});
+
+    // THEN: they should end pointing down, well inside the 45° cone, rather than keeping the roll
+    for (int i = 0; i < 3; i++)
+        EXPECT_LT(Eigen::AngleAxisd(np[i].orientation.inverse() * ground_ori[i]).angle(), 5 * M_PI / 180)
+            << i << ": " << np[i].orientation.coeffs().transpose();
 }
 
 TEST_F(relax_group, measurement_3_images_plane)
@@ -919,10 +949,11 @@ TEST_F(relax_group, measurement_3_images_triangulated_rays_internals_multi_ray_t
     // THEN: the 3-view tracks should be used
     EXPECT_GT(rp.test_num_multi_ray_measurements(), 0);
 
-    // AND: the true poses should have zero cost despite the non-planar terrain
+    // AND: the true poses should cost only the downwards prior on the two 0.3 rad tilted cameras, ½·2·(600e-3·0.3)²,
+    // despite the non-planar terrain
     rp.solve();
-    EXPECT_LT(rp.test_get_solver_summary().initial_cost, 1e-10);
-    EXPECT_LT(rp.test_get_solver_summary().final_cost, 1e-10);
+    EXPECT_NEAR(rp.test_get_solver_summary().initial_cost, 0.0324, 1e-9);
+    EXPECT_LE(rp.test_get_solver_summary().final_cost, rp.test_get_solver_summary().initial_cost);
 }
 
 TEST_F(relax_group, measurement_3_images_triangulated_rays_internals_multi_ray_tracks_include_fixed_images)
@@ -943,7 +974,8 @@ TEST_F(relax_group, measurement_3_images_triangulated_rays_internals_multi_ray_t
     // AND: it should stay fixed
     rp.solve();
     EXPECT_EQ(graph.getNode(id[0])->payload.orientation.coeffs(), ground_ori[0].coeffs());
-    EXPECT_LT(rp.test_get_solver_summary().final_cost, 1e-10);
+    const double downwards_prior_cost_of_tilted_cameras = 0.0324;
+    EXPECT_LE(rp.test_get_solver_summary().final_cost, downwards_prior_cost_of_tilted_cameras + 1e-9);
 }
 
 TEST_F(relax_group, measurement_3_images_mesh_internals_multi_ray_tracks_include_fixed_images)

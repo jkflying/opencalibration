@@ -254,6 +254,7 @@ void RelaxProblem::setupGroundMeshProblem(const MeasurementGraph &graph, std::ve
         }
     }
 
+    addDownwardsPrior(options);
     addGPSPositionPrior(graph, options);
     if (meshOrigin == MeshOrigin::PREVIOUS_SURFACE)
     {
@@ -313,7 +314,7 @@ void RelaxProblem::setupTriangulatedRaysProblem(const MeasurementGraph &graph, s
     }
     addMultiRayTrackCosts(graph, options, 0.05);
 
-    gridFilterMatchesPerImage(graph, edges_to_optimize, 0.05);
+    gridFilterMatchesPerImage(graph, edges_to_optimize, 0.1);
 
     for (size_t edge_id : edges_to_optimize)
     {
@@ -324,6 +325,7 @@ void RelaxProblem::setupTriangulatedRaysProblem(const MeasurementGraph &graph, s
         }
     }
 
+    addDownwardsPrior(options);
     addGPSPositionPrior(graph, options);
 }
 
@@ -1706,7 +1708,9 @@ void RelaxProblem::addDownwardsPrior(const RelaxOptionSet &options)
         if (!p.second->orientation.coeffs().hasNaN() && !p.second->position.hasNaN())
         {
             double *d = poseBlock(p.first, p.second->orientation, p.second->position);
-            _problem->AddResidualBlock(newAutoDiffPointsDownwardsPrior(1e-3 * _prior_scale), nullptr, d);
+            const bool orientation_only = _problem->HasParameterBlock(d) && _problem->ParameterBlockSize(d) == 4;
+            _problem->AddResidualBlock(newAutoDiffPointsDownwardsPrior(1e-3 * _prior_scale, orientation_only), nullptr,
+                                       d);
             setPoseParameterization(d, true, options);
         }
     }

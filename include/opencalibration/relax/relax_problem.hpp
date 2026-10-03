@@ -82,6 +82,10 @@ class RelaxProblem
 
     void relaxObservedModelOnly(); // only 3d points and ground plane
     void solve();
+    void setFunctionTolerance(double tolerance)
+    {
+        _solver_options.function_tolerance = tolerance;
+    }
 
     surface_model getSurfaceModel();
 
