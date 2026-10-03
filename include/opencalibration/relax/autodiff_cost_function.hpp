@@ -13,6 +13,9 @@ namespace opencalibration
 {
 ceres::CostFunction *newAutoDiffMultiDecomposedRotationCost(const camera_relations &relations);
 
+ceres::CostFunction *newAutoDiffMultiDecomposedRotationCost_FixedPositions(const camera_relations &relations,
+                                                                           const Eigen::Vector3d &dest_minus_source);
+
 ceres::CostFunction *newAutoDiffPlaneIntersectionAngleCost(const Eigen::Vector3d &camera_ray1,
                                                            const Eigen::Vector3d &camera_ray2,
                                                            const Eigen::Vector2d &plane_point1,
@@ -20,18 +23,36 @@ ceres::CostFunction *newAutoDiffPlaneIntersectionAngleCost(const Eigen::Vector3d
                                                            const Eigen::Vector2d &plane_point3,
                                                            const std::array<double, 2> &inverse_sigmas = {1, 1});
 
+ceres::CostFunction *newAutoDiffPlaneIntersectionAngleCost_FixedPositions(
+    const Eigen::Vector3d &camera_ray1, const Eigen::Vector3d &camera_ray2, const Eigen::Vector2d &plane_point1,
+    const Eigen::Vector2d &plane_point2, const Eigen::Vector2d &plane_point3,
+    const std::array<Eigen::Vector3d, 2> &camera_positions, const std::array<double, 2> &inverse_sigmas = {1, 1});
+
 ceres::CostFunction *newAutoDiffPlaneIntersectionAngleCost_FocalRadial(
     const Eigen::Vector2d &camera_pixel1, const Eigen::Vector2d &camera_pixel2, const Eigen::Vector2d &plane_point1,
     const Eigen::Vector2d &plane_point2, const Eigen::Vector2d &plane_point3,
     const InverseDifferentiableCameraModel<double> &model);
 
+ceres::CostFunction *newAutoDiffPlaneIntersectionAngleCost_FocalRadial_FixedPositions(
+    const Eigen::Vector2d &camera_pixel1, const Eigen::Vector2d &camera_pixel2, const Eigen::Vector2d &plane_point1,
+    const Eigen::Vector2d &plane_point2, const Eigen::Vector2d &plane_point3,
+    const InverseDifferentiableCameraModel<double> &model, const std::array<Eigen::Vector3d, 2> &camera_positions);
+
 ceres::CostFunction *newAutoDiffPlaneIntersectionAngleCost_NRay(const std::vector<Eigen::Vector3d> &camera_rays,
                                                                 const std::array<Eigen::Vector2d, 3> &plane_points,
                                                                 const std::vector<double> &inverse_sigmas = {});
 
+ceres::CostFunction *newAutoDiffPlaneIntersectionAngleCost_NRay_FixedPositions(
+    const std::vector<Eigen::Vector3d> &camera_rays, const std::array<Eigen::Vector2d, 3> &plane_points,
+    const std::vector<Eigen::Vector3d> &camera_positions, const std::vector<double> &inverse_sigmas = {});
+
 ceres::CostFunction *newAutoDiffPlaneIntersectionAngleCost_NRay_FocalRadial(
     const std::vector<Eigen::Vector2d> &camera_pixels, const std::array<Eigen::Vector2d, 3> &plane_points,
     const InverseDifferentiableCameraModel<double> &model);
+
+ceres::CostFunction *newAutoDiffPlaneIntersectionAngleCost_NRay_FocalRadial_FixedPositions(
+    const std::vector<Eigen::Vector2d> &camera_pixels, const std::array<Eigen::Vector2d, 3> &plane_points,
+    const InverseDifferentiableCameraModel<double> &model, const std::vector<Eigen::Vector3d> &camera_positions);
 
 ceres::CostFunction *newAutoDiffTriangulatedReprojectionCost(const std::vector<Eigen::Vector3d> &camera_rays,
                                                              const std::vector<Eigen::Vector3d> &camera_positions = {},

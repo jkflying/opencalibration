@@ -800,7 +800,8 @@ void RelaxProblem::addRelationCost(const MeasurementGraph &graph, size_t edge_id
     if (!pkg.source.loc_ptr->allFinite() || !pkg.dest.loc_ptr->allFinite())
         return;
 
-    std::unique_ptr<ceres::CostFunction> func(newAutoDiffMultiDecomposedRotationCost(*pkg.relations));
+    std::unique_ptr<ceres::CostFunction> func(newAutoDiffMultiDecomposedRotationCost_FixedPositions(
+        *pkg.relations, Eigen::Vector3d(*pkg.dest.loc_ptr - *pkg.source.loc_ptr)));
 
     double *datas[2] = {pkg.source.pose_ptr, pkg.dest.pose_ptr};
 
@@ -900,6 +901,8 @@ void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, 
     const auto &dest_whitelist = _grid_filter[edge.getDest()][edge_id].getBestMeasurementsPerCell();
 
     const std::array<double *, 2> datas = {pkg.source.pose_ptr, pkg.dest.pose_ptr};
+    const bool positions_fixed = !options.hasAll({Option::POSITION});
+    const std::array<Eigen::Vector3d, 2> positions{*pkg.source.loc_ptr, *pkg.dest.loc_ptr};
 
     MeshIntersectionSearcher intersectionSearcher;
     if (!intersectionSearcher.init(_mesh))
@@ -953,8 +956,13 @@ void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, 
             source_model == dest_model)
         {
 
-            std::unique_ptr<ceres::CostFunction> func(newAutoDiffPlaneIntersectionAngleCost_FocalRadial(
-                inlier.pixel_1, inlier.pixel_2, corner2d[0], corner2d[1], corner2d[2], inverse_iter->second));
+            std::unique_ptr<ceres::CostFunction> func(
+                positions_fixed ? newAutoDiffPlaneIntersectionAngleCost_FocalRadial_FixedPositions(
+                                      inlier.pixel_1, inlier.pixel_2, corner2d[0], corner2d[1], corner2d[2],
+                                      inverse_iter->second, positions)
+                                : newAutoDiffPlaneIntersectionAngleCost_FocalRadial(inlier.pixel_1, inlier.pixel_2,
+                                                                                    corner2d[0], corner2d[1],
+                                                                                    corner2d[2], inverse_iter->second));
 
             addRobustBlock(_ray_residuals, func.release(), 2,
                            {datas[0], datas[1], zValues[0], zValues[1], zValues[2],
@@ -976,9 +984,13 @@ void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, 
         }
         else
         {
+            const std::array<double, 2> inverse_sigmas{inverseSigma(source_model), inverseSigma(dest_model)};
             std::unique_ptr<ceres::CostFunction> func(
-                newAutoDiffPlaneIntersectionAngleCost(sourceRay.dir, destRay.dir, corner2d[0], corner2d[1], corner2d[2],
-                                                      {inverseSigma(source_model), inverseSigma(dest_model)}));
+                positions_fixed
+                    ? newAutoDiffPlaneIntersectionAngleCost_FixedPositions(
+                          sourceRay.dir, destRay.dir, corner2d[0], corner2d[1], corner2d[2], positions, inverse_sigmas)
+                    : newAutoDiffPlaneIntersectionAngleCost(sourceRay.dir, destRay.dir, corner2d[0], corner2d[1],
+                                                            corner2d[2], inverse_sigmas));
 
             addRobustBlock(_ray_residuals, func.release(), 2, {datas[0], datas[1], zValues[0], zValues[1], zValues[2]});
             points_added = true;
@@ -1184,6 +1196,11 @@ std::vector<TrackRay> RelaxProblem::addMeshTrackCost(const MeasurementGraph &gra
     std::vector<double *> param_blocks;
     ceres::CostFunction *cost = nullptr;
 
+    const bool positions_fixed = !options.hasAll({Option::POSITION});
+    std::vector<Eigen::Vector3d> positions;
+    for (const auto &r : good_rays)
+        positions.push_back(r.camera_loc);
+
     InverseDifferentiableCameraModel<double> *inv_model_ptr = nullptr;
 
     if (use_focal_radial)
@@ -1211,7 +1228,10 @@ std::vector<TrackRay> RelaxProblem::addMeshTrackCost(const MeasurementGraph &gra
             pixels.push_back(good_rays[i].pixel);
         }
 
-        cost = newAutoDiffPlaneIntersectionAngleCost_NRay_FocalRadial(pixels, corner2d, *inv_model_ptr);
+        cost = positions_fixed
+                   ? newAutoDiffPlaneIntersectionAngleCost_NRay_FocalRadial_FixedPositions(pixels, corner2d,
+                                                                                           *inv_model_ptr, positions)
+                   : newAutoDiffPlaneIntersectionAngleCost_NRay_FocalRadial(pixels, corner2d, *inv_model_ptr);
     }
     else
     {
@@ -1227,7 +1247,9 @@ std::vector<TrackRay> RelaxProblem::addMeshTrackCost(const MeasurementGraph &gra
             inverse_sigmas.push_back(good_rays[i].inverse_sigma);
         }
 
-        cost = newAutoDiffPlaneIntersectionAngleCost_NRay(camera_rays, corner2d, inverse_sigmas);
+        cost = positions_fixed ? newAutoDiffPlaneIntersectionAngleCost_NRay_FixedPositions(camera_rays, corner2d,
+                                                                                           positions, inverse_sigmas)
+                               : newAutoDiffPlaneIntersectionAngleCost_NRay(camera_rays, corner2d, inverse_sigmas);
     }
 
     if (cost == nullptr)

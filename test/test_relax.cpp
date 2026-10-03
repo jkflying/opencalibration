@@ -1,5 +1,7 @@
 #include <jk/KDTree.h>
 #include <opencalibration/distort/distort_keypoints.hpp>
+#include <opencalibration/distort/invert_distortion.hpp>
+#include <opencalibration/relax/autodiff_cost_function.hpp>
 #include <opencalibration/relax/relax.hpp>
 #include <opencalibration/relax/relax_cost_function.hpp>
 #include <opencalibration/relax/relax_group.hpp>
@@ -186,6 +188,109 @@ static std::array<double, 7> packPose(const Eigen::Quaterniond &q, const Eigen::
     Eigen::Map<Eigen::Quaterniond>(pose.data()) = q;
     Eigen::Map<Eigen::Vector3d>(pose.data() + 4) = p;
     return pose;
+}
+
+TEST(relax_cost, fixed_position_costs_match_full_pose_costs)
+{
+    // GIVEN: three tilted cameras over a plane, and the same costs built with 7-wide poses and with fixed positions
+    std::array<std::array<double, 7>, 3> poses;
+    std::vector<Eigen::Vector3d> positions, rays;
+    std::vector<Eigen::Vector2d> pixels;
+    for (int i = 0; i < 3; i++)
+    {
+        const Eigen::Quaterniond q(Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()) *
+                                   Eigen::AngleAxisd(0.1 * (i + 1), Eigen::Vector3d(1, 2, 3).normalized()));
+        positions.emplace_back(i * 3., i * 2., 20 + i);
+        Eigen::Map<Eigen::Quaterniond>(poses[i].data()) = q;
+        Eigen::Map<Eigen::Vector3d>(poses[i].data() + 4) = positions.back();
+        rays.push_back((q.inverse() * (Eigen::Vector3d(2, 1, 0.5) - positions.back())).normalized() +
+                       Eigen::Vector3d(0.01 * i, -0.02, 0));
+        pixels.emplace_back(380 + 10 * i, 290 - 5 * i);
+    }
+    double z[3]{0.4, 0.6, 0.5};
+    const std::array<Eigen::Vector2d, 3> corners{Eigen::Vector2d(-10, -10), Eigen::Vector2d(10, -10),
+                                                 Eigen::Vector2d(0, 10)};
+    CameraModel model;
+    model.focal_length_pixels = 600;
+    model.principle_point << 400, 300;
+    model.pixels_cols = 800;
+    model.pixels_rows = 600;
+    InverseDifferentiableCameraModel<double> inv_model = convertModel(model);
+    camera_relations relations;
+    relations.relative_poses[0].score = 10;
+    relations.relative_poses[0].orientation = Eigen::Quaterniond(Eigen::AngleAxisd(0.05, Eigen::Vector3d::UnitZ()));
+    relations.relative_poses[0].position = Eigen::Vector3d(1, 0.6, 0.1).normalized();
+
+    struct Case
+    {
+        std::unique_ptr<ceres::CostFunction> full, fixed;
+        std::vector<double *> non_pose_blocks;
+        int num_poses;
+    };
+    std::vector<Case> cases;
+    cases.push_back({std::unique_ptr<ceres::CostFunction>(newAutoDiffPlaneIntersectionAngleCost_NRay(rays, corners)),
+                     std::unique_ptr<ceres::CostFunction>(
+                         newAutoDiffPlaneIntersectionAngleCost_NRay_FixedPositions(rays, corners, positions)),
+                     {&z[0], &z[1], &z[2]},
+                     3});
+    cases.push_back(
+        {std::unique_ptr<ceres::CostFunction>(
+             newAutoDiffPlaneIntersectionAngleCost_NRay_FocalRadial(pixels, corners, inv_model)),
+         std::unique_ptr<ceres::CostFunction>(newAutoDiffPlaneIntersectionAngleCost_NRay_FocalRadial_FixedPositions(
+             pixels, corners, inv_model, positions)),
+         {&z[0], &z[1], &z[2], &inv_model.focal_length_pixels, inv_model.principle_point.data(),
+          inv_model.radial_distortion.data()},
+         3});
+    cases.push_back({std::unique_ptr<ceres::CostFunction>(newAutoDiffMultiDecomposedRotationCost(relations)),
+                     std::unique_ptr<ceres::CostFunction>(newAutoDiffMultiDecomposedRotationCost_FixedPositions(
+                         relations, Eigen::Vector3d(positions[1] - positions[0]))),
+                     {},
+                     2});
+
+    for (size_t c = 0; c < cases.size(); c++)
+    {
+        auto &cs = cases[c];
+        std::array<std::array<double, 7>, 3> nan_positions = poses;
+        for (auto &p : nan_positions)
+            std::fill(p.begin() + 4, p.end(), NAN);
+        std::vector<double *> params = cs.non_pose_blocks, fixed_params = cs.non_pose_blocks;
+        for (int i = 0; i < cs.num_poses; i++)
+        {
+            params.push_back(poses[i].data());
+            fixed_params.push_back(nan_positions[i].data());
+        }
+
+        const int num_residuals = cs.full->num_residuals();
+        ASSERT_EQ(num_residuals, cs.fixed->num_residuals());
+        const auto &full_sizes = cs.full->parameter_block_sizes();
+        std::vector<std::vector<double>> full_jac(params.size()), fixed_jac(params.size());
+        std::vector<double *> full_ptrs, fixed_ptrs;
+        for (size_t b = 0; b < params.size(); b++)
+        {
+            full_jac[b].resize(num_residuals * full_sizes[b]);
+            fixed_jac[b].resize(num_residuals * cs.fixed->parameter_block_sizes()[b]);
+            full_ptrs.push_back(full_jac[b].data());
+            fixed_ptrs.push_back(fixed_jac[b].data());
+        }
+        std::vector<double> full_res(num_residuals), fixed_res(num_residuals);
+
+        // WHEN: we evaluate both
+        ASSERT_TRUE(cs.full->Evaluate(params.data(), full_res.data(), full_ptrs.data())) << c;
+        ASSERT_TRUE(cs.fixed->Evaluate(fixed_params.data(), fixed_res.data(), fixed_ptrs.data())) << c;
+
+        // THEN: residuals match despite the NaN positions in the fixed cost's pose blocks, and so do the derivatives
+        // by everything except the positions
+        for (int r = 0; r < num_residuals; r++)
+            EXPECT_NEAR(full_res[r], fixed_res[r], 1e-12) << c << " residual " << r;
+        for (size_t b = 0; b < params.size(); b++)
+        {
+            const int fixed_size = cs.fixed->parameter_block_sizes()[b];
+            for (int r = 0; r < num_residuals; r++)
+                for (int k = 0; k < fixed_size; k++)
+                    EXPECT_NEAR(full_jac[b][r * full_sizes[b] + k], fixed_jac[b][r * fixed_size + k], 1e-9)
+                        << c << " block " << b << " residual " << r << " param " << k;
+        }
+    }
 }
 
 TEST_F(relax_group, downwards_prior_cost_function)
