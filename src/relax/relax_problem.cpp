@@ -13,6 +13,7 @@
 
 #include <omp.h>
 #include <opencalibration/distort/invert_distortion.hpp>
+#include <opencalibration/geometry/KMeans.hpp>
 #include <opencalibration/performance/performance.hpp>
 #include <opencalibration/types/union_find.hpp>
 #include <optional>
@@ -328,12 +329,22 @@ void RelaxProblem::setupTriangulatedRaysProblem(const MeasurementGraph &graph, s
 
 void RelaxProblem::setupMeshHeightProblem(const surface_model &surface, double pointSigma, double smoothnessWeight)
 {
-    _mesh = surface.mesh;
+    setupMeshHeightProblem(surface.mesh, sampleMeshPoints(surface.mesh, surface.cloud), pointSigma, {},
+                           smoothnessWeight);
+}
+
+void RelaxProblem::setupMeshHeightProblem(MeshGraph mesh, const std::vector<MeshPointSample> &samples,
+                                          double pointSigma, const ankerl::unordered_dense::set<size_t> &fixedVertices,
+                                          double smoothnessWeight)
+{
+    _mesh = std::move(mesh);
     _mesh_point_sigma = pointSigma;
     _mesh_heights.clear();
     std::vector<double *> heights;
     for (auto it = _mesh.nodebegin(); it != _mesh.nodeend(); ++it)
     {
+        if (fixedVertices.contains(it->first))
+            continue;
         _mesh_heights.push_back({it->first, &it->second.payload.location.z()});
         heights.push_back(_mesh_heights.back().z);
     }
@@ -345,7 +356,6 @@ void RelaxProblem::setupMeshHeightProblem(const surface_model &surface, double p
     _solver_options.function_tolerance = 0;
     _solver_options.initial_trust_region_radius = NEAR_GAUSS_NEWTON_TRUST_REGION_RADIUS;
 
-    const auto samples = sampleMeshPoints(_mesh, surface.cloud);
     if (samples.empty())
         return;
 
@@ -365,6 +375,108 @@ void RelaxProblem::setupMeshHeightProblem(const surface_model &surface, double p
         const double pointCount = it == pointsAroundVertex.end() ? 0.0 : static_cast<double>(it->second);
         return 1.0 / (pointSigma * (1.0 + pointCount));
     });
+    for (size_t id : fixedVertices)
+    {
+        double *z = &_mesh.getNode(id)->payload.location.z();
+        if (_problem->HasParameterBlock(z))
+            _problem->SetParameterBlockConstant(z);
+    }
+}
+
+void fitMeshHeights(MeshGraph &mesh, const std::vector<point_cloud> &cloud, double pointSigma, size_t samplesPerRegion)
+{
+    const auto start = std::chrono::steady_clock::now();
+    const auto samples = sampleMeshPoints(mesh, cloud);
+    if (samples.empty())
+        return;
+
+    constexpr size_t REGIONS_PER_THREAD = 4;
+    constexpr size_t MIN_SAMPLES_PER_REGION = 10000;
+    const size_t regions_to_fill_threads =
+        std::min<size_t>(REGIONS_PER_THREAD * omp_get_max_threads(), samples.size() / MIN_SAMPLES_PER_REGION);
+    const size_t num_regions = std::max<size_t>({1, samples.size() / samplesPerRegion, regions_to_fill_threads});
+    constexpr size_t PASSES_WITH_MOVED_BOUNDARIES = 4;
+    const size_t num_passes = num_regions > 1 ? PASSES_WITH_MOVED_BOUNDARIES : 1;
+
+    std::vector<size_t> vertex_ids;
+    vertex_ids.reserve(mesh.size_nodes());
+    for (auto it = mesh.cnodebegin(); it != mesh.cnodeend(); ++it)
+        vertex_ids.push_back(it->first);
+
+    for (size_t pass = 0; pass < num_passes; pass++)
+    {
+        const size_t first_seed_vertex = (pass * 7919) % vertex_ids.size();
+        std::rotate(vertex_ids.begin(), vertex_ids.begin() + first_seed_vertex, vertex_ids.end());
+        KMeans<size_t, 2> k_regions(num_regions);
+        for (size_t v : vertex_ids)
+        {
+            const Eigen::Vector3d &location = mesh.getNode(v)->payload.location;
+            k_regions.add({location.x(), location.y()}, v);
+        }
+        if (num_regions > 1)
+            for (int i = 0; i < 10; i++)
+                k_regions.iterate();
+
+        std::vector<ankerl::unordered_dense::set<size_t>> region_vertices;
+        ankerl::unordered_dense::map<size_t, size_t> region_of;
+        for (const auto &cluster : k_regions.getClusters())
+        {
+            if (cluster.points.empty())
+                continue;
+            auto &vertices = region_vertices.emplace_back();
+            for (const auto &[location, v] : cluster.points)
+            {
+                vertices.insert(v);
+                region_of[v] = region_vertices.size() - 1;
+            }
+        }
+        std::vector<std::vector<uint32_t>> region_samples(region_vertices.size());
+        for (uint32_t i = 0; i < samples.size(); i++)
+        {
+            std::array<size_t, 3> regions;
+            for (int k = 0; k < 3; k++)
+                regions[k] = region_of.at(samples[i].vertices[k]);
+            for (int k = 0; k < 3; k++)
+                if (std::find(regions.begin(), regions.begin() + k, regions[k]) == regions.begin() + k)
+                    region_samples[regions[k]].push_back(i);
+        }
+
+        std::vector<std::vector<std::pair<size_t, double>>> heights(region_vertices.size());
+        const int team_size = std::max<int>(1, std::min<int>(region_vertices.size(), omp_get_max_threads()));
+#pragma omp parallel for schedule(dynamic, 1) num_threads(team_size)
+        for (int r = 0; r < static_cast<int>(region_vertices.size()); r++)
+        {
+            if (region_samples[r].empty())
+                continue;
+            const auto &free = region_vertices[r];
+            std::vector<MeshPointSample> local;
+            local.reserve(region_samples[r].size());
+            ankerl::unordered_dense::set<size_t> nodes = free, fixed;
+            for (uint32_t i : region_samples[r])
+                local.push_back(samples[i]);
+            for (size_t v : free)
+                for (size_t e : mesh.getNode(v)->getEdges())
+                {
+                    const auto *edge = mesh.getEdge(e);
+                    const size_t other = edge->getSource() == v ? edge->getDest() : edge->getSource();
+                    if (!free.contains(other) && nodes.insert(other).second)
+                        fixed.insert(other);
+                }
+
+            RelaxProblem rp;
+            rp.setupMeshHeightProblem(mesh.subgraph(nodes), local, pointSigma, fixed);
+            rp.solveMeshHeights();
+            const MeshGraph fitted = rp.getSurfaceModel().mesh;
+            heights[r].reserve(free.size());
+            for (size_t v : free)
+                heights[r].emplace_back(v, fitted.getNode(v)->payload.location.z());
+        }
+        for (const auto &region : heights)
+            for (const auto &[v, z] : region)
+                mesh.getNode(v)->payload.location.z() = z;
+    }
+    spdlog::info("Fitted mesh heights to {} samples in {} regions x {} passes, {:.2f}s", samples.size(), num_regions,
+                 num_passes, std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
 }
 
 double RelaxProblem::meshHeightConvergedStepSize() const

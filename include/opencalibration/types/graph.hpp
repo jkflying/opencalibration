@@ -169,6 +169,31 @@ template <typename NodePayload, typename EdgePayload> class DirectedGraph
         return nullptr;
     }
 
+    [[nodiscard]] DirectedGraph subgraph(const ankerl::unordered_dense::set<size_t> &node_ids) const
+    {
+        DirectedGraph sub;
+        for (size_t id : node_ids)
+            if (const Node *node = getNode(id))
+                sub._nodes.emplace(id, NodePayload(node->payload));
+        for (size_t id : node_ids)
+        {
+            const Node *node = getNode(id);
+            if (node == nullptr)
+                continue;
+            for (size_t edge_id : node->_edges)
+            {
+                const Edge &edge = _edges.find(edge_id)->second;
+                if (!node_ids.contains(edge.getSource()) || !node_ids.contains(edge.getDest()) ||
+                    !sub._edges.emplace(edge_id, edge).second)
+                    continue;
+                sub._nodes.find(edge.getSource())->second._edges.insert(edge_id);
+                sub._nodes.find(edge.getDest())->second._edges.insert(edge_id);
+                sub._edge_id_from_nodes_lookup.emplace(SourceDestIndex{edge.getSource(), edge.getDest()}, edge_id);
+            }
+        }
+        return sub;
+    }
+
     bool removeNode(size_t identifier)
     {
         auto nodeIter = _nodes.find(identifier);

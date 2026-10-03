@@ -1667,14 +1667,21 @@ TEST(relax, mesh_height_problem_recovers_surface_despite_outliers)
     rp.solveMeshHeights();
     const MeshGraph relaxed = rp.getSurfaceModel().mesh;
 
+    // AND: fitting them in regions of about 200 samples
+    MeshGraph tiled = surface.mesh;
+    fitMeshHeights(tiled, surface.cloud, 0.02, 200);
+
     // THEN: vertices a margin inside the data sit on the true surface, ignoring the outliers and keeping the tilt
-    ASSERT_EQ(relaxed.size_nodes(), surface.mesh.size_nodes());
-    double maxError = 0;
-    for (auto it = relaxed.cnodebegin(); it != relaxed.cnodeend(); ++it)
+    for (const MeshGraph *mesh : std::array<const MeshGraph *, 2>{&relaxed, &tiled})
     {
-        const Eigen::Vector3d &p = it->second.payload.location;
-        if (p.x() > 1 && p.x() < 9 && p.y() > 1 && p.y() < 9)
-            maxError = std::max(maxError, std::abs(p.z() - height(p.x(), p.y())));
+        ASSERT_EQ(mesh->size_nodes(), surface.mesh.size_nodes());
+        double maxError = 0;
+        for (auto it = mesh->cnodebegin(); it != mesh->cnodeend(); ++it)
+        {
+            const Eigen::Vector3d &p = it->second.payload.location;
+            if (p.x() > 1 && p.x() < 9 && p.y() > 1 && p.y() < 9)
+                maxError = std::max(maxError, std::abs(p.z() - height(p.x(), p.y())));
+        }
+        EXPECT_LT(maxError, 0.05);
     }
-    EXPECT_LT(maxError, 0.05);
 }

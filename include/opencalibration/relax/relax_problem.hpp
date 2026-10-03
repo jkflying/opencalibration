@@ -75,6 +75,9 @@ class RelaxProblem
                                       const RelaxOptionSet &options);
 
     void setupMeshHeightProblem(const surface_model &surface, double pointSigma, double smoothnessWeight = 1.0);
+    void setupMeshHeightProblem(MeshGraph mesh, const std::vector<MeshPointSample> &samples, double pointSigma,
+                                const ankerl::unordered_dense::set<size_t> &fixedVertices,
+                                double smoothnessWeight = 1.0);
     void solveMeshHeights();
 
     void relaxObservedModelOnly(); // only 3d points and ground plane
@@ -236,5 +239,8 @@ class RelaxProblem
     ankerl::unordered_dense::set<size_t> unsettledMeshNodesAndNeighbours(double settledStepSize) const;
     void solveUnsettledMeshHeights();
 };
+
+void fitMeshHeights(MeshGraph &mesh, const std::vector<point_cloud> &cloud, double pointSigma,
+                    size_t samplesPerRegion = 250000);
 
 } // namespace opencalibration

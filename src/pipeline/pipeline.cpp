@@ -790,6 +790,16 @@ Pipeline::Impl::Transition Pipeline::Impl::mesh_refinement()
         }
         surface_model initialSurface;
         initialSurface.mesh = buildMinimalMesh(cameraLocations, surfaces);
+        constexpr size_t INITIAL_CAMERAS_PER_TRIANGLE = 12;
+        refineByPointDensity(initialSurface.mesh, {cameraLocations}, INITIAL_CAMERAS_PER_TRIANGLE, -1);
+        std::vector<point_cloud> initialPoints;
+        for (auto &surface : surfaces)
+            for (auto &cloud : surface.cloud)
+                initialPoints.push_back(std::move(cloud));
+        if (!initialPoints.empty())
+            fitMeshHeights(initialSurface.mesh, initialPoints, estimatePointHeightSigma(initialPoints));
+        spdlog::info("Mesh refinement: initial mesh with {} vertices from {} cameras and {} point clouds",
+                     initialSurface.mesh.size_nodes(), cameraLocations.size(), initialPoints.size());
         surfaces.clear();
         surfaces.push_back(std::move(initialSurface));
         relax_stage->setSurfaceModels(surfaces);
@@ -965,17 +975,14 @@ Pipeline::Impl::Transition Pipeline::Impl::dense_mesh_relax()
                      countPoints(surface.cloud), HEIGHT_AGREEMENT_SIGMAS * pointSigma);
         auto fitHeights = [&agreeingSurface, pointSigma, &p] {
             p.reset("Dense mesh fit heights");
-            RelaxProblem rp;
-            rp.setupMeshHeightProblem(agreeingSurface, pointSigma);
-            rp.solveMeshHeights();
-            agreeingSurface.mesh = rp.getSurfaceModel().mesh;
+            fitMeshHeights(agreeingSurface.mesh, agreeingSurface.cloud, pointSigma);
         };
         const bool unrefinedMesh = stateRunCount() == 0;
         if (unrefinedMesh)
             fitHeights();
         p.reset("Dense mesh refine");
-        const size_t refined = refineByPointDensity(agreeingSurface.mesh, agreeingSurface.cloud,
-                                                    maxPointsPerTriangle, minDistanceVariance, 1, reducedGsd);
+        const size_t refined = refineByPointDensity(agreeingSurface.mesh, agreeingSurface.cloud, maxPointsPerTriangle,
+                                                    minDistanceVariance, 1, reducedGsd);
         totalRefined += refined;
         if (refined > 0)
             fitHeights();
