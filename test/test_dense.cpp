@@ -90,7 +90,7 @@ feature_2d makeFeature(const Eigen::Vector2d &location, uint64_t descriptor_seed
     std::mt19937_64 rng(descriptor_seed);
     for (int i = 0; i < feature_2d::DESCRIPTOR_BITS; i++)
     {
-        f.descriptor[i] = rng() & 1;
+        f.descriptor.set(i, rng() & 1);
     }
     return f;
 }
@@ -102,7 +102,8 @@ feature_2d noisyFeature(const feature_2d &f, std::mt19937 &rng, int num_flips)
     std::uniform_int_distribution<int> bit_dist(0, feature_2d::DESCRIPTOR_BITS - 1);
     for (int i = 0; i < num_flips; i++)
     {
-        out.descriptor.flip(bit_dist(rng));
+        const int bit = bit_dist(rng);
+        out.descriptor.set(bit, !out.descriptor[bit]);
     }
     return out;
 }
@@ -111,8 +112,9 @@ feature_2d noisyFeature(const feature_2d &f, std::mt19937 &rng, int num_flips)
 void addDenseFeatures(image &img, std::vector<feature_2d> dense)
 {
     img.num_sparse_features = img.features.size();
-    img.features.insert(img.features.end(), std::make_move_iterator(dense.begin()),
-                        std::make_move_iterator(dense.end()));
+    auto features = img.features.load();
+    features.insert(features.end(), std::make_move_iterator(dense.begin()), std::make_move_iterator(dense.end()));
+    img.features = std::move(features);
 }
 
 struct SceneResult
@@ -592,7 +594,7 @@ TEST_F(DensifyMultiviewTest, progress_callback_not_called_concurrently)
         img.orientation = cam_ori;
         feature_2d f;
         f.location = Eigen::Vector2d(100, 100);
-        img.features.push_back(f);
+        img.features = std::vector<feature_2d>{f};
         graph.addNode(std::move(img));
     }
     std::vector<surface_model> surfaces(1);

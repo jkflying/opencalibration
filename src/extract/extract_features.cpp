@@ -18,10 +18,9 @@ std::vector<feature_2d> to_features(const std::vector<cv::KeyPoint> &keypoints, 
         feature_2d point;
         point.location = unscale_pixel({keypoints[i].pt.x, keypoints[i].pt.y}, scale);
         point.strength = keypoints[i].response;
-        point.descriptor.reset();
         const uchar *row = &descriptors.at<uchar>(i, 0);
         for (int j = 0; j < feature_2d::DESCRIPTOR_BITS; j++)
-            point.descriptor[j] = (row[j >> 3] >> (j & 7)) & 1;
+            point.descriptor.set(j, (row[j >> 3] >> (j & 7)) & 1);
         features.push_back(point);
     }
     return features;

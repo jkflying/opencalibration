@@ -185,11 +185,11 @@ set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Open source camera calibration and orthop
 set(CPACK_PACKAGE_CONTACT "maintainer@opencalibration.org")
 
 set(CPACK_DEBIAN_PACKAGE_DEPENDS
-    "libeigen3-dev, libceres-dev, libopencv-dev, libgdal-dev, rapidjson-dev, libspdlog-dev, libtinyxml2-dev, libzstd-dev, libmimalloc-dev")
+    "libeigen3-dev, libceres-dev, libopencv-dev, libgdal-dev, rapidjson-dev, libspdlog-dev, libtinyxml2-dev, libsqlite3-dev, libmimalloc-dev")
 set(CPACK_DEBIAN_PACKAGE_SECTION "science")
 
 set(CPACK_RPM_PACKAGE_REQUIRES
-    "eigen3-devel, ceres-solver-devel, opencv-devel, gdal-devel, rapidjson-devel, spdlog-devel, tinyxml2-devel, libzstd-devel, mimalloc-devel")
+    "eigen3-devel, ceres-solver-devel, opencv-devel, gdal-devel, rapidjson-devel, spdlog-devel, tinyxml2-devel, libsqlite3-devel, mimalloc-devel")
 set(CPACK_RPM_PACKAGE_LICENSE "MIT")
 
 include(CPack)

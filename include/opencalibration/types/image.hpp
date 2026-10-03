@@ -1,7 +1,7 @@
 #pragma once
 
 #include <opencalibration/types/camera_model.hpp>
-#include <opencalibration/types/feature_2d.hpp>
+#include <opencalibration/types/feature_set.hpp>
 #include <opencalibration/types/image_metadata.hpp>
 #include <opencalibration/types/raster.hpp>
 
@@ -21,7 +21,7 @@ struct image
 
     // Loaded / processed from image data
     image_metadata metadata;
-    std::vector<feature_2d> features;
+    FeatureSet features;
     size_t num_sparse_features = 0;
     RGBRaster thumbnail;
     Eigen::Vector3d gps_position{NAN, NAN, NAN};

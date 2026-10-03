@@ -10,7 +10,7 @@ TEST(match_unit, each_feature_matched_at_most_once)
     auto featureWithBits = [](int first, int count) {
         feature_2d f;
         for (int i = first; i < first + count; i++)
-            f.descriptor.set(i);
+            f.descriptor.set(i, true);
         return f;
     };
     const std::vector<feature_2d> set_1 = {featureWithBits(0, 100), featureWithBits(0, 102)};

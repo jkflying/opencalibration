@@ -8,6 +8,7 @@
 #include <ankerl/unordered_dense.h>
 #include <spdlog/spdlog.h>
 
+#include <chrono>
 #include <memory>
 
 namespace opencalibration
@@ -15,34 +16,44 @@ namespace opencalibration
 
 namespace
 {
-using CoarseIndices = ankerl::unordered_dense::map<size_t, std::vector<size_t>>;
-
-// each image appears in many pairs, so subsample its coarse features once rather than per pair
-CoarseIndices subsampleCoarseFeatures(const MeasurementGraph &graph, const std::vector<NodeLinks> &links)
+struct LinkFeatures
 {
-    CoarseIndices coarse_indices;
+    std::vector<feature_2d> features;
+    std::vector<size_t> coarse_indices;
+};
+using WorkingSet = ankerl::unordered_dense::map<size_t, LinkFeatures>;
+
+WorkingSet loadWorkingSet(const MeasurementGraph &graph, const std::vector<NodeLinks> &links)
+{
+    PerformanceMeasure p("Link load features");
+    WorkingSet working_set;
     for (const auto &link : links)
     {
-        coarse_indices.try_emplace(link.node_id);
+        working_set.try_emplace(link.node_id);
         for (size_t link_id : link.link_ids)
             if (graph.getNode(link_id) != nullptr)
-                coarse_indices.try_emplace(link_id);
+                working_set.try_emplace(link_id);
     }
 
     std::vector<size_t> node_ids;
-    node_ids.reserve(coarse_indices.size());
-    for (const auto &entry : coarse_indices)
+    node_ids.reserve(working_set.size());
+    for (const auto &entry : working_set)
         node_ids.push_back(entry.first);
 
+    const auto start = std::chrono::steady_clock::now();
 #pragma omp parallel for schedule(dynamic, 1)
     for (size_t i = 0; i < node_ids.size(); i++)
     {
         const image &img = graph.getNode(node_ids[i])->payload;
+        LinkFeatures &entry = working_set.find(node_ids[i])->second;
         const double coarse_spacing_pixels = 40.0;
-        coarse_indices.find(node_ids[i])->second =
-            spatially_subsample_feature_indices(img.features, coarse_spacing_pixels, img.num_sparse_features);
+        entry.features = img.features.load();
+        entry.coarse_indices =
+            spatially_subsample_feature_indices(entry.features, coarse_spacing_pixels, img.num_sparse_features);
     }
-    return coarse_indices;
+    spdlog::info("Link: loaded features of {} images for {} new in {:.2f}s", working_set.size(), links.size(),
+                 std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
+    return working_set;
 }
 } // namespace
 
@@ -86,7 +97,7 @@ std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph
 
     funcs.reserve(funcs_required);
     _all_inlier_measurements.reserve(funcs_required);
-    auto coarse_indices = std::make_shared<const CoarseIndices>(subsampleCoarseFeatures(graph, _links));
+    auto working_set = std::make_shared<const WorkingSet>(loadWorkingSet(graph, _links));
     for (size_t i = 0; i < _links.size(); i++)
     {
         const auto &node_nearest = _links[i];
@@ -105,17 +116,20 @@ std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph
                 continue;
             }
             const image &near_image = node->payload;
-            auto run_func = [coarse_indices, i, node_id, &near_image, match_node_id, &img, &mtx, &meas]() {
+            auto run_func = [working_set, i, node_id, &near_image, match_node_id, &img, &mtx, &meas]() {
                 PerformanceMeasure p("Link runner coarse match");
                 camera_relations relations;
+                const LinkFeatures &source = working_set->at(node_id);
+                const LinkFeatures &dest = working_set->at(match_node_id);
+                const auto &features = source.features;
+                const auto &near_features = dest.features;
 
                 std::vector<feature_match> coarse_matches =
-                    match_features_subset(img.features, near_image.features, coarse_indices->at(node_id),
-                                          coarse_indices->at(match_node_id));
+                    match_features_subset(features, near_features, source.coarse_indices, dest.coarse_indices);
 
                 p.reset("Link runner coarse undistort");
                 std::vector<correspondence> coarse_correspondences =
-                    distort_keypoints(img.features, near_image.features, coarse_matches, *img.model, *near_image.model);
+                    distort_keypoints(features, near_features, coarse_matches, *img.model, *near_image.model);
 
                 p.reset("Link runner coarse ransac");
                 homography_model h;
@@ -134,7 +148,7 @@ std::vector<std::function<void()>> LinkStage::get_runners(const MeasurementGraph
                 if (can_decompose && num_coarse_inliers > h.MINIMUM_POINTS * 1.5)
                 {
                     relations.matches = coarse_matches;
-                    assembleInliers(relations.matches, coarse_inliers, img.features, near_image.features,
+                    assembleInliers(relations.matches, coarse_inliers, features, near_features,
                                     relations.inlier_matches);
                 }
                 std::lock_guard<std::mutex> lock(mtx);

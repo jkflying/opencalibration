@@ -10,4 +10,4 @@ target_include_directories(oc_io PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 target_include_directories(oc_io SYSTEM PRIVATE ${OpenCV_INCLUDE_DIRS})
-target_link_libraries(oc_io PUBLIC spdlog::spdlog PRIVATE zstd)
+target_link_libraries(oc_io PUBLIC spdlog::spdlog PRIVATE sqlite3)

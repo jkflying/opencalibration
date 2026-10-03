@@ -94,29 +94,6 @@ TEST_F(CheckpointTest, save_and_load_with_surfaces)
     EXPECT_DOUBLE_EQ(10.0, loaded.surfaces[1].cloud[0][0].x());
 }
 
-TEST_F(CheckpointTest, load_ignores_wrongly_typed_metadata)
-{
-    // GIVEN: a saved checkpoint whose metadata was edited to hold fields of the wrong JSON type
-    CheckpointData data;
-    data.state = PipelineState::FINAL_GLOBAL_RELAX;
-    ASSERT_TRUE(saveCheckpoint(data, test_checkpoint_dir));
-    {
-        std::ofstream out(std::filesystem::path(test_checkpoint_dir) / "00_FINAL_GLOBAL_RELAX_metadata.json");
-        out << R"({"version":2,"state":5,"state_run_count":"x","origin_latitude":"north","origin_longitude":[],)"
-               R"("surface_count":-1,"color_balance":{"success":1,"final_cost":"x","num_iterations":1.5,)"
-               R"("horizontal_view_dir_log_cbrt_gain":"x","images":[{"id":"a"},7],"models":{}}})";
-    }
-
-    // WHEN: we load it
-    CheckpointData loaded;
-    const bool ok = loadCheckpoint(test_checkpoint_dir, loaded);
-
-    // THEN: loading succeeds and the malformed fields keep their defaults
-    EXPECT_TRUE(ok);
-    EXPECT_EQ(loaded.origin_latitude, 0.0);
-    EXPECT_TRUE(loaded.color_balance.per_image_params.empty());
-}
-
 TEST_F(CheckpointTest, save_and_load_color_balance)
 {
     // GIVEN: a checkpoint holding a solved color balance
@@ -238,72 +215,56 @@ TEST_F(CheckpointTest, resume_follows_execution_order)
     EXPECT_TRUE(resumed_earlier);
 }
 
-TEST_F(CheckpointTest, load_malformed_metadata)
+TEST_F(CheckpointTest, load_corrupt_project_db)
 {
     std::filesystem::create_directories(test_checkpoint_dir);
-    {
-        std::ofstream out(test_checkpoint_dir + "/metadata.json");
-        out << "not valid json{{{";
-    }
-    {
-        std::ofstream out(test_checkpoint_dir + "/graph.json");
-        out << "{}";
-    }
+    std::ofstream(test_checkpoint_dir + "/project.db") << "not a database";
 
     CheckpointData data;
     EXPECT_FALSE(loadCheckpoint(test_checkpoint_dir, data));
+    EXPECT_TRUE(listCheckpointStages(test_checkpoint_dir).empty());
 }
 
-TEST_F(CheckpointTest, load_wrong_version)
+TEST_F(CheckpointTest, stages_store_only_changes)
 {
-    std::filesystem::create_directories(test_checkpoint_dir);
-    {
-        std::ofstream out(test_checkpoint_dir + "/metadata.json");
-        out << R"({"version": 999})";
-    }
-    {
-        std::ofstream out(test_checkpoint_dir + "/graph.json");
-        out << "{}";
-    }
-
-    CheckpointData data;
-    EXPECT_FALSE(loadCheckpoint(test_checkpoint_dir, data));
-}
-
-TEST_F(CheckpointTest, load_missing_graph)
-{
-    std::filesystem::create_directories(test_checkpoint_dir);
-    {
-        std::ofstream out(test_checkpoint_dir + "/metadata.json");
-        out << R"({"version": 1, "state": "INITIAL_PROCESSING", "state_run_count": 0, "origin_latitude": 0, "origin_longitude": 0, "surface_count": 0})";
-    }
-
-    CheckpointData data;
-    EXPECT_FALSE(loadCheckpoint(test_checkpoint_dir, data));
-}
-
-TEST_F(CheckpointTest, stages_share_features_file)
-{
+    // GIVEN: a calibrated three image graph saved as a first stage
     Pipeline p(1);
-    p.add({TEST_DATA_DIR "P2530253.JPG"});
+    p.add({TEST_DATA_DIR "P2530253.JPG", TEST_DATA_DIR "P2540254.JPG", TEST_DATA_DIR "P2550255.JPG"});
     while (p.getState() != PipelineState::COMPLETE)
     {
         p.iterateOnce();
     }
-    ASSERT_GT(p.getGraph().cnodebegin()->second.payload.features.size(), 0u);
+    CheckpointData first;
+    first.graph = p.getGraph();
+    first.state = PipelineState::INITIAL_GLOBAL_RELAX;
+    first.surfaces.resize(2);
+    first.surfaces[1].cloud.push_back({Eigen::Vector3d(1, 2, 3)});
+    ASSERT_GT(first.graph.size_edges(), 0u);
+    ASSERT_TRUE(saveCheckpoint(first, test_checkpoint_dir));
 
-    ASSERT_TRUE(p.saveCheckpoint(test_checkpoint_dir));
-    const auto features_path = std::filesystem::path(test_checkpoint_dir) / "features.json.zst";
-    const auto features_written = std::filesystem::last_write_time(features_path);
-    ASSERT_TRUE(p.saveCheckpoint(test_checkpoint_dir));
-    EXPECT_EQ(features_written, std::filesystem::last_write_time(features_path));
+    // WHEN: a second stage moves a node, drops an edge and a surface, and a third repeats it unchanged
+    CheckpointData second;
+    second.graph = first.graph;
+    second.state = PipelineState::COMPLETE;
+    second.graph.nodebegin()->second.payload.position.x() += 1;
+    second.graph.removeEdge(second.graph.cedgebegin()->first);
+    second.surfaces.resize(1);
+    ASSERT_TRUE(saveCheckpoint(second, test_checkpoint_dir));
+    const auto db_size = std::filesystem::file_size(test_checkpoint_dir + "/project.db");
+    ASSERT_TRUE(saveCheckpoint(second, test_checkpoint_dir));
+    EXPECT_LT(std::filesystem::file_size(test_checkpoint_dir + "/project.db"), db_size + 16384);
 
+    // THEN: every stage loads back as it was saved, features included
     const auto stages = listCheckpointStages(test_checkpoint_dir);
-    ASSERT_EQ(2u, stages.size());
-    EXPECT_NE(stages[0].name, stages[1].name);
-    EXPECT_EQ(PipelineState::COMPLETE, stages[0].state);
-
-    CheckpointData loaded;
-    ASSERT_TRUE(loadCheckpoint(test_checkpoint_dir, loaded, stages[0].name));
-    EXPECT_TRUE(loaded.graph == p.getGraph());
+    ASSERT_EQ(3u, stages.size());
+    for (const auto &[stage, expected] :
+         {std::make_pair(stages[0].name, &first), {stages[1].name, &second}, {stages[2].name, &second}})
+    {
+        CheckpointData loaded;
+        ASSERT_TRUE(loadCheckpoint(test_checkpoint_dir, loaded, stage));
+        EXPECT_TRUE(loaded.graph == expected->graph) << stage;
+        EXPECT_EQ(expected->state, loaded.state);
+        ASSERT_EQ(expected->surfaces.size(), loaded.surfaces.size());
+        EXPECT_EQ(expected->surfaces.back().cloud, loaded.surfaces.back().cloud);
+    }
 }

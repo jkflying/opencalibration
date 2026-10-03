@@ -59,9 +59,7 @@ std::vector<feature_match> match_features_subset(const std::vector<feature_2d> &
                                                  const std::vector<size_t> &indices_1,
                                                  const std::vector<size_t> &indices_2)
 {
-    using descriptor_t = std::bitset<feature_2d::DESCRIPTOR_BITS>;
-
-    std::vector<descriptor_t> packed_2(indices_2.size());
+    std::vector<Descriptor> packed_2(indices_2.size());
     for (size_t k = 0; k < indices_2.size(); k++)
     {
         packed_2[k] = set_2[indices_2[k]].descriptor;
@@ -72,13 +70,13 @@ std::vector<feature_match> match_features_subset(const std::vector<feature_2d> &
 
     for (size_t i : indices_1)
     {
-        const descriptor_t &desc1 = set_1[i].descriptor;
+        const Descriptor &desc1 = set_1[i].descriptor;
         feature_match best_match{i, 0, std::numeric_limits<double>::infinity()};
         double second_best_distance = std::numeric_limits<double>::infinity();
 
         for (size_t k = 0; k < packed_2.size(); k++)
         {
-            double distance = (desc1 ^ packed_2[k]).count() * (1.0 / feature_2d::DESCRIPTOR_BITS);
+            double distance = hammingDistance(desc1, packed_2[k]) * (1.0 / feature_2d::DESCRIPTOR_BITS);
             if (distance < second_best_distance)
             {
                 if (distance < best_match.distance)

@@ -18,12 +18,13 @@
 namespace
 {
 
-template <size_t N> std::string bitset_to_bytes(const std::bitset<N> &bs)
+std::string descriptor_to_bytes(const opencalibration::Descriptor &d)
 {
+    constexpr int N = opencalibration::feature_2d::DESCRIPTOR_BITS;
     std::string result;
     result.resize((N + 7) >> 3, '\0');
-    for (int j = 0; j < int(N); j++)
-        result[j >> 3] |= (bs[j] << (j & 7));
+    for (int j = 0; j < N; j++)
+        result[j >> 3] |= (d[j] << (j & 7));
     return result;
 }
 
@@ -70,7 +71,7 @@ template <typename Writer> void writeFeatures(Writer &writer, const std::vector<
         writer.Double(feature.strength);
 
         writer.Key("descriptor");
-        std::string descriptor = bitset_to_bytes(feature.descriptor);
+        std::string descriptor = descriptor_to_bytes(feature.descriptor);
         std::string base64_descriptor;
         base64_descriptor.resize(Base64encode_len(descriptor.size()));
         int actual_size = Base64encode(base64_descriptor.data(), descriptor.c_str(), descriptor.size());
@@ -237,24 +238,340 @@ template <> class Serializer<MeasurementGraph>
         return true;
     }
 
-    static bool features_to_json(const MeasurementGraph &graph, std::ostream &out)
+    template <typename Writer>
+    static void writeNode(Writer &writer, const MeasurementGraph::Node &node, bool include_features)
     {
-        Stream stream;
-        stream.os = &out;
-        rapidjson::Writer<Stream> writer(stream);
-
         writer.StartObject();
-        for (const auto &kv : graph._nodes)
+        writer.Key("path");
+        writer.String(node.payload.path.c_str());
+
+        writer.Key("position");
+        writer.StartArray();
+        for (int i = 0; i < 3; i++)
         {
-            const std::string node_id_str = std::to_string(kv.first);
-            writer.Key(node_id_str.c_str(), node_id_str.size());
-            writeFeatures(writer, kv.second.payload.features);
+            writer.Double(node.payload.position[i]);
+        }
+        writer.EndArray();
+
+        writer.Key("gps_position");
+        writer.StartArray();
+        for (int i = 0; i < 3; i++)
+        {
+            writer.Double(node.payload.gps_position[i]);
+        }
+        writer.EndArray();
+
+        writer.Key("orientation");
+        writer.StartArray();
+        for (int i = 0; i < 4; i++)
+        {
+            writer.Double(node.payload.orientation.coeffs()[i]);
+        }
+        writer.EndArray();
+
+        cv::Mat cvThumbnail = rasterToCv(node.payload.thumbnail);
+        std::vector<uchar> thumbPng;
+        cv::imencode(".png", cvThumbnail, thumbPng);
+        std::string b64Thumb;
+        b64Thumb.resize(Base64encode_len(thumbPng.size()));
+        const int actual_size =
+            Base64encode(b64Thumb.data(), reinterpret_cast<char *>(thumbPng.data()), thumbPng.size());
+        writer.Key("thumbnail");
+        writer.String(b64Thumb.c_str(), actual_size - 1);
+
+        writer.Key("model");
+        writer.StartObject();
+        {
+            writer.Key("id");
+            writer.Int64(node.payload.model->id);
+
+            writer.Key("dimensions");
+            writer.StartArray();
+            {
+                writer.Uint64(node.payload.model->pixels_cols);
+                writer.Uint64(node.payload.model->pixels_rows);
+            }
+            writer.EndArray();
+
+            writer.Key("focal_length");
+            writer.Double(node.payload.model->focal_length_pixels);
+
+            writer.Key("principal");
+            writer.StartArray();
+            {
+                writer.Double(node.payload.model->principle_point[0]);
+                writer.Double(node.payload.model->principle_point[1]);
+            }
+            writer.EndArray();
+
+            writer.Key("radial_distortion");
+            writer.StartArray();
+            {
+                writer.Double(node.payload.model->radial_distortion[0]);
+                writer.Double(node.payload.model->radial_distortion[1]);
+                writer.Double(node.payload.model->radial_distortion[2]);
+            }
+            writer.EndArray();
+
+            writer.Key("tangential_distortion");
+            writer.StartArray();
+            {
+                writer.Double(node.payload.model->tangential_distortion[0]);
+                writer.Double(node.payload.model->tangential_distortion[1]);
+            }
+            writer.EndArray();
+
+            writer.Key("projection");
+            switch (node.payload.model->projection_type)
+            {
+            case ProjectionType::PLANAR:
+                writer.String("planar");
+                break;
+            case ProjectionType::UNKNOWN:
+                writer.String("UNKNOWN");
+                break;
+            }
         }
         writer.EndObject();
-        return true;
+
+        writer.Key("edges");
+        writer.StartArray();
+        std::vector<size_t> sortedEdges;
+        sortedEdges.insert(sortedEdges.end(), node.getEdges().begin(), node.getEdges().end());
+        std::sort(sortedEdges.begin(), sortedEdges.end());
+        for (const auto &edge : sortedEdges)
+        {
+            std::string edge_id = std::to_string(edge);
+            writer.String(edge_id.c_str(), edge_id.size());
+        }
+        writer.EndArray();
+
+        writer.Key("metadata");
+        writer.StartObject();
+        {
+            writer.Key("camera_info");
+            writer.StartObject();
+            {
+                const auto &camera_info = node.payload.metadata.camera_info;
+                writer.Key("dimensions");
+                writer.StartArray();
+                {
+                    writer.Uint64(camera_info.width_px);
+                    writer.Uint64(camera_info.height_px);
+                }
+                writer.EndArray();
+
+                writer.Key("focal_length_px");
+                writer.Double(camera_info.focal_length_px);
+
+                writer.Key("principal");
+                writer.StartArray();
+                {
+                    writer.Double(camera_info.principal_point_px[0]);
+                    writer.Double(camera_info.principal_point_px[1]);
+                }
+                writer.EndArray();
+
+                writer.Key("make");
+                writer.String(camera_info.make.c_str());
+
+                writer.Key("model");
+                writer.String(camera_info.model.c_str());
+
+                writer.Key("serial_no");
+                writer.String(camera_info.serial_no.c_str());
+
+                writer.Key("lens_make");
+                writer.String(camera_info.lens_make.c_str());
+
+                writer.Key("lens_model");
+                writer.String(camera_info.lens_model.c_str());
+            }
+            writer.EndObject();
+
+            writer.Key("capture_info");
+            writer.StartObject();
+            {
+                const auto &capture_info = node.payload.metadata.capture_info;
+                writer.Key("latitude");
+                writer.Double(capture_info.latitude);
+
+                writer.Key("longitude");
+                writer.Double(capture_info.longitude);
+
+                writer.Key("altitude");
+                writer.Double(capture_info.altitude);
+
+                writer.Key("relative_altitude");
+                writer.Double(capture_info.relativeAltitude);
+
+                writer.Key("roll");
+                writer.Double(capture_info.rollDegree);
+
+                writer.Key("pitch");
+                writer.Double(capture_info.pitchDegree);
+
+                writer.Key("yaw");
+                writer.Double(capture_info.yawDegree);
+
+                writer.Key("accuracy_xy");
+                writer.Double(capture_info.accuracyXY);
+
+                writer.Key("accuracy_z");
+                writer.Double(capture_info.accuracyZ);
+
+                writer.Key("datum");
+                writer.String(capture_info.datum.c_str());
+
+                writer.Key("timestamp");
+                writer.String(capture_info.timestamp.c_str());
+
+                writer.Key("datestamp");
+                writer.String(capture_info.datestamp.c_str());
+            }
+            writer.EndObject();
+        }
+        writer.EndObject();
+
+        if (include_features)
+        {
+            writer.Key("features");
+            writeFeatures(writer, node.payload.features.load());
+        }
+
+        writer.Key("num_sparse_features");
+        writer.Uint64(node.payload.num_sparse_features);
+        writer.EndObject();
     }
 
-    static bool to_json(const MeasurementGraph &graph, std::ostream &out, bool include_features)
+    template <typename Writer> static void writeEdge(Writer &writer, const MeasurementGraph::Edge &edge)
+    {
+        writer.StartObject();
+        writer.Key("source");
+        std::string source_id = std::to_string(edge.getSource());
+        writer.String(source_id.c_str(), source_id.size());
+
+        writer.Key("dest");
+        std::string dest_id = std::to_string(edge.getDest());
+        writer.String(dest_id.c_str(), dest_id.size());
+
+        writer.Key("matches");
+        writer.StartArray();
+        for (const auto &match : edge.payload.matches)
+        {
+            writer.StartArray();
+            writer.Int64(match.feature_index_1);
+            writer.Int64(match.feature_index_2);
+            writer.Double(match.distance);
+            writer.EndArray();
+        }
+        writer.EndArray();
+
+        writer.Key("inlier_matches");
+        writer.StartArray();
+        for (const auto &pair : edge.payload.inlier_matches)
+        {
+            writer.StartArray();
+
+            writer.StartArray();
+            {
+                writer.Double(pair.pixel_1.x());
+                writer.Double(pair.pixel_1.y());
+            }
+            writer.EndArray();
+
+            writer.StartArray();
+            {
+                writer.Double(pair.pixel_2.x());
+                writer.Double(pair.pixel_2.y());
+            }
+            writer.EndArray();
+
+            writer.Int64(pair.feature_index_1);
+            writer.Int64(pair.feature_index_2);
+
+            writer.Int64(pair.match_index);
+
+            writer.EndArray();
+        }
+        writer.EndArray();
+
+        writer.Key("relation");
+        writer.StartArray();
+        for (int i = 0; i < 3; i++)
+        {
+            for (int j = 0; j < 3; j++)
+            {
+                writer.Double(edge.payload.ransac_relation(i, j));
+            }
+        }
+        writer.EndArray();
+
+        writer.Key("relation_type");
+        switch (edge.payload.relationType)
+        {
+        case camera_relations::RelationType::HOMOGRAPHY:
+            writer.String("homography");
+            break;
+        case camera_relations::RelationType::FUNDAMENTAL_MATRIX:
+            writer.String("fundamental_matrix");
+            break;
+        case camera_relations::RelationType::ESSENTIAL_MATRIX:
+            writer.String("essential_matrix");
+            break;
+        case camera_relations::RelationType::UNKNOWN:
+            writer.String("UNKNOWN");
+            break;
+        }
+
+        writer.Key("relative_pose");
+        writer.StartArray();
+        for (const auto &pose : edge.payload.relative_poses)
+        {
+            writer.StartObject();
+
+            writer.Key("score");
+            writer.Int(pose.score);
+
+            writer.Key("orientation");
+            writer.StartArray();
+            for (int i = 0; i < 4; i++)
+            {
+                writer.Double(pose.orientation.coeffs()(i));
+            }
+            writer.EndArray();
+
+            writer.Key("position");
+            writer.StartArray();
+            for (int i = 0; i < 3; i++)
+            {
+                writer.Double(pose.position(i));
+            }
+            writer.EndArray();
+
+            writer.EndObject();
+        }
+        writer.EndArray();
+        writer.EndObject();
+    }
+
+    template <typename Write> static std::string row(Write &&write)
+    {
+        rapidjson::StringBuffer buffer;
+        rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+        write(writer);
+        return {buffer.GetString(), buffer.GetSize()};
+    }
+    static std::string nodeRow(const MeasurementGraph &graph, size_t node_id)
+    {
+        return row([&](auto &writer) { writeNode(writer, graph._nodes.find(node_id)->second, false); });
+    }
+    static std::string edgeRow(const MeasurementGraph &graph, size_t edge_id)
+    {
+        return row([&](auto &writer) { writeEdge(writer, graph._edges.find(edge_id)->second); });
+    }
+
+    static bool to_json(const MeasurementGraph &graph, std::ostream &out)
     {
         Stream stream;
         stream.os = &out;
@@ -268,7 +585,6 @@ template <> class Serializer<MeasurementGraph>
 
         writer.Key("nodes");
         writer.StartObject();
-        // sort nodes by id to make repeatable with unordered map
         std::vector<size_t> node_ids;
         node_ids.reserve(graph._nodes.size());
         for (const auto &kv : graph._nodes)
@@ -281,209 +597,7 @@ template <> class Serializer<MeasurementGraph>
             std::string node_id_str = std::to_string(node_id);
             const auto &node = graph._nodes.find(node_id)->second;
             writer.Key(node_id_str.c_str(), node_id_str.size());
-            writer.StartObject();
-            {
-                writer.Key("path");
-                writer.String(node.payload.path.c_str());
-
-                writer.Key("position");
-                writer.StartArray();
-                for (int i = 0; i < 3; i++)
-                {
-                    writer.Double(node.payload.position[i]);
-                }
-                writer.EndArray();
-
-                writer.Key("gps_position");
-                writer.StartArray();
-                for (int i = 0; i < 3; i++)
-                {
-                    writer.Double(node.payload.gps_position[i]);
-                }
-                writer.EndArray();
-
-                writer.Key("orientation");
-                writer.StartArray();
-                for (int i = 0; i < 4; i++)
-                {
-                    writer.Double(node.payload.orientation.coeffs()[i]);
-                }
-                writer.EndArray();
-
-                cv::Mat cvThumbnail = rasterToCv(node.payload.thumbnail);
-                std::vector<uchar> thumbPng;
-                cv::imencode(".png", cvThumbnail, thumbPng);
-                std::string b64Thumb;
-                b64Thumb.resize(Base64encode_len(thumbPng.size()));
-                const int actual_size =
-                    Base64encode(b64Thumb.data(), reinterpret_cast<char *>(thumbPng.data()), thumbPng.size());
-                writer.Key("thumbnail");
-                writer.String(b64Thumb.c_str(), actual_size - 1);
-
-                writer.Key("model");
-                writer.StartObject();
-                {
-                    writer.Key("id");
-                    writer.Int64(node.payload.model->id);
-
-                    writer.Key("dimensions");
-                    writer.StartArray();
-                    {
-                        writer.Uint64(node.payload.model->pixels_cols);
-                        writer.Uint64(node.payload.model->pixels_rows);
-                    }
-                    writer.EndArray();
-
-                    writer.Key("focal_length");
-                    writer.Double(node.payload.model->focal_length_pixels);
-
-                    writer.Key("principal");
-                    writer.StartArray();
-                    {
-                        writer.Double(node.payload.model->principle_point[0]);
-                        writer.Double(node.payload.model->principle_point[1]);
-                    }
-                    writer.EndArray();
-
-                    writer.Key("radial_distortion");
-                    writer.StartArray();
-                    {
-                        writer.Double(node.payload.model->radial_distortion[0]);
-                        writer.Double(node.payload.model->radial_distortion[1]);
-                        writer.Double(node.payload.model->radial_distortion[2]);
-                    }
-                    writer.EndArray();
-
-                    writer.Key("tangential_distortion");
-                    writer.StartArray();
-                    {
-                        writer.Double(node.payload.model->tangential_distortion[0]);
-                        writer.Double(node.payload.model->tangential_distortion[1]);
-                    }
-                    writer.EndArray();
-
-                    writer.Key("projection");
-                    switch (node.payload.model->projection_type)
-                    {
-                    case ProjectionType::PLANAR:
-                        writer.String("planar");
-                        break;
-                    case ProjectionType::UNKNOWN:
-                        writer.String("UNKNOWN");
-                        break;
-                    }
-                }
-                writer.EndObject();
-
-                writer.Key("edges");
-                writer.StartArray();
-                std::vector<size_t> sortedEdges;
-                sortedEdges.insert(sortedEdges.end(), node.getEdges().begin(), node.getEdges().end());
-                std::sort(sortedEdges.begin(), sortedEdges.end());
-                for (const auto &edge : sortedEdges)
-                {
-                    std::string edge_id = std::to_string(edge);
-                    writer.String(edge_id.c_str(), edge_id.size());
-                }
-                writer.EndArray();
-
-                writer.Key("metadata");
-                writer.StartObject();
-                {
-                    writer.Key("camera_info");
-                    writer.StartObject();
-                    {
-                        const auto &camera_info = node.payload.metadata.camera_info;
-                        writer.Key("dimensions");
-                        writer.StartArray();
-                        {
-                            writer.Uint64(camera_info.width_px);
-                            writer.Uint64(camera_info.height_px);
-                        }
-                        writer.EndArray();
-
-                        writer.Key("focal_length_px");
-                        writer.Double(camera_info.focal_length_px);
-
-                        writer.Key("principal");
-                        writer.StartArray();
-                        {
-                            writer.Double(camera_info.principal_point_px[0]);
-                            writer.Double(camera_info.principal_point_px[1]);
-                        }
-                        writer.EndArray();
-
-                        writer.Key("make");
-                        writer.String(camera_info.make.c_str());
-
-                        writer.Key("model");
-                        writer.String(camera_info.model.c_str());
-
-                        writer.Key("serial_no");
-                        writer.String(camera_info.serial_no.c_str());
-
-                        writer.Key("lens_make");
-                        writer.String(camera_info.lens_make.c_str());
-
-                        writer.Key("lens_model");
-                        writer.String(camera_info.lens_model.c_str());
-                    }
-                    writer.EndObject();
-
-                    writer.Key("capture_info");
-                    writer.StartObject();
-                    {
-                        const auto &capture_info = node.payload.metadata.capture_info;
-                        writer.Key("latitude");
-                        writer.Double(capture_info.latitude);
-
-                        writer.Key("longitude");
-                        writer.Double(capture_info.longitude);
-
-                        writer.Key("altitude");
-                        writer.Double(capture_info.altitude);
-
-                        writer.Key("relative_altitude");
-                        writer.Double(capture_info.relativeAltitude);
-
-                        writer.Key("roll");
-                        writer.Double(capture_info.rollDegree);
-
-                        writer.Key("pitch");
-                        writer.Double(capture_info.pitchDegree);
-
-                        writer.Key("yaw");
-                        writer.Double(capture_info.yawDegree);
-
-                        writer.Key("accuracy_xy");
-                        writer.Double(capture_info.accuracyXY);
-
-                        writer.Key("accuracy_z");
-                        writer.Double(capture_info.accuracyZ);
-
-                        writer.Key("datum");
-                        writer.String(capture_info.datum.c_str());
-
-                        writer.Key("timestamp");
-                        writer.String(capture_info.timestamp.c_str());
-
-                        writer.Key("datestamp");
-                        writer.String(capture_info.datestamp.c_str());
-                    }
-                    writer.EndObject();
-                }
-                writer.EndObject();
-
-                if (include_features)
-                {
-                    writer.Key("features");
-                    writeFeatures(writer, node.payload.features);
-                }
-
-                writer.Key("num_sparse_features");
-                writer.Uint64(node.payload.num_sparse_features);
-            }
-            writer.EndObject();
+            writeNode(writer, node, true);
         }
         writer.EndObject();
 
@@ -503,115 +617,7 @@ template <> class Serializer<MeasurementGraph>
                 const auto &edge = graph._edges.find(edge_id)->second;
 
                 writer.Key(edge_id_str.c_str(), edge_id_str.size());
-                writer.StartObject();
-                {
-                    writer.Key("source");
-                    std::string source_id = std::to_string(edge.getSource());
-                    writer.String(source_id.c_str(), source_id.size());
-
-                    writer.Key("dest");
-                    std::string dest_id = std::to_string(edge.getDest());
-                    writer.String(dest_id.c_str(), dest_id.size());
-
-                    writer.Key("matches");
-                    writer.StartArray();
-                    for (const auto &match : edge.payload.matches)
-                    {
-                        writer.StartArray();
-                        writer.Int64(match.feature_index_1);
-                        writer.Int64(match.feature_index_2);
-                        writer.Double(match.distance);
-                        writer.EndArray();
-                    }
-                    writer.EndArray();
-
-                    writer.Key("inlier_matches");
-                    writer.StartArray();
-                    for (const auto &pair : edge.payload.inlier_matches)
-                    {
-                        writer.StartArray();
-
-                        writer.StartArray();
-                        {
-                            writer.Double(pair.pixel_1.x());
-                            writer.Double(pair.pixel_1.y());
-                        }
-                        writer.EndArray();
-
-                        writer.StartArray();
-                        {
-                            writer.Double(pair.pixel_2.x());
-                            writer.Double(pair.pixel_2.y());
-                        }
-                        writer.EndArray();
-
-                        writer.Int64(pair.feature_index_1);
-                        writer.Int64(pair.feature_index_2);
-
-                        writer.Int64(pair.match_index);
-
-                        writer.EndArray();
-                    }
-                    writer.EndArray();
-
-                    writer.Key("relation");
-                    writer.StartArray();
-                    for (int i = 0; i < 3; i++)
-                    {
-                        for (int j = 0; j < 3; j++)
-                        {
-                            writer.Double(edge.payload.ransac_relation(i, j));
-                        }
-                    }
-                    writer.EndArray();
-
-                    writer.Key("relation_type");
-                    switch (edge.payload.relationType)
-                    {
-                    case camera_relations::RelationType::HOMOGRAPHY:
-                        writer.String("homography");
-                        break;
-                    case camera_relations::RelationType::FUNDAMENTAL_MATRIX:
-                        writer.String("fundamental_matrix");
-                        break;
-                    case camera_relations::RelationType::ESSENTIAL_MATRIX:
-                        writer.String("essential_matrix");
-                        break;
-                    case camera_relations::RelationType::UNKNOWN:
-                        writer.String("UNKNOWN");
-                        break;
-                    }
-
-                    writer.Key("relative_pose");
-                    writer.StartArray();
-                    for (const auto &pose : edge.payload.relative_poses)
-                    {
-                        writer.StartObject();
-
-                        writer.Key("score");
-                        writer.Int(pose.score);
-
-                        writer.Key("orientation");
-                        writer.StartArray();
-                        for (int i = 0; i < 4; i++)
-                        {
-                            writer.Double(pose.orientation.coeffs()(i));
-                        }
-                        writer.EndArray();
-
-                        writer.Key("position");
-                        writer.StartArray();
-                        for (int i = 0; i < 3; i++)
-                        {
-                            writer.Double(pose.position(i));
-                        }
-                        writer.EndArray();
-
-                        writer.EndObject();
-                    }
-                    writer.EndArray();
-                }
-                writer.EndObject();
+                writeEdge(writer, edge);
             }
             writer.EndObject();
         }
@@ -621,14 +627,19 @@ template <> class Serializer<MeasurementGraph>
     }
 };
 
-bool serialize(const MeasurementGraph &graph, std::ostream &out, bool include_features)
+bool serialize(const MeasurementGraph &graph, std::ostream &out)
 {
-    return Serializer<MeasurementGraph>::to_json(graph, out, include_features);
+    return Serializer<MeasurementGraph>::to_json(graph, out);
 }
 
-bool serializeFeatures(const MeasurementGraph &graph, std::ostream &out)
+std::string serializeNode(const MeasurementGraph &graph, size_t node_id)
 {
-    return Serializer<MeasurementGraph>::features_to_json(graph, out);
+    return Serializer<MeasurementGraph>::nodeRow(graph, node_id);
+}
+
+std::string serializeEdge(const MeasurementGraph &graph, size_t edge_id)
+{
+    return Serializer<MeasurementGraph>::edgeRow(graph, edge_id);
 }
 
 bool toVisualizedGeoJson(const MeasurementGraph &graph,

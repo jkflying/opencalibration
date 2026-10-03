@@ -80,12 +80,12 @@ std::optional<image> extract_image(const std::string &path)
 
         p.reset("Load features");
         auto extracted = extract_features(image);
-        img.features = std::move(extracted.features);
-        img.num_sparse_features = extracted.num_sparse_features;
-        for (feature_2d &f : img.features)
+        for (feature_2d &f : extracted.features)
         {
             f.location = unscale_pixel(f.location, 1.0 / reduction);
         }
+        img.features = std::move(extracted.features);
+        img.num_sparse_features = extracted.num_sparse_features;
     }
 
     img.model = std::make_shared<CameraModel>();

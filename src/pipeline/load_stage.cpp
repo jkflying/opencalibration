@@ -39,7 +39,17 @@ std::vector<std::function<void()>> LoadStage::get_runners()
     for (size_t i = 0; i < _paths_to_load.size(); i++)
     {
         auto run_func = [&, i]() {
-            auto img = extract_image(_paths_to_load[i]);
+            PerformanceMeasure p("Load store read");
+            std::optional<image> img = store ? store->loadImage(_paths_to_load[i]) : std::nullopt;
+            p.reset("");
+            if (img == std::nullopt)
+            {
+                img = extract_image(_paths_to_load[i]);
+                p.reset("Load store write");
+                if (img != std::nullopt && store && !store->saveImage(*img))
+                    spdlog::warn("Failed to cache features of {}", _paths_to_load[i]);
+                p.reset("");
+            }
             if (img != std::nullopt)
             {
                 std::lock_guard<std::mutex> lock(_images_mutex);

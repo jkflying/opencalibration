@@ -161,9 +161,10 @@ std::vector<size_t> RelaxGroup::finalize(MeasurementGraph &graph)
             const auto *source = graph.getNode(edge.getSource());
             const auto *dest = graph.getNode(edge.getDest());
 
-            const std::vector<correspondence> correspondences =
-                distort_keypoints(source->payload.features, dest->payload.features, edge.payload.matches,
-                                  *source->payload.model, *dest->payload.model);
+            const std::vector<feature_2d> source_features = source->payload.features.load();
+            const std::vector<feature_2d> dest_features = dest->payload.features.load();
+            const std::vector<correspondence> correspondences = distort_keypoints(
+                source_features, dest_features, edge.payload.matches, *source->payload.model, *dest->payload.model);
 
             std::vector<bool> inliers(correspondences.size(), false);
 
@@ -188,7 +189,7 @@ std::vector<size_t> RelaxGroup::finalize(MeasurementGraph &graph)
             edge.payload.inlier_matches.clear();
             if (can_decompose && num_inliers > h.MINIMUM_POINTS * 1.5)
             {
-                assembleInliers(edge.payload.matches, inliers, source->payload.features, dest->payload.features,
+                assembleInliers(edge.payload.matches, inliers, source_features, dest_features,
                                 edge.payload.inlier_matches);
             }
         }

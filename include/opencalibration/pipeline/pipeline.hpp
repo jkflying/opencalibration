@@ -42,6 +42,7 @@ class Pipeline
     void set_skip_camera_param_relax(bool skip);
     void set_skip_final_global_relax(bool skip);
     void set_generate_dense_mesh(bool generate);
+    bool set_project_dir(const std::string &dir);
 
     bool saveCheckpoint(const std::string &checkpoint_dir);
     bool loadCheckpoint(const std::string &checkpoint_dir, const std::string &stage = "");

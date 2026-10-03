@@ -300,6 +300,12 @@ int main(int argc, char *argv[])
         }
     });
 
+    if (!checkpoint_save.empty() && !p.set_project_dir(checkpoint_save))
+    {
+        spdlog::error("Failed to open project store in {}", checkpoint_save);
+        return 1;
+    }
+
     if (checkpoint_restore.empty())
     {
         std::vector<std::string> files;

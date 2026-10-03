@@ -13,17 +13,23 @@
 
 #include <opencalibration/io/json_fields.hpp>
 
-#include <zstd.h>
+#include <sqlite3.h>
 
+#include <chrono>
+#include <cstring>
 #include <filesystem>
-#include <fstream>
-#include <limits>
+#include <map>
+#include <sstream>
 
 namespace opencalibration
 {
 
 namespace
 {
+
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
+#error "project.db blobs are little-endian"
+#endif
 
 template <typename Writer, size_t N> void writeArray(Writer &writer, const std::array<double, N> &values)
 {
@@ -110,71 +116,40 @@ void readColorBalance(const rapidjson::Value &value, orthomosaic::ColorBalanceRe
         }
 }
 
-bool saveMetadata(const CheckpointData &data, const std::filesystem::path &path)
+std::string metadataJson(const CheckpointData &data)
 {
     rapidjson::StringBuffer buffer;
     rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
 
     writer.StartObject();
-
     writer.Key("version");
-    writer.Int(2);
-
+    writer.Int(3);
     writer.Key("state");
     writer.String(pipelineStateToString(data.state).c_str());
-
     writer.Key("state_run_count");
     writer.Uint64(data.state_run_count);
-
     writer.Key("origin_latitude");
     writer.Double(data.origin_latitude);
-
     writer.Key("origin_longitude");
     writer.Double(data.origin_longitude);
-
     writer.Key("surface_count");
     writer.Uint64(data.surfaces.size());
-
     if (!data.color_balance.per_image_params.empty())
     {
         writer.Key("color_balance");
         writeColorBalance(writer, data.color_balance);
     }
-
     writer.EndObject();
-
-    std::ofstream out(path);
-    if (!out.is_open())
-    {
-        spdlog::error("Failed to open metadata.json for writing");
-        return false;
-    }
-    out << buffer.GetString();
-    return true;
+    return {buffer.GetString(), buffer.GetSize()};
 }
 
-bool loadMetadata(CheckpointData &data, const std::filesystem::path &path, size_t &surface_count)
+bool parseMetadata(const std::string &json, CheckpointData &data, size_t &surface_count)
 {
-    std::ifstream in(path);
-    if (!in.is_open())
-    {
-        spdlog::error("Failed to open metadata.json for reading");
-        return false;
-    }
-
-    std::string json((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-
     rapidjson::Document doc;
-    if (doc.Parse(json.c_str()).HasParseError())
-    {
-        spdlog::error("Failed to parse metadata.json");
-        return false;
-    }
-
     int version = 0;
-    if (!readJsonField(doc, "version", version) || version < 1 || version > 2)
+    if (doc.Parse(json.c_str()).HasParseError() || !readJsonField(doc, "version", version) || version != 3)
     {
-        spdlog::error("Unsupported checkpoint version");
+        spdlog::error("Unsupported checkpoint metadata");
         return false;
     }
 
@@ -187,395 +162,514 @@ bool loadMetadata(CheckpointData &data, const std::filesystem::path &path, size_
     readJsonField(doc, "surface_count", surface_count);
     if (const auto *color_balance = findJsonMember(doc, "color_balance"))
         readColorBalance(*color_balance, data.color_balance);
-
     return true;
 }
 
-bool savePointCloud(const point_cloud &cloud, const std::filesystem::path &filepath)
+template <typename T> void put(std::string &out, const T &value)
 {
-    std::ofstream out(filepath);
-    if (!out.is_open())
-    {
-        spdlog::error("Failed to open {} for writing", filepath.string());
-        return false;
-    }
-
-    out.precision(std::numeric_limits<double>::max_digits10);
-    for (const auto &point : cloud)
-    {
-        out << point.x() << "," << point.y() << "," << point.z() << "\n";
-    }
-    return true;
+    out.append(reinterpret_cast<const char *>(&value), sizeof(T));
 }
 
-bool loadPointCloud(point_cloud &cloud, const std::filesystem::path &filepath)
+template <typename T> bool get(const char *&p, const char *end, T &value)
 {
-    std::ifstream in(filepath);
-    if (!in.is_open())
-    {
-        spdlog::error("Failed to open {} for reading", filepath.string());
+    if (static_cast<size_t>(end - p) < sizeof(T))
         return false;
-    }
+    std::memcpy(&value, p, sizeof(T));
+    p += sizeof(T);
+    return true;
+}
 
-    cloud.clear();
-    std::string line;
-    while (std::getline(in, line))
+constexpr uint32_t FEATURES_VERSION = 1;
+constexpr uint32_t FEATURE_RECORD = 2 * sizeof(double) + sizeof(float) + Descriptor::WORDS * sizeof(uint64_t);
+
+std::string encodeFeatures(const std::vector<feature_2d> &features)
+{
+    std::string out;
+    out.reserve(8 + features.size() * FEATURE_RECORD);
+    put(out, FEATURES_VERSION);
+    put(out, FEATURE_RECORD);
+    for (const auto &f : features)
     {
-        if (line.empty())
-            continue;
+        put(out, f.location.x());
+        put(out, f.location.y());
+        put(out, f.strength);
+        for (uint64_t word : f.descriptor.words)
+            put(out, word);
+    }
+    return out;
+}
 
-        size_t pos1 = line.find(',');
-        size_t pos2 = line.find(',', pos1 + 1);
-        if (pos1 == std::string::npos || pos2 == std::string::npos)
-        {
-            continue;
-        }
+std::vector<feature_2d> decodeFeatures(const char *p, size_t size)
+{
+    const char *end = p + size;
+    uint32_t version = 0, record = 0;
+    std::vector<feature_2d> features;
+    if (!get(p, end, version) || !get(p, end, record) || version != FEATURES_VERSION || record != FEATURE_RECORD)
+        return features;
+    features.resize((end - p) / FEATURE_RECORD);
+    for (auto &f : features)
+    {
+        get(p, end, f.location.x());
+        get(p, end, f.location.y());
+        get(p, end, f.strength);
+        for (uint64_t &word : f.descriptor.words)
+            get(p, end, word);
+    }
+    return features;
+}
 
-        double x = std::stod(line.substr(0, pos1));
-        double y = std::stod(line.substr(pos1 + 1, pos2 - pos1 - 1));
-        double z = std::stod(line.substr(pos2 + 1));
-        cloud.push_back(Eigen::Vector3d(x, y, z));
+std::string encodeSurface(const surface_model &surface)
+{
+    std::ostringstream ply;
+    serialize(surface.mesh, ply);
+    const std::string mesh = ply.str();
+    std::string out;
+    put(out, static_cast<uint64_t>(mesh.size()));
+    out += mesh;
+    put(out, static_cast<uint64_t>(surface.cloud.size()));
+    for (const auto &cloud : surface.cloud)
+    {
+        put(out, static_cast<uint64_t>(cloud.size()));
+        for (const auto &point : cloud)
+            for (int i = 0; i < 3; i++)
+                put(out, point[i]);
+    }
+    return out;
+}
+
+bool decodeSurface(const std::string &blob, surface_model &surface)
+{
+    const char *p = blob.data(), *end = p + blob.size();
+    uint64_t mesh_size = 0, clouds = 0;
+    if (!get(p, end, mesh_size) || static_cast<uint64_t>(end - p) < mesh_size)
+        return false;
+    if (mesh_size > 0)
+    {
+        std::istringstream ply(std::string(p, mesh_size));
+        if (!deserialize(ply, surface.mesh))
+            return false;
+    }
+    p += mesh_size;
+    if (!get(p, end, clouds))
+        return false;
+    surface.cloud.resize(clouds);
+    for (auto &cloud : surface.cloud)
+    {
+        uint64_t points = 0;
+        if (!get(p, end, points) || static_cast<uint64_t>(end - p) < points * 3 * sizeof(double))
+            return false;
+        cloud.resize(points);
+        for (auto &point : cloud)
+            for (int i = 0; i < 3; i++)
+                get(p, end, point[i]);
     }
     return true;
 }
 
-class ZstdFileBuf : public std::streambuf
+std::string fileStamp(const std::string &path)
+{
+    std::error_code ec1, ec2;
+    const auto size = std::filesystem::file_size(path, ec1);
+    const auto time = std::filesystem::last_write_time(path, ec2);
+    if (ec1 || ec2)
+        return {};
+    return std::to_string(size) + ":" + std::to_string(time.time_since_epoch().count());
+}
+
+constexpr const char *FEATURES_ONLY_STAMP = "";
+
+class Statement
 {
   public:
-    explicit ZstdFileBuf(const std::filesystem::path &path)
-        : _file(path, std::ios::binary), _cctx(ZSTD_createCCtx()), _out(ZSTD_CStreamOutSize())
+    Statement(sqlite3 *db, const char *sql)
     {
-        ZSTD_CCtx_setParameter(_cctx, ZSTD_c_compressionLevel, 3);
-        ZSTD_CCtx_setParameter(_cctx, ZSTD_c_nbWorkers, 2);
+        if (sqlite3_prepare_v2(db, sql, -1, &_stmt, nullptr) != SQLITE_OK)
+            spdlog::error("SQL prepare failed: {}", sqlite3_errmsg(db));
     }
-    ~ZstdFileBuf() override
+    ~Statement()
     {
-        ZSTD_freeCCtx(_cctx);
+        sqlite3_finalize(_stmt);
     }
-    bool close()
+    Statement(const Statement &) = delete;
+    Statement &operator=(const Statement &) = delete;
+
+    Statement &reset()
     {
-        const bool ok = _ok && compress(nullptr, 0, ZSTD_e_end);
-        _file.close();
-        return ok && !_file.fail();
+        sqlite3_reset(_stmt);
+        sqlite3_clear_bindings(_stmt);
+        return *this;
+    }
+    Statement &bind(int i, int64_t value)
+    {
+        sqlite3_bind_int64(_stmt, i, value);
+        return *this;
+    }
+    Statement &bind(int i, const std::string &text)
+    {
+        sqlite3_bind_text(_stmt, i, text.data(), static_cast<int>(text.size()), SQLITE_TRANSIENT);
+        return *this;
+    }
+    Statement &bindBlob(int i, const std::string &blob)
+    {
+        sqlite3_bind_blob64(_stmt, i, blob.data(), blob.size(), SQLITE_TRANSIENT);
+        return *this;
     }
 
-  protected:
-    std::streamsize xsputn(const char *s, std::streamsize n) override
+    bool nextRow()
     {
-        _ok = _ok && compress(s, n, ZSTD_e_continue);
-        return _ok ? n : 0;
+        return sqlite3_step(_stmt) == SQLITE_ROW;
     }
-    int_type overflow(int_type ch) override
+    bool run()
     {
-        if (traits_type::eq_int_type(ch, traits_type::eof()))
-            return traits_type::not_eof(ch);
-        const char c = traits_type::to_char_type(ch);
-        return xsputn(&c, 1) == 1 ? ch : traits_type::eof();
+        const bool ok = sqlite3_step(_stmt) == SQLITE_DONE;
+        sqlite3_reset(_stmt);
+        return ok;
+    }
+
+    int64_t integer(int column)
+    {
+        return sqlite3_column_int64(_stmt, column);
+    }
+    std::string text(int column)
+    {
+        const auto *data = static_cast<const char *>(sqlite3_column_blob(_stmt, column));
+        return data ? std::string(data, sqlite3_column_bytes(_stmt, column)) : std::string();
     }
 
   private:
-    bool compress(const char *data, size_t size, ZSTD_EndDirective mode)
-    {
-        ZSTD_inBuffer in{data, size, 0};
-        size_t remaining = 0;
-        do
-        {
-            ZSTD_outBuffer out{_out.data(), _out.size(), 0};
-            remaining = ZSTD_compressStream2(_cctx, &out, &in, mode);
-            if (ZSTD_isError(remaining))
-                return false;
-            _file.write(_out.data(), out.pos);
-        } while (mode == ZSTD_e_end ? remaining != 0 : in.pos != in.size);
-        return _file.good();
-    }
-
-    std::ofstream _file;
-    ZSTD_CCtx *_cctx;
-    std::vector<char> _out;
-    bool _ok = true;
+    sqlite3_stmt *_stmt = nullptr;
 };
 
-template <typename Write> bool writeCompressed(const std::filesystem::path &path, Write &&write)
+enum RowKind : int64_t
 {
-    ZstdFileBuf buf(path);
-    std::ostream out(&buf);
-    const bool written = write(out);
-    return buf.close() && written;
-}
-
-class ZstdReadBuf : public std::streambuf
-{
-  public:
-    explicit ZstdReadBuf(const std::filesystem::path &path)
-        : _file(path, std::ios::binary), _dctx(ZSTD_createDCtx()), _in(ZSTD_DStreamInSize()),
-          _out(ZSTD_DStreamOutSize())
-    {
-    }
-    ~ZstdReadBuf() override
-    {
-        ZSTD_freeDCtx(_dctx);
-    }
-
-  protected:
-    int_type underflow() override
-    {
-        while (true)
-        {
-            if (_input.pos == _input.size && !_output_full)
-            {
-                _file.read(_in.data(), static_cast<std::streamsize>(_in.size()));
-                if (_file.gcount() == 0)
-                    return traits_type::eof();
-                _input = {_in.data(), static_cast<size_t>(_file.gcount()), 0};
-            }
-            ZSTD_outBuffer output{_out.data(), _out.size(), 0};
-            if (ZSTD_isError(ZSTD_decompressStream(_dctx, &output, &_input)))
-                return traits_type::eof();
-            _output_full = output.pos == output.size;
-            if (output.pos > 0)
-            {
-                setg(_out.data(), _out.data(), _out.data() + output.pos);
-                return traits_type::to_int_type(_out[0]);
-            }
-        }
-    }
-
-  private:
-    std::ifstream _file;
-    ZSTD_DCtx *_dctx;
-    std::vector<char> _in, _out;
-    ZSTD_inBuffer _input{nullptr, 0, 0};
-    bool _output_full = false;
+    NODE_ROW = 0,
+    EDGE_ROW = 1,
+    SURFACE_ROW = 2,
 };
 
-template <typename Read> bool readJson(const std::filesystem::path &path, Read &&read)
+int64_t rowId(size_t id)
 {
-    std::filesystem::path zst = path;
-    zst += ".zst";
-    if (std::filesystem::exists(zst))
-    {
-        ZstdReadBuf buf(zst);
-        std::istream in(&buf);
-        return read(in);
-    }
-    std::ifstream in(path, std::ios::binary);
-    return in.is_open() && read(in);
+    return static_cast<int64_t>(id);
 }
 
-std::filesystem::path stageFile(const std::filesystem::path &dir, const std::string &stage, const std::string &name)
+int64_t rowHash(const std::string &data)
 {
-    return dir / (stage.empty() ? name : stage + "_" + name);
-}
-
-std::string featuresFingerprint(const MeasurementGraph &graph)
-{
-    uint64_t fingerprint = 0;
-    for (auto it = graph.cnodebegin(); it != graph.cnodeend(); ++it)
-    {
-        fingerprint += (it->first + 0x9e3779b97f4a7c15ull) * (it->second.payload.features.size() + 1);
-    }
-    return std::to_string(graph.size_nodes()) + " " + std::to_string(fingerprint);
-}
-
-std::string readFile(const std::filesystem::path &path)
-{
-    std::ifstream in(path);
-    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-}
-
-bool saveFeatures(const MeasurementGraph &graph, const std::filesystem::path &dir)
-{
-    const std::string fingerprint = featuresFingerprint(graph);
-    if (std::filesystem::exists(dir / "features.json.zst") && readFile(dir / "features.fingerprint") == fingerprint)
-    {
-        return true;
-    }
-
-    if (!writeCompressed(dir / "features.json.zst.tmp",
-                         [&](std::ostream &out) { return serializeFeatures(graph, out); }))
-    {
-        spdlog::error("Failed to write features.json.zst");
-        return false;
-    }
-    std::filesystem::rename(dir / "features.json.zst.tmp", dir / "features.json.zst");
-    std::ofstream(dir / "features.fingerprint") << fingerprint;
-    return true;
+    return static_cast<int64_t>(std::hash<std::string>{}(data));
 }
 
 } // namespace
 
+std::shared_ptr<ProjectStore> ProjectStore::open(const std::string &dir)
+{
+    static std::mutex mutex;
+    static std::map<std::string, std::weak_ptr<ProjectStore>> stores;
+
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    const std::string key = std::filesystem::weakly_canonical(dir, ec).string();
+
+    std::lock_guard<std::mutex> lock(mutex);
+    if (auto store = stores[key].lock())
+        return store;
+
+    sqlite3 *db = nullptr;
+    const std::string path = (std::filesystem::path(dir) / "project.db").string();
+    if (sqlite3_open_v2(path.c_str(), &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX, nullptr) !=
+        SQLITE_OK)
+    {
+        spdlog::error("Failed to open {}: {}", path, sqlite3_errmsg(db));
+        sqlite3_close(db);
+        return nullptr;
+    }
+
+    std::shared_ptr<ProjectStore> store(new ProjectStore(db));
+    if (!store->exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;"
+                     "CREATE TABLE IF NOT EXISTS images(path TEXT PRIMARY KEY, stamp TEXT NOT NULL, data TEXT NOT "
+                     "NULL, num_features INTEGER NOT NULL, features BLOB NOT NULL);"
+                     "CREATE TABLE IF NOT EXISTS stages(rev INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, state "
+                     "TEXT NOT NULL, data TEXT NOT NULL);"
+                     "CREATE TABLE IF NOT EXISTS rows(kind INTEGER, id INTEGER, rev INTEGER, hash INTEGER, data BLOB, "
+                     "PRIMARY KEY(kind, id, rev)) WITHOUT ROWID;"))
+        return nullptr;
+    stores[key] = store;
+    return store;
+}
+
+ProjectStore::ProjectStore(sqlite3 *db) : _db(db)
+{
+}
+
+ProjectStore::~ProjectStore()
+{
+    sqlite3_close(_db);
+}
+
+bool ProjectStore::exec(const char *sql)
+{
+    char *error = nullptr;
+    if (sqlite3_exec(_db, sql, nullptr, nullptr, &error) != SQLITE_OK)
+    {
+        spdlog::error("SQL failed: {}", error ? error : "?");
+        sqlite3_free(error);
+        return false;
+    }
+    return true;
+}
+
+bool ProjectStore::putImage(const std::string &path, const std::string &stamp, const image &img,
+                            const std::vector<feature_2d> &features)
+{
+    MeasurementGraph single_node_graph;
+    const size_t id = single_node_graph.addNode(image(img));
+    const std::string node = serializeNode(single_node_graph, id), blob = encodeFeatures(features);
+
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    return Statement(_db, "INSERT OR REPLACE INTO images VALUES(?, ?, ?, ?, ?)")
+        .bind(1, path)
+        .bind(2, stamp)
+        .bind(3, node)
+        .bind(4, static_cast<int64_t>(features.size()))
+        .bindBlob(5, blob)
+        .run();
+}
+
+std::vector<feature_2d> ProjectStore::readFeatures(const std::string &path)
+{
+    std::string blob;
+    {
+        const auto start = std::chrono::steady_clock::now();
+        std::lock_guard<std::recursive_mutex> lock(_mutex);
+        FeatureSet::loadStats().lock_wait_nanoseconds +=
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count();
+        Statement query(_db, "SELECT features FROM images WHERE path = ?");
+        query.bind(1, path);
+        if (!query.nextRow())
+        {
+            spdlog::error("No stored features for {}", path);
+            return {};
+        }
+        blob = query.text(0);
+    }
+    return decodeFeatures(blob.data(), blob.size());
+}
+
+FeatureSet ProjectStore::storedFeatures(const std::string &path, size_t size)
+{
+    return FeatureSet::stored(size, [store = shared_from_this(), path] { return store->readFeatures(path); });
+}
+
+std::optional<image> ProjectStore::loadImage(const std::string &path)
+{
+    const std::string stamp = fileStamp(path);
+    if (stamp.empty())
+        return std::nullopt;
+
+    std::string data;
+    size_t num_features = 0;
+    {
+        std::lock_guard<std::recursive_mutex> lock(_mutex);
+        Statement query(_db, "SELECT data, num_features FROM images WHERE path = ? AND stamp = ?");
+        query.bind(1, path).bind(2, stamp);
+        if (!query.nextRow())
+            return std::nullopt;
+        data = query.text(0);
+        num_features = query.integer(1);
+    }
+
+    MeasurementGraph single_node_graph;
+    if (!GraphRowReader().addNode(single_node_graph, 0, data))
+        return std::nullopt;
+    image img = std::move(single_node_graph.getNode(0)->payload);
+    img.features = storedFeatures(path, num_features);
+    return img;
+}
+
+bool ProjectStore::saveImage(image &img)
+{
+    std::vector<feature_2d> features = std::exchange(img.features, {}).load();
+    if (!putImage(img.path, fileStamp(img.path), img, features))
+    {
+        img.features = std::move(features);
+        return false;
+    }
+    img.features = storedFeatures(img.path, features.size());
+    return true;
+}
+
+std::vector<CheckpointStage> ProjectStore::stages()
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    std::vector<CheckpointStage> stages;
+    Statement query(_db, "SELECT name, state FROM stages ORDER BY rev");
+    while (query.nextRow())
+        stages.push_back(
+            {query.text(0), stringToPipelineState(query.text(1)).value_or(PipelineState::INITIAL_PROCESSING)});
+    return stages;
+}
+
+bool ProjectStore::save(const CheckpointData &data)
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    if (!exec("BEGIN IMMEDIATE"))
+        return false;
+
+    int64_t rev = 1, index = 0;
+    {
+        Statement query(_db, "SELECT COALESCE(MAX(rev), 0) + 1, COUNT(*) FROM stages");
+        if (query.nextRow())
+        {
+            rev = query.integer(0);
+            index = query.integer(1);
+        }
+    }
+    const std::string stage = (index < 10 ? "0" : "") + std::to_string(index) + "_" + pipelineStateToString(data.state);
+
+    std::array<ankerl::unordered_dense::map<int64_t, int64_t>, 3> latest_row_hashes;
+    {
+        Statement query(_db, "SELECT r.kind, r.id, r.hash FROM rows r JOIN (SELECT kind, id, MAX(rev) m FROM rows "
+                             "GROUP BY kind, id) l ON r.kind = l.kind AND r.id = l.id AND r.rev = l.m "
+                             "WHERE r.hash IS NOT NULL");
+        while (query.nextRow())
+            latest_row_hashes[query.integer(0)][query.integer(1)] = query.integer(2);
+    }
+
+    bool ok = true;
+    Statement insert(_db, "INSERT INTO rows VALUES(?, ?, ?, ?, ?)");
+    auto writeRow = [&](RowKind kind, int64_t id, const std::string &row) {
+        const int64_t hash = rowHash(row);
+        auto it = latest_row_hashes[kind].find(id);
+        const bool unchanged = it != latest_row_hashes[kind].end() && it->second == hash;
+        if (it != latest_row_hashes[kind].end())
+            latest_row_hashes[kind].erase(it);
+        if (!unchanged)
+            ok = insert.reset().bind(1, kind).bind(2, id).bind(3, rev).bind(4, hash).bindBlob(5, row).run() && ok;
+    };
+
+    Statement stored_image(_db, "SELECT 1 FROM images WHERE path = ?");
+    for (auto it = data.graph.cnodebegin(); it != data.graph.cnodeend(); ++it)
+    {
+        writeRow(NODE_ROW, rowId(it->first), serializeNode(data.graph, it->first));
+        const auto &img = it->second.payload;
+        if (!stored_image.reset().bind(1, img.path).nextRow())
+            ok = putImage(img.path, FEATURES_ONLY_STAMP, img, img.features.load()) && ok;
+    }
+    for (auto it = data.graph.cedgebegin(); it != data.graph.cedgeend(); ++it)
+        writeRow(EDGE_ROW, rowId(it->first), serializeEdge(data.graph, it->first));
+    for (size_t i = 0; i < data.surfaces.size(); i++)
+        writeRow(SURFACE_ROW, static_cast<int64_t>(i), encodeSurface(data.surfaces[i]));
+
+    const auto &rows_removed_since_latest = latest_row_hashes;
+    for (int64_t kind = 0; kind < 3; kind++)
+        for (const auto &[id, hash] : rows_removed_since_latest[kind])
+            ok = insert.reset().bind(1, kind).bind(2, id).bind(3, rev).run() && ok;
+
+    ok = Statement(_db, "INSERT INTO stages VALUES(?, ?, ?, ?)")
+             .bind(1, rev)
+             .bind(2, stage)
+             .bind(3, pipelineStateToString(data.state))
+             .bind(4, metadataJson(data))
+             .run() &&
+         ok;
+
+    if (!ok || !exec("COMMIT"))
+    {
+        exec("ROLLBACK");
+        spdlog::error("Failed to save checkpoint {}", stage);
+        return false;
+    }
+    spdlog::info("Checkpoint {} saved", stage);
+    return true;
+}
+
+bool ProjectStore::load(CheckpointData &data, const std::string &stage)
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+
+    int64_t rev = 0;
+    std::string name;
+    size_t surface_count = 0;
+    {
+        Statement query(_db, stage.empty() ? "SELECT rev, name, data FROM stages ORDER BY rev DESC LIMIT 1"
+                                           : "SELECT rev, name, data FROM stages WHERE name = ?");
+        if (!stage.empty())
+            query.bind(1, stage);
+        if (!query.nextRow())
+        {
+            spdlog::error("No checkpoint stage '{}'", stage);
+            return false;
+        }
+        rev = query.integer(0);
+        name = query.text(1);
+        if (!parseMetadata(query.text(2), data, surface_count))
+            return false;
+    }
+
+    Statement rows(_db, "SELECT r.id, r.data FROM rows r JOIN (SELECT id, MAX(rev) m FROM rows WHERE kind = ?1 AND "
+                        "rev <= ?2 GROUP BY id) l ON r.id = l.id AND r.rev = l.m WHERE r.kind = ?1 AND r.data IS NOT "
+                        "NULL");
+    GraphRowReader reader;
+    bool ok = true;
+
+    rows.bind(1, NODE_ROW).bind(2, rev);
+    while (rows.nextRow())
+        ok = reader.addNode(data.graph, static_cast<size_t>(rows.integer(0)), rows.text(1)) && ok;
+
+    rows.reset().bind(1, EDGE_ROW).bind(2, rev);
+    while (rows.nextRow())
+        ok = reader.addEdge(data.graph, static_cast<size_t>(rows.integer(0)), rows.text(1)) && ok;
+
+    data.surfaces.clear();
+    data.surfaces.resize(surface_count);
+    rows.reset().bind(1, SURFACE_ROW).bind(2, rev);
+    while (rows.nextRow())
+    {
+        const auto i = static_cast<size_t>(rows.integer(0));
+        ok = i < surface_count && decodeSurface(rows.text(1), data.surfaces[i]) && ok;
+    }
+
+    Statement num_features(_db, "SELECT num_features FROM images WHERE path = ?");
+    for (auto it = data.graph.nodebegin(); it != data.graph.nodeend(); ++it)
+    {
+        auto &img = it->second.payload;
+        num_features.reset().bind(1, img.path);
+        if (num_features.nextRow())
+            img.features = storedFeatures(img.path, num_features.integer(0));
+        else
+            ok = false;
+    }
+
+    if (!ok)
+    {
+        spdlog::error("Checkpoint {} is incomplete", name);
+        return false;
+    }
+    spdlog::info("Checkpoint {} loaded", name);
+    return true;
+}
+
 std::vector<CheckpointStage> listCheckpointStages(const std::string &checkpoint_dir)
 {
-    std::vector<CheckpointStage> stages;
-    std::ifstream in(std::filesystem::path(checkpoint_dir) / "checkpoints.txt");
-    std::string line;
-    while (std::getline(in, line))
-    {
-        const size_t tab = line.find('\t');
-        if (tab == std::string::npos)
-            continue;
-        stages.push_back({line.substr(0, tab),
-                          stringToPipelineState(line.substr(tab + 1)).value_or(PipelineState::INITIAL_PROCESSING)});
-    }
-    return stages;
+    if (!std::filesystem::exists(std::filesystem::path(checkpoint_dir) / "project.db"))
+        return {};
+    auto store = ProjectStore::open(checkpoint_dir);
+    return store ? store->stages() : std::vector<CheckpointStage>{};
 }
 
 bool saveCheckpoint(const CheckpointData &data, const std::string &checkpoint_dir)
 {
-    std::filesystem::path dir(checkpoint_dir);
-
-    std::error_code ec;
-    std::filesystem::create_directories(dir, ec);
-    if (ec)
-    {
-        spdlog::error("Failed to create checkpoint directory: {}", ec.message());
-        return false;
-    }
-
-    const size_t index = listCheckpointStages(checkpoint_dir).size();
-    const std::string stage = (index < 10 ? "0" : "") + std::to_string(index) + "_" + pipelineStateToString(data.state);
-
-    if (!saveMetadata(data, stageFile(dir, stage, "metadata.json")) || !saveFeatures(data.graph, dir))
-    {
-        return false;
-    }
-
-    if (!writeCompressed(stageFile(dir, stage, "graph.json.zst"),
-                         [&](std::ostream &out) { return serialize(data.graph, out, false); }))
-    {
-        spdlog::error("Failed to serialize graph");
-        return false;
-    }
-
-    for (size_t i = 0; i < data.surfaces.size(); i++)
-    {
-        const auto &surface = data.surfaces[i];
-
-        if (surface.mesh.size_nodes() > 0)
-        {
-            std::string mesh_filename = "surface_" + std::to_string(i) + ".ply";
-            std::ofstream mesh_out(stageFile(dir, stage, mesh_filename));
-            if (!mesh_out.is_open())
-            {
-                spdlog::error("Failed to open {} for writing", mesh_filename);
-                return false;
-            }
-            if (!serialize(surface.mesh, mesh_out))
-            {
-                spdlog::error("Failed to serialize mesh {}", i);
-                return false;
-            }
-            mesh_out.close();
-        }
-
-        for (size_t j = 0; j < surface.cloud.size(); j++)
-        {
-            std::string cloud_filename = "pointcloud_" + std::to_string(i) + "_" + std::to_string(j) + ".xyz";
-            if (!savePointCloud(surface.cloud[j], stageFile(dir, stage, cloud_filename)))
-            {
-                return false;
-            }
-        }
-
-        std::string cloud_count_filename = "surface_" + std::to_string(i) + "_cloudcount.txt";
-        std::ofstream count_out(stageFile(dir, stage, cloud_count_filename));
-        if (count_out.is_open())
-        {
-            count_out << surface.cloud.size();
-        }
-    }
-
-    std::ofstream(dir / "checkpoints.txt", std::ios::app) << stage << "\t" << pipelineStateToString(data.state) << "\n";
-
-    spdlog::info("Checkpoint {} saved to {}", stage, checkpoint_dir);
-    return true;
+    auto store = ProjectStore::open(checkpoint_dir);
+    return store && store->save(data);
 }
 
 bool loadCheckpoint(const std::string &checkpoint_dir, CheckpointData &data, std::string stage)
 {
-    std::filesystem::path dir(checkpoint_dir);
-
-    if (!std::filesystem::exists(dir))
+    if (!std::filesystem::exists(std::filesystem::path(checkpoint_dir) / "project.db"))
     {
-        spdlog::error("Checkpoint directory does not exist: {}", checkpoint_dir);
+        spdlog::error("No checkpoint in {}", checkpoint_dir);
         return false;
     }
-
-    const auto stages = listCheckpointStages(checkpoint_dir);
-    if (stage.empty() && !stages.empty())
-    {
-        stage = stages.back().name;
-    }
-
-    size_t surface_count = 0;
-    if (!loadMetadata(data, stageFile(dir, stage, "metadata.json"), surface_count))
-    {
-        return false;
-    }
-
-    if (!readJson(stageFile(dir, stage, "graph.json"), [&](std::istream &in) { return deserialize(in, data.graph); }))
-    {
-        spdlog::error("Failed to deserialize graph");
-        return false;
-    }
-
-    if (!stage.empty() &&
-        !readJson(dir / "features.json", [&](std::istream &in) { return deserializeFeatures(in, data.graph); }))
-    {
-        spdlog::error("Failed to deserialize features");
-        return false;
-    }
-
-    data.surfaces.clear();
-    data.surfaces.resize(surface_count);
-
-    for (size_t i = 0; i < surface_count; i++)
-    {
-        auto &surface = data.surfaces[i];
-
-        std::string mesh_filename = "surface_" + std::to_string(i) + ".ply";
-        std::filesystem::path mesh_path = stageFile(dir, stage, mesh_filename);
-        if (std::filesystem::exists(mesh_path))
-        {
-            std::ifstream mesh_in(mesh_path);
-            if (mesh_in.is_open())
-            {
-                if (!deserialize(mesh_in, surface.mesh))
-                {
-                    spdlog::warn("Failed to deserialize mesh {}", i);
-                }
-            }
-        }
-
-        std::string cloud_count_filename = "surface_" + std::to_string(i) + "_cloudcount.txt";
-        std::filesystem::path count_path = stageFile(dir, stage, cloud_count_filename);
-        size_t cloud_count = 0;
-        if (std::filesystem::exists(count_path))
-        {
-            std::ifstream count_in(count_path);
-            if (count_in.is_open())
-            {
-                count_in >> cloud_count;
-            }
-        }
-
-        surface.cloud.resize(cloud_count);
-        for (size_t j = 0; j < cloud_count; j++)
-        {
-            std::string cloud_filename = "pointcloud_" + std::to_string(i) + "_" + std::to_string(j) + ".xyz";
-            std::filesystem::path cloud_path = stageFile(dir, stage, cloud_filename);
-            if (std::filesystem::exists(cloud_path))
-            {
-                if (!loadPointCloud(surface.cloud[j], cloud_path))
-                {
-                    spdlog::warn("Failed to load point cloud {} for surface {}", j, i);
-                }
-            }
-        }
-    }
-
-    spdlog::info("Checkpoint {} loaded from {}", stage, checkpoint_dir);
-    return true;
+    auto store = ProjectStore::open(checkpoint_dir);
+    return store && store->load(data, stage);
 }
 
 } // namespace opencalibration

@@ -19,6 +19,16 @@
 using namespace opencalibration;
 using namespace std::chrono_literals;
 
+namespace
+{
+void appendFeature(FeatureSet &features, const feature_2d &feature)
+{
+    auto v = features.load();
+    v.push_back(feature);
+    features = std::move(v);
+}
+} // namespace
+
 struct relax_group : public ::testing::Test
 {
     size_t id[3];
@@ -100,7 +110,7 @@ struct relax_group : public ::testing::Test
                 Eigen::Vector2d pixel = image_from_3d(ray, *model);
                 feature_2d feat;
                 feat.location = pixel;
-                graph.getNode(np[i].node_id)->payload.features.emplace_back(feat);
+                appendFeature(graph.getNode(np[i].node_id)->payload.features, feat);
             }
         }
 
@@ -113,7 +123,7 @@ struct relax_group : public ::testing::Test
                 Eigen::Vector2d pixel[2];
                 for (int j = 0; j < 2; j++)
                 {
-                    pixel[j] = graph.getNode(np[index[j]].node_id)->payload.features[counter].location;
+                    pixel[j] = graph.getNode(np[index[j]].node_id)->payload.features.load()[counter].location;
                 }
                 relation.inlier_matches.emplace_back(
                     feature_match_denormalized{pixel[0], pixel[1], counter, counter, counter});
@@ -1237,8 +1247,8 @@ struct incremental_relax : public ::testing::Test
 
                 size_t feat_idx_a = node_a->payload.features.size();
                 size_t feat_idx_b = node_b->payload.features.size();
-                node_a->payload.features.push_back(feat_a);
-                node_b->payload.features.push_back(feat_b);
+                appendFeature(node_a->payload.features, feat_a);
+                appendFeature(node_b->payload.features, feat_b);
 
                 relation.inlier_matches.emplace_back(
                     feature_match_denormalized{pixel_a, pixel_b, feat_idx_a, feat_idx_b, p_idx});

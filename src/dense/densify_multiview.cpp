@@ -22,33 +22,6 @@
 namespace
 {
 
-std::vector<size_t> hilbertFeatureOrder(const std::vector<opencalibration::feature_2d> &features, size_t start_index,
-                                        int image_width, int image_height)
-{
-    int max_dim = std::max(image_width, image_height);
-    int order = 1;
-    while (order < max_dim)
-        order *= 2;
-
-    std::vector<std::pair<uint32_t, size_t>> indexed;
-    indexed.reserve(features.size() - start_index);
-    for (size_t i = start_index; i < features.size(); i++)
-    {
-        int x = std::clamp(static_cast<int>(features[i].location.x()), 0, image_width - 1);
-        int y = std::clamp(static_cast<int>(features[i].location.y()), 0, image_height - 1);
-        indexed.push_back({opencalibration::xy2d(order, x, y), i - start_index});
-    }
-    std::sort(indexed.begin(), indexed.end());
-
-    std::vector<size_t> result;
-    result.reserve(indexed.size());
-    for (auto &p : indexed)
-    {
-        result.push_back(p.second);
-    }
-    return result;
-}
-
 constexpr double SEARCH_RADIUS_PIXELS = 150.0;
 constexpr double RATIO_THRESHOLD = 0.85;
 constexpr int MAX_CANDIDATE_IMAGES = 10;
@@ -57,31 +30,23 @@ constexpr double MAX_REPROJECTION_ERROR_PIXELS = 8.0;
 
 constexpr int TRIANGULATION_REFINE_ITERATIONS = 10;
 
-using Descriptor = std::bitset<opencalibration::feature_2d::DESCRIPTOR_BITS>;
-
-size_t hammingDistance(const Descriptor &a, const Descriptor &b)
-{
-    return (a ^ b).count();
-}
-
 class CellSortedFeatures
 {
   public:
     CellSortedFeatures() = default;
 
-    explicit CellSortedFeatures(const opencalibration::image &img)
+    CellSortedFeatures(const std::vector<opencalibration::feature_2d> &features, size_t first)
     {
-        const size_t first = img.num_sparse_features;
-        const size_t count = img.features.size() - first;
+        const size_t count = features.size() - std::min(first, features.size());
         if (count == 0)
             return;
 
-        _origin = img.features[first].location;
+        _origin = features[first].location;
         Eigen::Vector2d max = _origin;
-        for (size_t i = first; i < img.features.size(); i++)
+        for (size_t i = first; i < features.size(); i++)
         {
-            _origin = _origin.cwiseMin(img.features[i].location);
-            max = max.cwiseMax(img.features[i].location);
+            _origin = _origin.cwiseMin(features[i].location);
+            max = max.cwiseMax(features[i].location);
         }
         _cols = cellOf(max.x() - _origin.x()) + 1;
         _rows = cellOf(max.y() - _origin.y()) + 1;
@@ -90,7 +55,7 @@ class CellSortedFeatures
         _cellBegin.assign(static_cast<size_t>(_cols) * _rows + 1, 0);
         for (size_t i = 0; i < count; i++)
         {
-            const Eigen::Vector2d &loc = img.features[first + i].location;
+            const Eigen::Vector2d &loc = features[first + i].location;
             featureCell[i] = cellIndex(cellOf(loc.y() - _origin.y()), cellOf(loc.x() - _origin.x()));
             _cellBegin[featureCell[i] + 1]++;
         }
@@ -103,16 +68,16 @@ class CellSortedFeatures
         for (size_t i = 0; i < count; i++)
         {
             const uint32_t slot = nextSlotInCell[featureCell[i]]++;
-            _locations[slot] = img.features[first + i].location;
-            _descriptors[slot] = img.features[first + i].descriptor;
+            _locations[slot] = features[first + i].location;
+            _descriptors[slot] = features[first + i].descriptor;
             _imageFeatureIndex[slot] = first + i;
         }
     }
 
     static constexpr size_t NO_MATCH = std::numeric_limits<size_t>::max();
 
-    [[nodiscard]] size_t ratioTestMatchNear(const opencalibration::feature_2d &query,
-                                            const Eigen::Vector2d &center) const
+    [[nodiscard]] size_t ratioTestMatchSlotNear(const opencalibration::Descriptor &query,
+                                                const Eigen::Vector2d &center) const
     {
         size_t nearby = 0;
         double best_dist = std::numeric_limits<double>::infinity();
@@ -120,8 +85,8 @@ class CellSortedFeatures
         size_t best_slot = 0;
         forEachSlotWithinSearchRadius(center, [&](uint32_t slot) {
             nearby++;
-            const double d = hammingDistance(query.descriptor, _descriptors[slot]) *
-                             (1.0 / opencalibration::feature_2d::DESCRIPTOR_BITS);
+            const double d =
+                hammingDistance(query, _descriptors[slot]) * (1.0 / opencalibration::feature_2d::DESCRIPTOR_BITS);
             if (d < second_best_dist)
             {
                 if (d < best_dist)
@@ -143,7 +108,24 @@ class CellSortedFeatures
             nearby >= 2 ? best_dist < RATIO_THRESHOLD * second_best_dist : best_dist < MAX_ABSOLUTE_DESCRIPTOR_DISTANCE;
         if (!good_match)
             return NO_MATCH;
-        return _imageFeatureIndex[best_slot];
+        return best_slot;
+    }
+
+    [[nodiscard]] size_t size() const
+    {
+        return _locations.size();
+    }
+    [[nodiscard]] size_t imageIndex(size_t slot) const
+    {
+        return _imageFeatureIndex[slot];
+    }
+    [[nodiscard]] const Eigen::Vector2d &location(size_t slot) const
+    {
+        return _locations[slot];
+    }
+    [[nodiscard]] const opencalibration::Descriptor &descriptor(size_t slot) const
+    {
+        return _descriptors[slot];
     }
 
   private:
@@ -187,7 +169,7 @@ class CellSortedFeatures
     int _cols = 0, _rows = 0;
     std::vector<uint32_t> _cellBegin;
     std::vector<Eigen::Vector2d> _locations;
-    std::vector<Descriptor> _descriptors;
+    std::vector<opencalibration::Descriptor> _descriptors;
     std::vector<size_t> _imageFeatureIndex;
 };
 
@@ -321,43 +303,36 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
 
     std::vector<CellSortedFeatures> cell_sorted_features(node_ids.size());
     const int num_nodes_ft = static_cast<int>(node_ids.size());
+    struct Measurement
+    {
+        size_t node_id;
+        Eigen::Vector2d pixel;
+    };
+    std::vector<Measurement> id_to_measurement;
+    ankerl::unordered_dense::map<size_t, size_t> node_id_to_offset;
+    size_t total_features = 0;
+    for (size_t nid : node_ids)
+    {
+        const auto &img = graph.getNode(nid)->payload;
+        node_id_to_offset[nid] = total_features;
+        total_features += img.features.size() - img.num_sparse_features;
+    }
+    id_to_measurement.resize(total_features);
+
 #pragma omp parallel for schedule(dynamic) // NOLINT(modernize-loop-convert)
     for (int ni = 0; ni < num_nodes_ft; ni++)
     {
-        cell_sorted_features[ni] = CellSortedFeatures(graph.getNode(node_ids[ni])->payload);
+        const auto &img = graph.getNode(node_ids[ni])->payload;
+        const std::vector<feature_2d> features = img.features.load();
+        cell_sorted_features[ni] = CellSortedFeatures(features, img.num_sparse_features);
+        const size_t offset = node_id_to_offset.at(node_ids[ni]);
+        for (size_t fi = img.num_sparse_features; fi < features.size(); fi++)
+            id_to_measurement[offset + fi - img.num_sparse_features] = {node_ids[ni], features[fi].location};
     }
     ankerl::unordered_dense::map<size_t, const CellSortedFeatures *> features_by_node;
     for (size_t ni = 0; ni < node_ids.size(); ni++)
     {
         features_by_node[node_ids[ni]] = &cell_sorted_features[ni];
-    }
-
-    struct Measurement
-    {
-        size_t node_id, feat_idx;
-    };
-    std::vector<Measurement> id_to_measurement;
-    ankerl::unordered_dense::map<size_t, size_t> node_id_to_offset;
-    {
-        size_t total_features = 0;
-        for (size_t nid : node_ids)
-        {
-            const auto &img = graph.getNode(nid)->payload;
-            size_t dense_count = img.features.size() - img.num_sparse_features;
-            node_id_to_offset[nid] = total_features;
-            total_features += dense_count;
-        }
-        id_to_measurement.resize(total_features);
-        for (size_t nid : node_ids)
-        {
-            const auto &img = graph.getNode(nid)->payload;
-            size_t offset = node_id_to_offset[nid];
-            size_t dense_count = img.features.size() - img.num_sparse_features;
-            for (size_t i = 0; i < dense_count; i++)
-            {
-                id_to_measurement[offset + i] = {nid, img.num_sparse_features + i};
-            }
-        }
     }
 
     auto measurementId = [&](size_t nid, size_t feat_idx) -> size_t {
@@ -391,9 +366,13 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
             if (!searchers[si].init(surfaces[si].mesh))
                 searchers[si] = MeshIntersectionSearcher();
 
-        auto order =
-            hilbertFeatureOrder(src_img.features, src_img.num_sparse_features, static_cast<int>(src_model.pixels_cols),
-                                static_cast<int>(src_model.pixels_rows));
+        const CellSortedFeatures &src_features = *features_by_node.at(src_nid);
+        std::vector<Eigen::Vector2d> src_locations(src_features.size());
+        for (size_t src_slot = 0; src_slot < src_features.size(); src_slot++)
+            src_locations[src_slot] = src_features.location(src_slot);
+        const auto order = hilbertOrder(
+            src_locations, Eigen::AlignedBox2d(Eigen::Vector2d::Zero(),
+                                               Eigen::Vector2d(src_model.pixels_cols, src_model.pixels_rows)));
 
         struct LocalMatch
         {
@@ -402,14 +381,13 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
         std::vector<LocalMatch> local_matches;
 
         auto camera_searcher = camera_tree.searcher();
-        const CellSortedFeatures &src_features = *features_by_node.at(src_nid);
 
-        for (size_t fi : order)
+        for (size_t src_slot : order)
         {
-            const size_t global_fi = src_img.num_sparse_features + fi;
-            const auto &feat = src_img.features[global_fi];
+            const size_t global_fi = src_features.imageIndex(src_slot);
+            const Eigen::Vector2d &src_location = src_features.location(src_slot);
 
-            ray_d r = image_to_3d(feat.location, src_model, src_pos, src_ori);
+            ray_d r = image_to_3d(src_location, src_model, src_pos, src_ori);
             size_t surface_index = 0;
             while (surface_index < searchers.size() && searchers[surface_index].triangleIntersect(r).type !=
                                                            MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
@@ -448,17 +426,18 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
                 if (cand_features == features_by_node.end())
                     continue;
 
-                const size_t forward = cand_features->second->ratioTestMatchNear(feat, predicted);
-                if (forward == CellSortedFeatures::NO_MATCH)
+                const CellSortedFeatures &cand = *cand_features->second;
+                const size_t slot = cand.ratioTestMatchSlotNear(src_features.descriptor(src_slot), predicted);
+                if (slot == CellSortedFeatures::NO_MATCH)
                     continue;
 
                 // Mutual check: the candidate's best match back in the source image must be this feature. Centre the
                 // reverse search where the candidate maps to, assuming the local src->cand offset is a translation.
-                const auto &cand_feat = cand_img.features[forward];
-                const Eigen::Vector2d reverse_center = feat.location + (cand_feat.location - predicted);
-                if (src_features.ratioTestMatchNear(cand_feat, reverse_center) == global_fi)
+                const Eigen::Vector2d reverse_center = src_location + (cand.location(slot) - predicted);
+                const size_t back = src_features.ratioTestMatchSlotNear(cand.descriptor(slot), reverse_center);
+                if (back != CellSortedFeatures::NO_MATCH && src_features.imageIndex(back) == global_fi)
                 {
-                    local_matches.push_back({src_id, measurementId(cand_nid, forward)});
+                    local_matches.push_back({src_id, measurementId(cand_nid, cand.imageIndex(slot))});
                 }
             }
         }
@@ -531,8 +510,7 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
         {
             const auto &m = id_to_measurement[id];
             const auto &img = graph.getNode(m.node_id)->payload;
-            const auto &pixel = img.features[m.feat_idx].location;
-            measurements.push_back({image_to_3d(pixel, *img.model, img.position, img.orientation), pixel,
+            measurements.push_back({image_to_3d(m.pixel, *img.model, img.position, img.orientation), m.pixel,
                                     img.model.get(), &img.position, &img.orientation});
         }
 

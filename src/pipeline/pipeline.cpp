@@ -35,6 +35,23 @@ using fvec = std::vector<std::function<void()>>;
 namespace
 {
 
+void logPhaseHotspots()
+{
+    auto &stats = opencalibration::FeatureSet::loadStats();
+    static size_t loads = 0, features = 0, nanoseconds = 0, lock_wait = 0;
+    const size_t now_loads = stats.loads, now_features = stats.features, now_nanoseconds = stats.nanoseconds,
+                 now_lock_wait = stats.lock_wait_nanoseconds;
+    if (now_loads != loads)
+        spdlog::info(
+            "Feature loads: {} ({:.0f} MB) in {:.1f}s summed over threads, {:.1f}s of it waiting for the store",
+            now_loads - loads, (now_features - features) * sizeof(opencalibration::feature_2d) / 1048576.,
+            (now_nanoseconds - nanoseconds) * 1e-9, (now_lock_wait - lock_wait) * 1e-9);
+    loads = now_loads, features = now_features, nanoseconds = now_nanoseconds, lock_wait = now_lock_wait;
+
+    if (const std::string totals = opencalibration::TopPerformanceTotalsSinceLastCall(10); !totals.empty())
+        spdlog::info("Hotspots (summed thread time): {}", totals);
+}
+
 constexpr int MESH_REFINEMENT_MAX_ITERATIONS = 20;
 constexpr int MESH_REFINEMENT_MAX_GRID_LEVEL = 2;
 constexpr size_t MESH_REFINEMENT_FINAL_POINTS_PER_TRIANGLE = 25;
@@ -292,6 +309,12 @@ void Pipeline::set_orthomosaic_max_megapixels(double v)
     _impl->orthomosaic_max_megapixels = v;
 }
 
+bool Pipeline::set_project_dir(const std::string &dir)
+{
+    _impl->load_stage->store = ProjectStore::open(dir);
+    return _impl->load_stage->store != nullptr;
+}
+
 void Pipeline::set_skip_mesh_refinement(bool v)
 {
     _impl->skip_mesh_refinement = v;
@@ -492,9 +515,12 @@ Pipeline::Impl::Transition Pipeline::Impl::runCurrentState(PipelineState current
     // clang-format on
 
     if (t != Transition::REPEAT)
+    {
         spdlog::info("{} finished in {:.1f}s over {} iterations", Pipeline::toString(currentState),
                      std::chrono::duration<double>(std::chrono::steady_clock::now() - stage_start).count(),
                      stateRunCount() + 1);
+        logPhaseHotspots();
+    }
 
     float local = 1.0f;
     switch (currentState)

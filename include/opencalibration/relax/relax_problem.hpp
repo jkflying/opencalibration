@@ -189,6 +189,7 @@ class RelaxProblem
     struct MeasurementRay
     {
         Eigen::Vector3d camera_ray;
+        Eigen::Vector2d pixel;
         double inverse_sigma;
     };
     ankerl::unordered_dense::map<NodeIdFeatureIndex, MeasurementRay, NodeIdFeatureIndex> _measurement_rays;

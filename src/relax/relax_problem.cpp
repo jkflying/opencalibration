@@ -724,8 +724,9 @@ void RelaxProblem::collectEdgeTracks(const MeasurementGraph &graph, size_t edge_
         nifi[1].feature_index = inlier.feature_index_2;
         points.emplace_back(
             FeatureTrack{sourceDestIntersection.first, sourceDestIntersection.second, {nifi[0], nifi[1]}});
-        _measurement_rays.try_emplace(nifi[0], MeasurementRay{sourceRay.dir, inverseSigma(source_model)});
-        _measurement_rays.try_emplace(nifi[1], MeasurementRay{destRay.dir, inverseSigma(dest_model)});
+        _measurement_rays.try_emplace(nifi[0],
+                                      MeasurementRay{sourceRay.dir, inlier.pixel_1, inverseSigma(source_model)});
+        _measurement_rays.try_emplace(nifi[1], MeasurementRay{destRay.dir, inlier.pixel_2, inverseSigma(dest_model)});
     }
 }
 
@@ -930,14 +931,13 @@ void RelaxProblem::addMultiRayTrackCosts(const MeasurementGraph &graph, const Re
                 continue;
 
             const auto *node = graph.getNode(m.node_id);
-            if (node == nullptr || m.feature_index >= node->payload.features.size())
+            const auto mr = _measurement_rays.find(m);
+            if (node == nullptr || mr == _measurement_rays.end())
                 continue;
 
-            const auto &model = *node->payload.model;
-            const auto &pixel = node->payload.features[m.feature_index].location;
-
-            rays.push_back(TrackRay{m.node_id, m.feature_index, model.id, *po.loc_ptr, image_to_3d(pixel, model), pixel,
-                                    *po.rot_ptr, po.pose_ptr, po.optimize, inverseSigma(model)});
+            const MeasurementRay &ray = mr->second;
+            rays.push_back(TrackRay{m.node_id, m.feature_index, node->payload.model->id, *po.loc_ptr, ray.camera_ray,
+                                    ray.pixel, *po.rot_ptr, po.pose_ptr, po.optimize, ray.inverse_sigma});
         }
     }
 
@@ -1318,10 +1318,10 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
         nifi[1].node_id = edge.getDest();
         nifi[1].feature_index = inlier.feature_index_2;
         points.emplace_back(FeatureTrack{intersection.first, intersection.second, {nifi[0], nifi[1]}});
+        _measurement_rays.try_emplace(nifi[0], MeasurementRay{image_to_3d(inlier.pixel_1, source_model), inlier.pixel_1,
+                                                              inverseSigma(source_model)});
         _measurement_rays.try_emplace(
-            nifi[0], MeasurementRay{image_to_3d(inlier.pixel_1, source_model), inverseSigma(source_model)});
-        _measurement_rays.try_emplace(
-            nifi[1], MeasurementRay{image_to_3d(inlier.pixel_2, dest_model), inverseSigma(dest_model)});
+            nifi[1], MeasurementRay{image_to_3d(inlier.pixel_2, dest_model), inlier.pixel_2, inverseSigma(dest_model)});
 
         std::unique_ptr<ceres::CostFunction> func[2];
         std::vector<double *> args[2];

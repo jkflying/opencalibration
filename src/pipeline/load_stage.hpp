@@ -2,6 +2,7 @@
 
 #include <jk/KDTree.h>
 #include <opencalibration/geo_coord/geo_coord.hpp>
+#include <opencalibration/io/checkpoint.hpp>
 #include <opencalibration/types/image.hpp>
 #include <opencalibration/types/measurement_graph.hpp>
 
@@ -18,6 +19,8 @@ class LoadStage
     std::vector<std::function<void()>> get_runners();
     std::vector<size_t> finalize(GeoCoord &coordinate_system, MeasurementGraph &graph,
                                  jk::tree::KDTree<size_t, 2> &imageGPSLocations);
+
+    std::shared_ptr<ProjectStore> store;
 
   private:
     std::mutex _images_mutex;
