@@ -73,6 +73,25 @@ std::pair<float, float> normalizedImagePosition(double pixel_x, double pixel_y, 
     return {std::clamp(nx, -1.0f, 1.0f), std::clamp(ny, -1.0f, 1.0f)};
 }
 
+constexpr double MAX_TAN_OFF_NADIR = 1.0;
+
+bool withinNadirCone(const Eigen::Vector3d &camera, const Eigen::Vector3d &point)
+{
+    const double height = camera.z() - point.z();
+    return height > 0 && (camera.head<2>() - point.head<2>()).norm() <= MAX_TAN_OFF_NADIR * height;
+}
+
+double coneHeightOrNan(jk::tree::KDTree<size_t, 2>::Searcher &cameras, const opencalibration::MeasurementGraph &graph,
+                       double x, double y, double z)
+{
+    if (std::isnan(z))
+        return z;
+    const auto &nearest = cameras.search({x, y}, std::numeric_limits<double>::max(), 1);
+    if (nearest.empty() || !withinNadirCone(graph.getNode(nearest[0].payload)->payload.position, {x, y, z}))
+        return NAN;
+    return z;
+}
+
 } // namespace
 
 namespace opencalibration::orthomosaic
@@ -698,7 +717,8 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
                 const Eigen::Vector2d centre = pixelCentre(context.bounds, context.gsd, col, row);
                 const double x = centre.x(), y = centre.y();
 
-                const double z = rayTrace.traceHeight(x, y, context.mean_camera_z);
+                const double z =
+                    coneHeightOrNan(cameraSearcher, graph, x, y, rayTrace.traceHeight(x, y, context.mean_camera_z));
 
                 Eigen::Vector3d sample_point(x, y, z);
 
@@ -721,7 +741,7 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
                     const auto &cc = camera_cache.at(candidate.payload);
 
                     Eigen::Vector3d camera_ray = cc.inv_rotation * (sample_point - payload.position);
-                    if (camera_ray.z() <= 0)
+                    if (camera_ray.z() <= 0 || !withinNadirCone(payload.position, sample_point))
                         continue;
 
                     Eigen::Vector2d pixel = image_from_3d(camera_ray, *payload.model);
@@ -862,7 +882,8 @@ void writeInterleavedWindow(GDALDatasetH dataset, int x_offset, int y_offset, in
 
 std::vector<float> computeDSMTile(int tile_x, int tile_y, int tile_size, const OrthoMosaicBounds &bounds, double gsd,
                                   int output_width, int output_height, const std::vector<surface_model> &surfaces,
-                                  double mean_camera_z)
+                                  double mean_camera_z, const MeasurementGraph &graph,
+                                  const jk::tree::KDTree<size_t, 2> &imageGPSLocations)
 {
     int x_offset = tile_x * tile_size;
     int y_offset = tile_y * tile_size;
@@ -876,6 +897,7 @@ std::vector<float> computeDSMTile(int tile_x, int tile_y, int tile_size, const O
         PerformanceMeasure thread_perf("DSM tile rows");
 
         RayTraceContext rayTrace(surfaces);
+        jk::tree::KDTree<size_t, 2>::Searcher cameras(imageGPSLocations);
 
 #pragma omp for schedule(dynamic)
         for (int local_row = 0; local_row < tile_height; local_row++)
@@ -888,7 +910,7 @@ std::vector<float> computeDSMTile(int tile_x, int tile_y, int tile_size, const O
                 const Eigen::Vector2d centre = pixelCentre(bounds, gsd, global_col, global_row);
                 const double x = centre.x(), y = centre.y();
 
-                const double z = rayTrace.traceHeight(x, y, mean_camera_z);
+                const double z = coneHeightOrNan(cameras, graph, x, y, rayTrace.traceHeight(x, y, mean_camera_z));
 
                 int idx = local_row * tile_width + local_col;
                 tile_buffer[idx] = static_cast<float>(z);
@@ -1034,7 +1056,7 @@ class LookaheadPrefetcher
 bool projectIntoImage(const image &payload, const Eigen::Matrix3d &inv_rotation, const Eigen::Vector3d &world_point,
                       Eigen::Vector2d &pixel)
 {
-    if ((inv_rotation * (world_point - payload.position)).z() <= 0)
+    if ((inv_rotation * (world_point - payload.position)).z() <= 0 || !withinNadirCone(payload.position, world_point))
         return false;
 
     pixel = image_from_3d(world_point, *payload.model, payload.position, inv_rotation);
@@ -1436,8 +1458,8 @@ void generateGeoTIFF(const std::vector<surface_model> &surfaces, const Measureme
         current_tile_position = i;
         prefetcher.startFrom(i);
 
-        std::vector<float> dsm_tile =
-            computeDSMTile(tile_x, tile_y, tile_size, bounds, gsd, width, height, surfaces, context.mean_camera_z);
+        std::vector<float> dsm_tile = computeDSMTile(tile_x, tile_y, tile_size, bounds, gsd, width, height, surfaces,
+                                                     context.mean_camera_z, graph, context.imageGPSLocations);
         lap(dsm_s);
 
         std::vector<uint8_t> rgba_tile;

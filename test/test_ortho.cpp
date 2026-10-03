@@ -450,9 +450,12 @@ TEST_F(ortho, thumbnail_pixels_are_georeferenced_at_pixel_centres)
             const double y = result.bounds.max_y - (row + 0.5) * result.gsd;
             const double z = ray_trace.traceHeight(x, y, camera.position.z());
             const float dsm = result.dsm.pixels(row, col);
-            if (std::isnan(z))
+            const bool beyond_45_deg_off_nadir =
+                (camera.position.head<2>() - Eigen::Vector2d(x, y)).norm() > camera.position.z() - z;
+            if (std::isnan(z) || beyond_45_deg_off_nadir)
             {
                 dsm_mismatches += !std::isnan(dsm);
+                colour_mismatches += pixels.layers[3].pixels(row, col) != 0;
                 continue;
             }
             dsm_checked++;
@@ -478,7 +481,7 @@ TEST_F(ortho, thumbnail_pixels_are_georeferenced_at_pixel_centres)
                                  std::abs(pixels.layers[2].pixels(row, col) - 100) > kLabRoundTripTolerance;
         }
     }
-    EXPECT_GT(dsm_checked, width * height / 4);
+    EXPECT_GT(dsm_checked, width * height / 8);
     EXPECT_GT(colour_checked, 500);
     EXPECT_EQ(dsm_mismatches, 0);
     EXPECT_EQ(colour_mismatches, 0);

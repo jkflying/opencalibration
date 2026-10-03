@@ -453,7 +453,8 @@ TEST_F(ortho, geotiff_without_feathering_uses_nearest_visible_camera_per_pixel)
     ASSERT_GT(out.width, 64);
     auto sees = [&](int cam, const Eigen::Vector3d &point) {
         const Eigen::Matrix3d inv_rotation = ground_ori[cam].inverse().toRotationMatrix();
-        if ((inv_rotation * (point - ground_pos[cam])).z() <= 0)
+        if ((inv_rotation * (point - ground_pos[cam])).z() <= 0 ||
+            (ground_pos[cam] - point).head<2>().norm() > ground_pos[cam].z() - point.z())
             return false;
         Eigen::Vector2d pixel = image_from_3d(point, *model, ground_pos[cam], inv_rotation);
         return pixel.x() >= 0 && pixel.x() < model->pixels_cols && pixel.y() >= 0 && pixel.y() < model->pixels_rows;
