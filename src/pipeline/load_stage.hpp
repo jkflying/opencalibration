@@ -7,6 +7,7 @@
 #include <opencalibration/types/measurement_graph.hpp>
 
 #include <mutex>
+#include <optional>
 #include <vector>
 
 namespace opencalibration
@@ -27,6 +28,9 @@ class LoadStage
     std::vector<std::pair<size_t, image>> _images;
 
     std::vector<std::string> _paths_to_load;
+
+    static constexpr double MIN_HORIZONTAL_MOVE_METERS = 1.0;
+    std::optional<Eigen::Vector2d> _last_kept_xy;
 
     std::default_random_engine generator;
     std::uniform_int_distribution<size_t> distribution;

@@ -74,6 +74,7 @@ std::vector<size_t> LoadStage::finalize(GeoCoord &coordinate_system, Measurement
 
     std::vector<size_t> node_ids;
     node_ids.reserve(_paths_to_load.size());
+    size_t stationary = 0;
 
     for (auto &p : _images)
     {
@@ -109,11 +110,23 @@ std::vector<size_t> LoadStage::finalize(GeoCoord &coordinate_system, Measurement
         Eigen::Vector3d local_pos = img.position = img.gps_position =
             coordinate_system.toLocalCS(img.metadata.capture_info.latitude, img.metadata.capture_info.longitude,
                                         img.metadata.capture_info.altitude);
+
+        const bool adds_no_baseline =
+            _last_kept_xy && (local_pos.head<2>() - *_last_kept_xy).norm() < MIN_HORIZONTAL_MOVE_METERS;
+        if (adds_no_baseline)
+        {
+            stationary++;
+            continue;
+        }
+        _last_kept_xy = local_pos.head<2>();
+
         size_t node_id = graph.addNode(std::move(img));
         imageGPSLocations.addPoint({local_pos.x(), local_pos.y()}, node_id);
         node_ids.push_back(node_id);
     }
 
+    if (stationary > 0)
+        spdlog::info("Skipped {} images within {}m of the previous image", stationary, MIN_HORIZONTAL_MOVE_METERS);
     return node_ids;
 }
 
