@@ -462,15 +462,14 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
     spdlog::info("Dense: matched {} images in {:.1f}s", node_ids.size(), lapSeconds());
     p.reset("Dense track build");
 
-    ankerl::unordered_dense::map<size_t, std::vector<size_t>> track_ids;
+    features_by_node = {};
+    cell_sorted_features = {};
 
+    std::vector<std::pair<size_t, size_t>> track_members;
     for (size_t i = 0; i < id_to_measurement.size(); i++)
-    {
-        if (uf.is_singleton(i))
-            continue;
-        size_t root = uf.find(i);
-        track_ids[root].push_back(i);
-    }
+        if (!uf.is_singleton(i))
+            track_members.emplace_back(uf.find(i), i);
+    std::sort(track_members.begin(), track_members.end());
 
     const double max_reproj_err_sq = MAX_REPROJECTION_ERROR_PIXELS * MAX_REPROJECTION_ERROR_PIXELS;
 
@@ -484,15 +483,23 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
         return false;
     };
 
+    size_t num_tracks_built = 0;
     std::vector<std::vector<size_t>> multi_tracks;
-    multi_tracks.reserve(track_ids.size());
-    for (auto &[root, ids] : track_ids)
+    std::vector<size_t> ids;
+    for (auto begin = track_members.begin(); begin != track_members.end(); num_tracks_built++)
     {
+        auto end =
+            std::find_if(begin, track_members.end(), [root = begin->first](const auto &m) { return m.first != root; });
+        ids.clear();
+        for (auto it = begin; it != end; ++it)
+            ids.push_back(it->second);
         if (ids.size() >= 2 && !hasMultipleFeaturesFromOneImage(ids))
-            multi_tracks.push_back(std::move(ids));
+            multi_tracks.push_back(ids);
+        begin = end;
     }
+    track_members = {};
 
-    spdlog::info("Dense: built {} tracks, {} multi-view in {:.1f}s", track_ids.size(), multi_tracks.size(),
+    spdlog::info("Dense: built {} tracks, {} multi-view in {:.1f}s", num_tracks_built, multi_tracks.size(),
                  lapSeconds());
     p.reset("Dense triangulate");
 
@@ -584,7 +591,7 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
         total_points += surface_points[si].size();
         surfaces[si].cloud.push_back(std::move(surface_points[si]));
     }
-    spdlog::info("Dense: {} 3D points from {} tracks, {} images", total_points, track_ids.size(), node_ids.size());
+    spdlog::info("Dense: {} 3D points from {} tracks, {} images", total_points, num_tracks_built, node_ids.size());
 
     if (progress_cb)
         progress_cb(1.f);
