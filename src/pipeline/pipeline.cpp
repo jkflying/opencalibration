@@ -329,6 +329,7 @@ PipelineState Pipeline::getState() const
 
 bool Pipeline::saveCheckpoint(const std::string &checkpoint_dir)
 {
+    PerformanceMeasure p("Checkpoint save");
     CheckpointData data;
     data.graph = std::move(_impl->graph);
     data.surfaces = std::move(_impl->surfaces);

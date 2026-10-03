@@ -147,13 +147,15 @@ surface_model runGroundMesh(const MeasurementGraph &graph, std::vector<NodePose>
                             const ankerl::unordered_dense::set<size_t> &edges_to_optimize, const RelaxConfig &config,
                             const std::vector<surface_model> &previousSurfaces)
 {
-    PerformanceMeasure p("Relax runner ground mesh");
+    PerformanceMeasure p("Relax runner ground mesh setup");
     RelaxProblem rp;
     rp.setupGroundMeshProblem(graph, nodes, cam_models, edges_to_optimize, config.options, previousSurfaces,
                               config.ground_mesh_grid_fraction);
+    p.reset("Relax runner ground mesh solve");
     rp.relaxObservedModelOnly();
     rp.solve();
 
+    p.reset("Relax runner ground mesh result");
     return rp.getSurfaceModel();
 }
 

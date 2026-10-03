@@ -13,6 +13,7 @@
 
 #include <omp.h>
 #include <opencalibration/distort/invert_distortion.hpp>
+#include <opencalibration/performance/performance.hpp>
 #include <opencalibration/types/union_find.hpp>
 #include <optional>
 #include <thread>
@@ -403,7 +404,10 @@ void RelaxProblem::solveUnsettledMeshHeights()
     for (const auto &height : _mesh_heights)
         if (!unsettled.contains(height.nodeId))
             _problem->SetParameterBlockConstant(height.z);
-    _solver.Solve(_solver_options, _problem.get(), &_summary);
+    {
+        PerformanceMeasure p("Relax ceres solve");
+        _solver.Solve(_solver_options, _problem.get(), &_summary);
+    }
     spdlog::info("unsettled mesh heights: {} of {} active, iterations {}, time {}s", unsettled.size(),
                  _mesh_heights.size(), _summary.iterations.size(), static_cast<float>(_summary.total_time_in_seconds));
     for (const auto &height : _mesh_heights)
@@ -1771,9 +1775,16 @@ void RelaxProblem::solve()
     updateRobustLossScale(_ray_residuals);
     updateRobustLossScale(_mesh_point_residuals);
     _solver.Solve(_solver_options, _problem.get(), &_summary);
-    spdlog::info("Thread {} end relax: iterations {}, cost ratio {}, time {}s", thread_stream.str(),
-                 _summary.iterations.size(), static_cast<float>(_summary.final_cost / _summary.initial_cost),
-                 static_cast<float>(_summary.total_time_in_seconds));
+    spdlog::info(
+        "Thread {} end relax: iterations {}, cost ratio {}, time {}s (preprocess {}s, linear solve {}s, "
+        "residual eval {}s; reduced to {} parameter and {} residual blocks; {} good / {} bad steps, {})",
+        thread_stream.str(), _summary.iterations.size(),
+        static_cast<float>(_summary.final_cost / _summary.initial_cost),
+        static_cast<float>(_summary.total_time_in_seconds), static_cast<float>(_summary.preprocessor_time_in_seconds),
+        static_cast<float>(_summary.linear_solver_time_in_seconds),
+        static_cast<float>(_summary.residual_evaluation_time_in_seconds + _summary.jacobian_evaluation_time_in_seconds),
+        _summary.num_parameter_blocks_reduced, _summary.num_residual_blocks_reduced, _summary.num_successful_steps,
+        _summary.num_unsuccessful_steps, _summary.message);
     if (spdlog::should_log(spdlog::level::trace))
         spdlog::trace(_summary.FullReport());
     else

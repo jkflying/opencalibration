@@ -26,12 +26,13 @@ class PerformanceMeasure
   private:
     void initialize(const Literal &key);
     void finalize();
-    bool _running;
+    bool _running = false;
     std::string_view _key;
     std::chrono::time_point<std::chrono::high_resolution_clock> _start;
 };
 
 void EnablePerformanceCounters(bool enable);
 std::string TotalPerformanceSummary();
+std::string TopPerformanceTotalsSinceLastCall(size_t max_entries);
 
 } // namespace opencalibration

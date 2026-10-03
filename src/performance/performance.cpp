@@ -6,6 +6,7 @@
 #include <iomanip>
 #include <mutex>
 #include <sstream>
+#include <utility>
 #include <vector>
 
 namespace
@@ -72,11 +73,11 @@ void PerformanceMeasure::initialize(const opencalibration::Literal &key)
 
 void PerformanceMeasure::finalize()
 {
-    if (!_enable_counters.load(std::memory_order_relaxed))
+    const bool was_running = std::exchange(_running, false);
+    if (!was_running)
     {
         return;
     }
-    _running = false;
 
     auto now = std::chrono::high_resolution_clock::now();
     int64_t duration = std::chrono::duration_cast<std::chrono::nanoseconds>(now - _start).count();
@@ -89,6 +90,29 @@ void PerformanceMeasure::finalize()
         _time_points.push_back(begin);
         _time_points.push_back(end);
     }
+}
+
+std::string TopPerformanceTotalsSinceLastCall(size_t max_entries)
+{
+    static ankerl::unordered_dense::map<std::string_view, int64_t> previous;
+    std::vector<std::pair<int64_t, std::string_view>> entries;
+    {
+        std::lock_guard<std::mutex> lock(_globals_mutex);
+        for (const auto &[key, total] : _time_totals)
+        {
+            const int64_t delta = total - std::exchange(previous[key], total);
+            if (delta > 0)
+                entries.emplace_back(delta, key);
+        }
+    }
+    std::sort(entries.rbegin(), entries.rend());
+    entries.resize(std::min(entries.size(), max_entries));
+
+    std::ostringstream ss;
+    ss << std::fixed << std::setprecision(1);
+    for (const auto &[nanoseconds, key] : entries)
+        ss << (ss.tellp() > 0 ? ", " : "") << key << " " << nanoseconds * 1e-9 << "s";
+    return ss.str();
 }
 
 std::string TotalPerformanceSummary()
