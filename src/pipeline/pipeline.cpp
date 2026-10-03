@@ -22,6 +22,7 @@
 #include <spdlog/spdlog.h>
 #include <usm.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <deque>
@@ -89,43 +90,45 @@ struct MeshScale
     double meanImageSize = 0;
 };
 
+double median(std::vector<double> values)
+{
+    auto mid = values.begin() + values.size() / 2;
+    std::nth_element(values.begin(), mid, values.end());
+    return *mid;
+}
+
 MeshScale estimateMeshScale(const opencalibration::MeasurementGraph &graph,
                             const std::vector<opencalibration::surface_model> &surfaces)
 {
-    double meanSurfaceZ = 0;
-    size_t surfNodeCount = 0;
+    std::vector<double> surfaceZ;
     for (const auto &surface : surfaces)
-    {
-        for (auto it = surface.mesh.cnodebegin(); it != surface.mesh.cnodeend(); ++it)
-        {
-            meanSurfaceZ += it->second.payload.location.z();
-            surfNodeCount++;
-        }
-    }
-    if (surfNodeCount > 0)
-        meanSurfaceZ /= surfNodeCount;
+        for (const auto &cloud : surface.cloud)
+            for (const auto &point : cloud)
+                surfaceZ.push_back(point.z());
+    if (surfaceZ.empty())
+        for (const auto &surface : surfaces)
+            for (auto it = surface.mesh.cnodebegin(); it != surface.mesh.cnodeend(); ++it)
+                surfaceZ.push_back(it->second.payload.location.z());
 
-    double meanCameraZ = 0;
+    std::vector<double> cameraZ;
     double meanArcPerPixel = 0;
     double meanImageSize = 0;
-    size_t camCount = 0;
     for (auto it = graph.cnodebegin(); it != graph.cnodeend(); ++it)
     {
         const auto &payload = it->second.payload;
         if (!payload.model || payload.model->focal_length_pixels <= 0 || !payload.position.allFinite())
             continue;
-        meanCameraZ += payload.position.z();
+        cameraZ.push_back(payload.position.z());
         meanArcPerPixel += 1.0 / payload.model->focal_length_pixels;
         meanImageSize += static_cast<double>(std::max(payload.model->pixels_cols, payload.model->pixels_rows));
-        camCount++;
     }
 
-    if (camCount == 0)
+    if (cameraZ.empty())
         return {};
-    meanCameraZ /= camCount;
-    meanArcPerPixel /= camCount;
-    meanImageSize /= camCount;
-    return {std::max(0.001, std::abs(meanCameraZ - meanSurfaceZ) * meanArcPerPixel), meanImageSize};
+    meanArcPerPixel /= cameraZ.size();
+    meanImageSize /= cameraZ.size();
+    const double surfaceHeight = surfaceZ.empty() ? 0 : median(std::move(surfaceZ));
+    return {std::max(0.001, std::abs(median(std::move(cameraZ)) - surfaceHeight) * meanArcPerPixel), meanImageSize};
 }
 
 } // namespace
