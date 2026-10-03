@@ -43,7 +43,7 @@ bool FullResolutionImageCache::tryPrefetch(size_t node_id, const std::string &pa
     if (cache_.count(node_id) > 0 || loading_.count(node_id) > 0 || failed_.count(node_id) > 0)
         return true;
 
-    if (cache_.size() >= max_cache_size_)
+    if (cache_.size() + loading_.size() >= max_cache_size_)
     {
         if (!next_use_)
             return false;

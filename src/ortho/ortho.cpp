@@ -979,9 +979,20 @@ class LookaheadPrefetcher
                         const opencalibration::TileCameraMap &tile_cameras, int num_tiles_x,
                         const opencalibration::MeasurementGraph &graph,
                         opencalibration::orthomosaic::FullResolutionImageCache &image_cache)
-        : tile_order_(tile_order), tile_cameras_(tile_cameras), num_tiles_x_(num_tiles_x), graph_(graph),
-          image_cache_(image_cache), thread_([this] { run(); })
+        : graph_(graph), image_cache_(image_cache)
     {
+        tile_offsets_.reserve(tile_order.size());
+        for (const auto &[tile_x, tile_y] : tile_order)
+        {
+            tile_offsets_.push_back(cameras_.size());
+            const auto &cameras = tile_cameras.at(static_cast<size_t>(tile_y) * num_tiles_x + tile_x);
+            cameras_.insert(cameras_.end(), cameras.begin(), cameras.end());
+        }
+        next_ = cameras_.size();
+
+        const size_t num_threads = std::max(1u, std::thread::hardware_concurrency());
+        for (size_t i = 0; i < num_threads; i++)
+            threads_.emplace_back([this] { run(); });
     }
 
     LookaheadPrefetcher(const LookaheadPrefetcher &) = delete;
@@ -993,64 +1004,60 @@ class LookaheadPrefetcher
             std::lock_guard<std::mutex> lock(mutex_);
             stop_ = true;
         }
-        cv_.notify_one();
-        thread_.join();
+        cv_.notify_all();
+        for (auto &thread : threads_)
+            thread.join();
     }
 
     void startFrom(size_t position)
     {
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            position_ = position;
+            next_ = tile_offsets_[position];
+            blocked_ = false;
+            generation_++;
         }
-        cv_.notify_one();
+        cv_.notify_all();
     }
 
   private:
     void run()
     {
-        size_t scanned_from = SIZE_MAX;
         std::unique_lock<std::mutex> lock(mutex_);
         while (true)
         {
-            cv_.wait(lock, [&] { return stop_ || position_ != scanned_from; });
+            cv_.wait(lock, [&] { return stop_ || (!blocked_ && next_ < cameras_.size()); });
             if (stop_)
                 return;
-            scanned_from = position_;
+            const size_t cam = cameras_[next_++];
+            const size_t generation = generation_;
             lock.unlock();
-            scan(scanned_from);
-            lock.lock();
-        }
-    }
 
-    void scan(size_t start)
-    {
-        PerformanceMeasure thread_perf("Ortho Stage 1 - prefetch");
-        for (size_t j = start; j < tile_order_.size(); j++)
-        {
-            size_t tile_idx = static_cast<size_t>(tile_order_[j].second) * num_tiles_x_ + tile_order_[j].first;
-            for (size_t cam : tile_cameras_.at(tile_idx))
+            bool cached = true;
+            if (const auto *node = graph_.getNode(cam))
             {
-                if (stop_ || position_ != start)
-                    return;
-                const auto *node = graph_.getNode(cam);
-                if (node && !image_cache_.tryPrefetch(cam, node->payload.path))
-                    return;
+                PerformanceMeasure thread_perf("Ortho Stage 1 - prefetch");
+                cached = image_cache_.tryPrefetch(cam, node->payload.path);
             }
+
+            lock.lock();
+            if (!cached && generation == generation_)
+                blocked_ = true;
         }
     }
 
-    const std::vector<std::pair<int, int>> &tile_order_;
-    const opencalibration::TileCameraMap &tile_cameras_;
-    int num_tiles_x_;
     const opencalibration::MeasurementGraph &graph_;
     opencalibration::orthomosaic::FullResolutionImageCache &image_cache_;
+    std::vector<size_t> cameras_;
+    std::vector<size_t> tile_offsets_;
 
     std::mutex mutex_;
     std::condition_variable cv_;
-    std::atomic<bool> stop_{false};
-    std::atomic<size_t> position_{SIZE_MAX};
-    std::thread thread_;
+    bool stop_ = false;
+    bool blocked_ = false;
+    size_t next_;
+    size_t generation_ = 0;
+    std::vector<std::thread> threads_;
 };
 
 bool projectIntoImage(const image &payload, const Eigen::Matrix3d &inv_rotation, const Eigen::Vector3d &world_point,
