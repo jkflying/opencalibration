@@ -65,6 +65,10 @@ const MeshIntersectionSearcher::IntersectionInfo &MeshIntersectionSearcher::tria
         return _info;
     }
 
+    const bool previous_walk_stuck_in_cycle = _info.type == IntersectionInfo::MAX_STEPS_EXCEEDED;
+    if (previous_walk_stuck_in_cycle && _lastIntersection.type == IntersectionInfo::INTERSECTION)
+        _info = _lastIntersection;
+
     plane_3_corners_d plane;
     for (size_t i = 0; i < 3; i++)
     {
