@@ -1215,8 +1215,7 @@ void buildOverviews(GDALDatasetH dataset, int width, int height)
     if (err != CE_None)
         spdlog::warn("Failed to build overviews for {}", GDALGetDescription(dataset));
     else
-        spdlog::info("Built {} overview levels for {} in {:.1f}s", overview_levels.size(),
-                     GDALGetDescription(dataset),
+        spdlog::info("Built {} overview levels for {} in {:.1f}s", overview_levels.size(), GDALGetDescription(dataset),
                      std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
 }
 
