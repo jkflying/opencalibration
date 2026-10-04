@@ -11,6 +11,8 @@
 
 #include "ceres_log_forwarding.cpp.inc"
 
+#include <algorithm>
+#include <ceres/normal_prior.h>
 #include <omp.h>
 #include <opencalibration/distort/invert_distortion.hpp>
 #include <opencalibration/geometry/KMeans.hpp>
@@ -925,6 +927,40 @@ bool RelaxProblem::coveredByMultiRayTracks(const MeasurementGraph::Edge &edge, c
            cellCovered(edge.getDest(), inlier.pixel_2, dest_model);
 }
 
+void RelaxProblem::addIntrinsicsPriors(double *focal_length_pixels, double *principal_point,
+                                       const image_metadata::camera_info_t &camera_info, const RelaxOptionSet &options)
+{
+    constexpr double FOCAL_LENGTH_PRIOR_RELATIVE_SIGMA = 0.1;
+    constexpr double PRINCIPAL_POINT_PRIOR_SIGMA_IMAGE_WIDTHS = 0.02;
+    const auto has_prior = [this](const double *parameters) {
+        return std::any_of(_intrinsics_priors.begin(), _intrinsics_priors.end(),
+                           [parameters](const IntrinsicsPrior &prior) { return prior.parameters == parameters; });
+    };
+
+    if (options.hasAny({Option::FOCAL_LENGTH}) && camera_info.focal_length_px > 0 && !has_prior(focal_length_pixels))
+    {
+        const double sigma = FOCAL_LENGTH_PRIOR_RELATIVE_SIGMA * camera_info.focal_length_px;
+        const Eigen::Matrix<double, 1, 1> inverse_sigma(1.0 / sigma);
+        const Eigen::Matrix<double, 1, 1> exif_focal_length(camera_info.focal_length_px);
+        _intrinsics_priors.push_back({focal_length_pixels, sigma});
+        _problem->AddResidualBlock(new ceres::NormalPrior(inverse_sigma, exif_focal_length), nullptr,
+                                   focal_length_pixels);
+    }
+
+    if (options.hasAny({Option::PRINCIPAL_POINT}) && camera_info.width_px > 0 && !has_prior(principal_point))
+    {
+        const Eigen::Vector2d expected_principal_point =
+            camera_info.principal_point_px.allFinite()
+                ? camera_info.principal_point_px
+                : Eigen::Vector2d(camera_info.width_px, camera_info.height_px) * 0.5;
+        const double sigma = PRINCIPAL_POINT_PRIOR_SIGMA_IMAGE_WIDTHS * camera_info.width_px;
+        const Eigen::Matrix2d inverse_sigma = Eigen::Matrix2d::Identity() / sigma;
+        _intrinsics_priors.push_back({principal_point, sigma});
+        _problem->AddResidualBlock(new ceres::NormalPrior(inverse_sigma, expected_principal_point), nullptr,
+                                   principal_point);
+    }
+}
+
 void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, size_t edge_id,
                                                  const MeasurementGraph::Edge &edge, const RelaxOptionSet &options)
 {
@@ -1027,6 +1063,8 @@ void RelaxProblem::addRayTriangleMeasurementCost(const MeasurementGraph &graph, 
                 _problem->SetParameterBlockConstant(inverse_iter->second.principle_point.data());
             }
             setRadialDistortionParameterization(inverse_iter->second.radial_distortion.data(), options);
+            addIntrinsicsPriors(&inverse_iter->second.focal_length_pixels, inverse_iter->second.principle_point.data(),
+                                graph.getNode(edge.getSource())->payload.metadata.camera_info, options);
             trackRadialObservation(inverse_iter->second.radial_distortion.data(), source_model.pixels_rows,
                                    source_model.pixels_cols, inverse_iter->second.focal_length_pixels);
             points_added = true;
@@ -1316,6 +1354,8 @@ std::vector<TrackRay> RelaxProblem::addMeshTrackCost(const MeasurementGraph &gra
         setRadialDistortionParameterization(inv_model_ptr->radial_distortion.data(), options);
 
         const auto *node = graph.getNode(good_rays[0].node_id);
+        addIntrinsicsPriors(&inv_model_ptr->focal_length_pixels, inv_model_ptr->principle_point.data(),
+                            node->payload.metadata.camera_info, options);
         trackRadialObservation(inv_model_ptr->radial_distortion.data(), node->payload.model->pixels_rows,
                                node->payload.model->pixels_cols, inv_model_ptr->focal_length_pixels);
     }
@@ -1613,6 +1653,9 @@ void RelaxProblem::addPointMeasurementsCost(const MeasurementGraph &graph, size_
             }
             if (!options.hasAny({Option::PRINCIPAL_POINT}))
                 _problem->SetParameterBlockConstant(principals[i]);
+            addIntrinsicsPriors(
+                focals[i], principals[i],
+                graph.getNode(i == 0 ? pkg.source.node_id : pkg.dest.node_id)->payload.metadata.camera_info, options);
             if (_problem->HasParameterBlock(radials[i]))
                 setRadialDistortionParameterization(radials[i], options);
             if (_problem->HasParameterBlock(tangentials[i]) && !options.hasAny({Option::LENS_DISTORTIONS_TANGENTIAL}))

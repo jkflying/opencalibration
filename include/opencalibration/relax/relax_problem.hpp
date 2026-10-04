@@ -228,6 +228,14 @@ class RelaxProblem
     void updateRobustLossScale(RobustResidualGroup &group);
     double _track_grid_fraction = 0.1;
     double _prior_scale = 1;
+    struct IntrinsicsPrior
+    {
+        double *parameters;
+        double sigma;
+    };
+    std::vector<IntrinsicsPrior> _intrinsics_priors;
+    void addIntrinsicsPriors(double *focal_length_pixels, double *principal_point,
+                             const image_metadata::camera_info_t &camera_info, const RelaxOptionSet &options);
     MeshGraph _mesh;
     struct MeshHeight
     {
