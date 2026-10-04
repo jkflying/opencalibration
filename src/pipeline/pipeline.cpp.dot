@@ -1,5 +1,5 @@
 digraph {
-    "INITIAL_PROCESSING\ninitial_processing()" -> "MESH_REFINEMENT\nmesh_refinement()" [label="NEXT\nnext_loaded_ids.size() == 0 && next_linked_ids.size() == 0", style="solid", weight=1]
+    "INITIAL_PROCESSING\ninitial_processing()" -> "MESH_REFINEMENT\nmesh_refinement()" [label="NEXT\nqueue_empty && next_loaded_ids.size() == 0 && next_linked_ids.size() == 0", style="solid", weight=1]
     "INITIAL_PROCESSING\ninitial_processing()" -> "COMPLETE\ncomplete()" [label="ERROR", style="dotted", weight=0.1]
     "MESH_REFINEMENT\nmesh_refinement()" -> "INITIAL_GLOBAL_RELAX\ninitial_global_relax()" [label="NEXT\nskip_mesh_refinement", style="solid", weight=1]
     "MESH_REFINEMENT\nmesh_refinement()" -> "COMPLETE\ncomplete()" [label="ERROR", style="dotted", weight=0.1]
