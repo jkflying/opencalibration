@@ -1006,7 +1006,7 @@ void RelaxProblem::fixIntrinsicsLessObservableThanPriors()
     ceres::Problem::EvaluateOptions evaluate_options;
     _problem->GetResidualBlocks(&evaluate_options.residual_blocks);
     std::vector<double> row_weights;
-    for (auto id : evaluate_options.residual_blocks)
+    for (auto *id : evaluate_options.residual_blocks)
     {
         auto scale = inverse_noise_scale.find(id);
         row_weights.insert(row_weights.end(), _problem->GetCostFunctionForResidualBlock(id)->num_residuals(),
