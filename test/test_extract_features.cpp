@@ -8,7 +8,7 @@ using namespace opencalibration;
 TEST(extract_features, gives_points)
 {
     // GIVEN: a path
-    std::string path = TEST_DATA_DIR "P2530253.JPG";
+    std::string path = TEST_DATA_DIR "IMG_1378_RGB.jpg";
 
     // WHEN: we extract the features
     auto extracted = opencalibration::extract_features(cv::imread(path));
@@ -44,7 +44,7 @@ TEST(extract_features, gives_points)
 TEST(extract_features, dense_features_are_nms_rejected)
 {
     // GIVEN: an image
-    std::string path = TEST_DATA_DIR "P2530253.JPG";
+    std::string path = TEST_DATA_DIR "IMG_1378_RGB.jpg";
     auto extracted = opencalibration::extract_features(cv::imread(path));
 
     // THEN: there should be dense features after the sparse ones
@@ -99,7 +99,7 @@ TEST(extract_features, downscaled_locations_have_no_half_pixel_bias)
 TEST(extract_features, strongest_feature_is_only_sparse)
 {
     // GIVEN: an image
-    std::string path = TEST_DATA_DIR "P2530253.JPG";
+    std::string path = TEST_DATA_DIR "IMG_1378_RGB.jpg";
 
     // WHEN: we extract the features
     auto extracted = opencalibration::extract_features(cv::imread(path));

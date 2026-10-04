@@ -229,7 +229,7 @@ TEST_F(CheckpointTest, stages_store_only_changes)
 {
     // GIVEN: a calibrated three image graph saved as a first stage
     Pipeline p(1);
-    p.add({TEST_DATA_DIR "P2530253.JPG", TEST_DATA_DIR "P2540254.JPG", TEST_DATA_DIR "P2550255.JPG"});
+    p.add({TEST_DATA_DIR "IMG_1378_RGB.jpg", TEST_DATA_DIR "IMG_1379_RGB.jpg", TEST_DATA_DIR "IMG_1392_RGB.jpg"});
     while (p.getState() != PipelineState::COMPLETE)
     {
         p.iterateOnce();

@@ -9,8 +9,8 @@ using namespace opencalibration;
 
 TEST(match, subset_matches_use_original_indices)
 {
-    std::string path1 = TEST_DATA_DIR "P2540254.JPG";
-    std::string path2 = TEST_DATA_DIR "P2530253.JPG";
+    std::string path1 = TEST_DATA_DIR "IMG_1379_RGB.jpg";
+    std::string path2 = TEST_DATA_DIR "IMG_1378_RGB.jpg";
 
     auto extracted1 = extract_features(cv::imread(path1));
     auto extracted2 = extract_features(cv::imread(path2));
@@ -44,7 +44,7 @@ TEST(match, subset_matches_use_original_indices)
 
 TEST(match, spatial_subsample_reduces_feature_count)
 {
-    std::string path1 = TEST_DATA_DIR "P2540254.JPG";
+    std::string path1 = TEST_DATA_DIR "IMG_1379_RGB.jpg";
     auto extracted = extract_features(cv::imread(path1));
     extracted.features.resize(extracted.num_sparse_features);
     auto &features = extracted.features;
@@ -67,7 +67,7 @@ TEST(match, spatial_subsample_reduces_feature_count)
 
 TEST(match, spatial_subsample_maintains_spacing)
 {
-    std::string path1 = TEST_DATA_DIR "P2540254.JPG";
+    std::string path1 = TEST_DATA_DIR "IMG_1379_RGB.jpg";
     auto extracted = extract_features(cv::imread(path1));
     extracted.features.resize(extracted.num_sparse_features);
     auto &features = extracted.features;

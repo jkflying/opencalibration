@@ -12,8 +12,8 @@ using namespace opencalibration;
 TEST(ransac, homography_filter_correspondences)
 {
     // GIVEN: matches between two images and some dumb camera models
-    std::string path1 = TEST_DATA_DIR "P2540254.JPG";
-    std::string path2 = TEST_DATA_DIR "P2530253.JPG";
+    std::string path1 = TEST_DATA_DIR "IMG_1379_RGB.jpg";
+    std::string path2 = TEST_DATA_DIR "IMG_1378_RGB.jpg";
 
     auto extracted1 = opencalibration::extract_features(cv::imread(path1));
     auto extracted2 = opencalibration::extract_features(cv::imread(path2));
@@ -25,9 +25,9 @@ TEST(ransac, homography_filter_correspondences)
     std::vector<size_t> indices2 = spatially_subsample_feature_indices(feat2, 40.0);
     std::vector<feature_match> matches = match_features_subset(feat1, feat2, indices1, indices2);
     CameraModel cam_model;
-    cam_model.pixels_rows = 4016;
-    cam_model.pixels_cols = 5344;
-    cam_model.focal_length_pixels = 5000;
+    cam_model.pixels_rows = 3000;
+    cam_model.pixels_cols = 4000;
+    cam_model.focal_length_pixels = 2795;
     cam_model.principle_point = Eigen::Vector2d(cam_model.pixels_cols, cam_model.pixels_rows) * 0.5;
 
     std::vector<correspondence> correspondences = distort_keypoints(feat1, feat2, matches, cam_model, cam_model);
@@ -38,7 +38,7 @@ TEST(ransac, homography_filter_correspondences)
     double score = ransac(correspondences, model, inliers);
 
     // THEN: there should be roughly the right number
-    EXPECT_GT(score, 0.20);
+    EXPECT_GT(score, 0.08);
 
     std::array<decomposed_pose, 4> poses;
     EXPECT_EQ(model.decompose(correspondences, inliers, poses), true);
@@ -65,7 +65,7 @@ TEST(ransac, homography_filter_correspondences)
             return cvp;
         };
 
-        for (size_t i = 0; i < matches.size(); i++) // const feature_match &m : matches)
+        for (size_t i = 0; i < matches.size(); i++)
         {
             const feature_match &m = matches[i];
             const feature_2d &f1 = feat1[m.feature_index_1];

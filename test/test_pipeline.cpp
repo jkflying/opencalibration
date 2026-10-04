@@ -19,8 +19,8 @@ TEST(pipeline, constructs_with_lots_of_threads)
 
 namespace
 {
-const std::vector<std::string> kFourImages = {TEST_DATA_DIR "P2530253.JPG", TEST_DATA_DIR "P2540254.JPG",
-                                              TEST_DATA_DIR "P2550255.JPG", TEST_DATA_DIR "P2560256.JPG"};
+const std::vector<std::string> kFourImages = {TEST_DATA_DIR "IMG_1378_RGB.jpg", TEST_DATA_DIR "IMG_1379_RGB.jpg",
+                                              TEST_DATA_DIR "IMG_1392_RGB.jpg", TEST_DATA_DIR "IMG_1393_RGB.jpg"};
 
 void runToCompletion(Pipeline &p)
 {
@@ -68,11 +68,6 @@ TEST(pipeline, generates_thumbnails_when_requested)
     p.set_skip_camera_param_relax(true);
     p.set_thumbnail_filenames("test_thumb.tiff", "test_source.png", "");
 
-    std::string path1 = TEST_DATA_DIR "P2530253.JPG";
-    std::string path2 = TEST_DATA_DIR "P2540254.JPG";
-    std::string path3 = TEST_DATA_DIR "P2550255.JPG";
-    std::string path4 = TEST_DATA_DIR "P2560256.JPG";
-
     std::filesystem::remove("test_thumb.tiff");
     std::filesystem::remove("test_source.png");
     std::filesystem::remove("overlap.png");
@@ -80,11 +75,8 @@ TEST(pipeline, generates_thumbnails_when_requested)
     std::filesystem::remove("source.png");
 
     // WHEN: we process images
-    p.add({path1, path2, path3, path4});
-    while (p.getState() != PipelineState::COMPLETE)
-    {
-        p.iterateOnce();
-    }
+    p.add(kFourImages);
+    runToCompletion(p);
 
     // THEN: requested files should exist, others should not
     EXPECT_TRUE(std::filesystem::exists("test_thumb.tiff"));
@@ -107,17 +99,9 @@ TEST(pipeline, generates_geotiff_when_requested)
     p.set_geotiff_filename(output_path);
     p.set_orthomosaic_max_megapixels(max_output_megapixels);
 
-    std::string path1 = TEST_DATA_DIR "P2530253.JPG";
-    std::string path2 = TEST_DATA_DIR "P2540254.JPG";
-    std::string path3 = TEST_DATA_DIR "P2550255.JPG";
-    std::string path4 = TEST_DATA_DIR "P2560256.JPG";
-
     // WHEN: we process images
-    p.add({path1, path2, path3, path4});
-    while (p.getState() != PipelineState::COMPLETE)
-    {
-        p.iterateOnce();
-    }
+    p.add(kFourImages);
+    runToCompletion(p);
 
     // THEN: the GeoTIFF file should exist
     EXPECT_TRUE(std::filesystem::exists(output_path));
@@ -129,7 +113,7 @@ TEST(pipeline, generates_geotiff_when_requested)
 
     GDALDatasetWrapper ds_wrapper(dataset.get());
 
-    // Verify dimensions
+    // AND: it fits within the configured size
     EXPECT_GT(ds_wrapper.GetRasterXSize(), 0) << "GeoTIFF width should be > 0";
     EXPECT_GT(ds_wrapper.GetRasterYSize(), 0) << "GeoTIFF height should be > 0";
     uint64_t output_pixels =
@@ -137,22 +121,22 @@ TEST(pipeline, generates_geotiff_when_requested)
     uint64_t max_output_pixels = static_cast<uint64_t>(max_output_megapixels * 1000000.0);
     EXPECT_LE(output_pixels, max_output_pixels) << "GeoTIFF should honor configured max megapixels";
 
-    // Verify 4 bands (RGBA)
+    // AND: it has RGBA bands
     EXPECT_EQ(ds_wrapper.GetRasterCount(), 4) << "GeoTIFF should have 4 bands (RGBA)";
 
-    // Verify geotransform is set
+    // AND: it is georeferenced north-up
     double geotransform[6];
     CPLErr err = ds_wrapper.GetGeoTransform(geotransform);
     EXPECT_EQ(err, CE_None) << "GeoTIFF should have a geotransform";
     EXPECT_GT(geotransform[1], 0) << "GSD (pixel width) should be > 0";
     EXPECT_LT(geotransform[5], 0) << "Pixel height should be negative (north-up orientation)";
 
-    // Verify projection is set
+    // AND: it has a projection
     const char *projection = ds_wrapper.GetProjectionRef();
     EXPECT_NE(projection, nullptr) << "GeoTIFF should have a projection";
     EXPECT_GT(strlen(projection), 0) << "Projection WKT should not be empty";
 
-    // Verify band color interpretation
+    // AND: the bands are tagged red, green, blue and alpha
     GDALRasterBandWrapper band1(ds_wrapper.GetRasterBand(1));
     GDALRasterBandWrapper band2(ds_wrapper.GetRasterBand(2));
     GDALRasterBandWrapper band3(ds_wrapper.GetRasterBand(3));
@@ -162,11 +146,9 @@ TEST(pipeline, generates_geotiff_when_requested)
     EXPECT_EQ(band3.GetColorInterpretation(), GCI_BlueBand);
     EXPECT_EQ(band4.GetColorInterpretation(), GCI_AlphaBand);
 
-    // Verify internal tiling is enabled
+    // AND: it is internally tiled
     int block_x, block_y;
     band1.GetBlockSize(&block_x, &block_y);
     EXPECT_EQ(block_x, 512) << "GeoTIFF should have 512×512 internal tile blocks";
     EXPECT_EQ(block_y, 512);
-
-    // Output saved to TEST_DATA_OUTPUT_DIR for inspection
 }

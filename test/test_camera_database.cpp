@@ -34,100 +34,94 @@ std::string readFile(const std::string &path)
     buf << file.rdbuf();
     return buf.str();
 }
+
+image_metadata::camera_info_t parrotAnafiInfo(const std::string &make, const std::string &model)
+{
+    image_metadata::camera_info_t info;
+    info.make = make;
+    info.model = model;
+    info.width_px = 5344;
+    info.height_px = 4016;
+    return info;
+}
 } // namespace
 
 class CameraDatabaseTest : public ::testing::Test
 {
   protected:
-    void SetUp() override
+    static void loadBundledDatabase()
     {
-        // Database should be auto-loaded by extract_image or can be loaded explicitly
+        ASSERT_TRUE(extract_image(TEST_DATA_DIR "IMG_1378_RGB.jpg").has_value());
     }
 };
 
 TEST_F(CameraDatabaseTest, loads_bundled_database)
 {
-    // Database is loaded from CAMERA_DATABASE_PATH defined at compile time
-    // After extract_image is called, it should be loaded
-    auto img = extract_image(TEST_DATA_DIR "P2530253.JPG");
-    ASSERT_TRUE(img.has_value());
+    // GIVEN: an image has been extracted
+    loadBundledDatabase();
 
-    // Verify database is loaded by checking a lookup succeeds
-    image_metadata::camera_info_t info;
-    info.make = "Parrot";
-    info.model = "Anafi";
-    info.width_px = 5344;
-    info.height_px = 4016;
-    EXPECT_TRUE(CameraDatabase::instance().lookup(info).has_value());
+    // WHEN: we look up a camera that is in the bundled database
+    auto entry = CameraDatabase::instance().lookup(parrotAnafiInfo("Parrot", "Anafi"));
+
+    // THEN: it is found
+    EXPECT_TRUE(entry.has_value());
 }
 
 TEST_F(CameraDatabaseTest, lookup_parrot_anafi)
 {
-    // First trigger database load
-    auto img = extract_image(TEST_DATA_DIR "P2530253.JPG");
-    ASSERT_TRUE(img.has_value());
+    // GIVEN: the bundled database is loaded
+    loadBundledDatabase();
 
-    image_metadata::camera_info_t info;
-    info.make = "Parrot";
-    info.model = "Anafi";
-    info.width_px = 5344;
-    info.height_px = 4016;
+    // WHEN: we look up the Parrot Anafi
+    auto entry = CameraDatabase::instance().lookup(parrotAnafiInfo("Parrot", "Anafi"));
 
-    auto entry = CameraDatabase::instance().lookup(info);
+    // THEN: its calibration is returned
     ASSERT_TRUE(entry.has_value());
-    if (entry.has_value())
-    {
-        EXPECT_EQ(entry->make, "Parrot");
-        EXPECT_EQ(entry->model, "Anafi");
-        EXPECT_NEAR(entry->radial_distortion[0], -0.03227143641412748, 1e-12);
-    }
+    EXPECT_EQ(entry->make, "Parrot");
+    EXPECT_EQ(entry->model, "Anafi");
+    EXPECT_NEAR(entry->radial_distortion[0], -0.03227143641412748, 1e-12);
 }
 
 TEST_F(CameraDatabaseTest, lookup_case_insensitive)
 {
-    // First trigger database load
-    auto img = extract_image(TEST_DATA_DIR "P2530253.JPG");
-    ASSERT_TRUE(img.has_value());
+    // GIVEN: the bundled database is loaded
+    loadBundledDatabase();
 
-    image_metadata::camera_info_t info;
-    info.make = "PARROT";
-    info.model = "anafi";
-    info.width_px = 5344;
-    info.height_px = 4016;
+    // WHEN: we look up the Parrot Anafi with different capitalisation
+    auto entry = CameraDatabase::instance().lookup(parrotAnafiInfo("PARROT", "anafi"));
 
-    auto entry = CameraDatabase::instance().lookup(info);
-    ASSERT_TRUE(entry.has_value());
+    // THEN: it is still found
+    EXPECT_TRUE(entry.has_value());
 }
 
 TEST_F(CameraDatabaseTest, lookup_returns_nullopt_for_unknown)
 {
-    // First trigger database load
-    auto img = extract_image(TEST_DATA_DIR "P2530253.JPG");
-    ASSERT_TRUE(img.has_value());
+    // GIVEN: the bundled database is loaded
+    loadBundledDatabase();
 
+    // WHEN: we look up a camera that is not in it
     image_metadata::camera_info_t info;
     info.make = "Unknown";
     info.model = "Camera";
     info.width_px = 1000;
     info.height_px = 1000;
-
     auto entry = CameraDatabase::instance().lookup(info);
+
+    // THEN: nothing is found
     EXPECT_FALSE(entry.has_value());
 }
 
 TEST_F(CameraDatabaseTest, extract_image_looks_up_database)
 {
-    // GIVEN: a path to a Parrot Anafi image
-    std::string path = TEST_DATA_DIR "P2530253.JPG";
+    // GIVEN: a path to a Canon PowerShot S110 image
+    std::string path = TEST_DATA_DIR "IMG_1378_RGB.jpg";
 
     // WHEN: we extract the image
     auto img = extract_image(path);
 
-    // THEN: database should be loaded (distortion may be zero if no factory calibration)
+    // THEN: its camera is in the database
     ASSERT_TRUE(img.has_value());
-    // Verify the lookup works
-    auto entry = CameraDatabase::instance().lookup(img->metadata.camera_info);
-    EXPECT_TRUE(entry.has_value());
+    EXPECT_TRUE(CameraDatabase::instance().lookup(img->metadata.camera_info).has_value());
 }
 
 TEST_F(CameraDatabaseTest, apply_entry_sets_distortion)
