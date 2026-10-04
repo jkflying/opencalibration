@@ -755,6 +755,88 @@ struct PixelErrorCost_OrientationFocalRadialTangential
     const Eigen::Vector2d pixel; // unique to this measurement, keep a local copy to avoid cache thrashing
 };
 
+struct PixelFromProjectedRaySolution
+{
+    Eigen::Vector2d pixel;
+    Eigen::Matrix2d projected_ray_by_pixel;
+    bool converged;
+};
+
+inline PixelFromProjectedRaySolution solvePixelFromProjectedRay(const Eigen::Vector2d &projected_ray,
+                                                                const InverseDifferentiableCameraModel<double> &model,
+                                                                const Eigen::Vector2d &initial_pixel)
+{
+    using PixelJet = ceres::Jet<double, 2>;
+    constexpr int MAX_NEWTON_ITERATIONS = 20;
+    constexpr double PIXEL_STEP_TOLERANCE = 1e-6;
+
+    const InverseDifferentiableCameraModel<PixelJet> jet_model = model.cast<PixelJet>();
+    PixelFromProjectedRaySolution solution{initial_pixel, Eigen::Matrix2d::Zero(), false};
+    for (int iteration = 0; iteration < MAX_NEWTON_ITERATIONS; iteration++)
+    {
+        const Eigen::Matrix<PixelJet, 2, 1> pixel_jet(PixelJet(solution.pixel.x(), 0), PixelJet(solution.pixel.y(), 1));
+        const Eigen::Matrix<PixelJet, 2, 1> projected = projectedRayFromPixel<PixelJet>(pixel_jet, jet_model);
+        Eigen::Vector2d projected_error;
+        for (int i = 0; i < 2; i++)
+        {
+            projected_error[i] = projected[i].a - projected_ray[i];
+            solution.projected_ray_by_pixel.row(i) = projected[i].v.transpose();
+        }
+        if (!(solution.projected_ray_by_pixel.determinant() > 0))
+            return solution;
+        const Eigen::Vector2d step = solution.projected_ray_by_pixel.inverse() * projected_error;
+        if (!step.allFinite())
+            return solution;
+        solution.pixel -= step;
+        if (step.norm() < PIXEL_STEP_TOLERANCE)
+        {
+            solution.converged = true;
+            return solution;
+        }
+    }
+    return solution;
+}
+
+inline bool pixelFromProjectedRay(const Eigen::Vector2d &projected_ray,
+                                  const InverseDifferentiableCameraModel<double> &model,
+                                  const Eigen::Vector2d &initial_pixel, Eigen::Vector2d &pixel)
+{
+    const PixelFromProjectedRaySolution solution = solvePixelFromProjectedRay(projected_ray, model, initial_pixel);
+    pixel = solution.pixel;
+    return solution.converged;
+}
+
+template <int J>
+bool pixelFromProjectedRay(const Eigen::Matrix<ceres::Jet<double, J>, 2, 1> &projected_ray,
+                           const InverseDifferentiableCameraModel<ceres::Jet<double, J>> &model,
+                           const Eigen::Vector2d &initial_pixel, Eigen::Matrix<ceres::Jet<double, J>, 2, 1> &pixel)
+{
+    using JetT = ceres::Jet<double, J>;
+    const auto scalar = [](const JetT &value) { return value.a; };
+
+    InverseDifferentiableCameraModel<double> scalar_model;
+    scalar_model.projection_type = model.projection_type;
+    scalar_model.focal_length_pixels = model.focal_length_pixels.a;
+    scalar_model.principle_point = model.principle_point.unaryExpr(scalar);
+    scalar_model.radial_distortion = model.radial_distortion.unaryExpr(scalar);
+    scalar_model.tangential_distortion = model.tangential_distortion.unaryExpr(scalar);
+
+    const PixelFromProjectedRaySolution solution =
+        solvePixelFromProjectedRay(projected_ray.unaryExpr(scalar), scalar_model, initial_pixel);
+
+    const Eigen::Matrix<JetT, 2, 1> projected_at_fixed_pixel =
+        projectedRayFromPixel<JetT>(solution.pixel.cast<JetT>(), model);
+    const Eigen::Matrix2d pixel_by_projected_ray = solution.projected_ray_by_pixel.inverse();
+    for (int i = 0; i < 2; i++)
+    {
+        pixel[i].a = solution.pixel[i];
+        pixel[i].v.setZero();
+        for (int j = 0; j < 2; j++)
+            pixel[i].v += pixel_by_projected_ray(i, j) * (projected_ray[j].v - projected_at_fixed_pixel[j].v);
+    }
+    return solution.converged;
+}
+
 template <int N> struct MultiRayPlaneIntersectionAngleCost_FocalRadial
 {
     static_assert(N >= 2 && N <= 5, "N must be between 2 and 5");
@@ -809,7 +891,6 @@ template <int N> struct MultiRayPlaneIntersectionAngleCost_FocalRadial
         T outlier_distance = avg_dist * T(0.01);
         Vector3T centroid = robustCentroid(intersection, N, outlier_distance);
 
-        const T inverse_sigma = *focal / RAY_PIXEL_SIGMA;
         for (int i = 0; i < N; i++)
         {
             const QuaternionTCM rot(rotations[i]);
@@ -817,8 +898,11 @@ template <int N> struct MultiRayPlaneIntersectionAngleCost_FocalRadial
             const Vector3T &ray = camera_ray[i];
             const T min_depth = T(0.5) * p_cam.norm() * ray.z() / ray.norm();
             const T depth = p_cam.z() > min_depth ? p_cam.z() : min_depth;
+            Eigen::Matrix<T, 2, 1> reprojected_pixel;
+            all_valid &= pixelFromProjectedRay(Eigen::Matrix<T, 2, 1>(p_cam.template head<2>() / depth), model,
+                                               camera_pixel[i], reprojected_pixel);
             Vector2TM(residuals + i * 2) =
-                (p_cam.template head<2>() / depth - ray.template head<2>() / ray.z()) * inverse_sigma;
+                (reprojected_pixel - camera_pixel[i].template cast<T>()) / T(RAY_PIXEL_SIGMA);
         }
 
         return all_valid;

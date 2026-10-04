@@ -95,14 +95,19 @@ inline Eigen::Vector2d image_from_3d(const Eigen::Vector3d &point,
     return image_from_3d(rotated_ray, model);
 }
 
+template <typename T>
+Eigen::Matrix<T, 2, 1> projectedRayFromPixel(const Eigen::Matrix<T, 2, 1> &pixel,
+                                             const InverseDifferentiableCameraModel<T> &model)
+{
+    const Eigen::Matrix<T, 2, 1> unprojected_point = (pixel - model.principle_point) / model.focal_length_pixels;
+    return distortProjectedRay<T>(unprojected_point, model.radial_distortion, model.tangential_distortion);
+}
+
 template <typename T = double>
 Eigen::Matrix<T, 3, 1> image_to_3d(const Eigen::Matrix<T, 2, 1> &keypoint,
                                    const InverseDifferentiableCameraModel<T> &model)
 {
-    const Eigen::Matrix<T, 2, 1> unprojected_point = (keypoint - model.principle_point) / model.focal_length_pixels;
-
-    const Eigen::Matrix<T, 2, 1> undistorted_point =
-        distortProjectedRay<T>(unprojected_point, model.radial_distortion, model.tangential_distortion);
+    const Eigen::Matrix<T, 2, 1> undistorted_point = projectedRayFromPixel<T>(keypoint, model);
 
     Eigen::Matrix<T, 3, 1> ray;
     switch (model.projection_type)

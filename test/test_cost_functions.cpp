@@ -400,3 +400,58 @@ TEST(cost_functions, triangulated_reprojection_residuals_scale_with_inverse_sigm
     for (int i = 0; i < 3; i++)
         EXPECT_LT((whitened_res.segment<3>(3 * i) - inverse_sigmas[i] * unit_res.segment<3>(3 * i)).norm(), 1e-12);
 }
+
+TEST(cost_functions, pixel_from_projected_ray_jet_matches_finite_differences)
+{
+    // GIVEN: a distorted inverse camera model and a projected ray, with derivatives on focal, principal, k1 and the ray
+    using JetT = ceres::Jet<double, 6>;
+    InverseDifferentiableCameraModel<double> model;
+    model.focal_length_pixels = 2800;
+    model.principle_point = Eigen::Vector2d(2010, 1490);
+    model.radial_distortion = Eigen::Vector3d(-0.08, 0.02, -0.005);
+    model.tangential_distortion = Eigen::Vector2d(0.001, -0.0005);
+    const Eigen::Vector2d projected_ray(0.55, -0.4);
+    const Eigen::Vector2d initial_pixel = projected_ray * model.focal_length_pixels + model.principle_point;
+
+    InverseDifferentiableCameraModel<JetT> jet_model = model.cast<JetT>();
+    jet_model.focal_length_pixels.v[0] = 1;
+    jet_model.principle_point[0].v[1] = 1;
+    jet_model.principle_point[1].v[2] = 1;
+    jet_model.radial_distortion[0].v[3] = 1;
+    Eigen::Matrix<JetT, 2, 1> jet_ray = projected_ray.cast<JetT>();
+    jet_ray[0].v[4] = 1;
+    jet_ray[1].v[5] = 1;
+
+    // WHEN: we solve for the pixel with the implicit function theorem derivative
+    Eigen::Matrix<JetT, 2, 1> jet_pixel;
+    ASSERT_TRUE(pixelFromProjectedRay(jet_ray, jet_model, initial_pixel, jet_pixel));
+
+    // THEN: the value round-trips through the closed-form unprojection
+    const Eigen::Vector2d pixel(jet_pixel[0].a, jet_pixel[1].a);
+    EXPECT_LT((projectedRayFromPixel<double>(pixel, model) - projected_ray).norm(), 1e-10);
+
+    // AND: the derivatives match central finite differences
+    const auto solveWith = [&](int parameter, double delta) {
+        InverseDifferentiableCameraModel<double> perturbed = model;
+        Eigen::Vector2d ray = projected_ray;
+        double *targets[6]{&perturbed.focal_length_pixels,
+                           &perturbed.principle_point[0],
+                           &perturbed.principle_point[1],
+                           &perturbed.radial_distortion[0],
+                           &ray[0],
+                           &ray[1]};
+        *targets[parameter] += delta;
+        Eigen::Vector2d result;
+        EXPECT_TRUE(pixelFromProjectedRay(ray, perturbed, initial_pixel, result));
+        return result;
+    };
+    const double steps[6]{1e-3, 1e-3, 1e-3, 1e-7, 1e-7, 1e-7};
+    for (int parameter = 0; parameter < 6; parameter++)
+    {
+        const Eigen::Vector2d numeric =
+            (solveWith(parameter, steps[parameter]) - solveWith(parameter, -steps[parameter])) / (2 * steps[parameter]);
+        for (int i = 0; i < 2; i++)
+            EXPECT_NEAR(jet_pixel[i].v[parameter], numeric[i], 1e-4 * (1 + std::abs(numeric[i])))
+                << "parameter " << parameter << " pixel axis " << i;
+    }
+}
