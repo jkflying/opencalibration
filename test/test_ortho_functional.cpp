@@ -495,6 +495,82 @@ TEST_F(ortho, geotiff_without_feathering_uses_nearest_visible_camera_per_pixel)
     EXPECT_EQ(mismatches, 0);
 }
 
+TEST_F(ortho, geotiff_does_not_see_through_the_mesh)
+{
+    // GIVEN: a red camera just west of a 30m ridge, and a blue camera further east
+    auto cam_model = std::make_shared<CameraModel>();
+    cam_model->focal_length_pixels = 200;
+    cam_model->principle_point << 200, 150;
+    cam_model->pixels_cols = 400;
+    cam_model->pixels_rows = 300;
+    cam_model->projection_type = opencalibration::ProjectionType::PLANAR;
+    MeasurementGraph ridge_graph;
+    const std::string prefix = TEST_DATA_OUTPUT_DIR "test_ridge_occlusion";
+    const std::vector<std::pair<Eigen::Vector3d, cv::Scalar>> cameras{{{-8, 0, 40}, cv::Scalar(0, 0, 255)},
+                                                                      {{25, 0, 40}, cv::Scalar(255, 0, 0)}};
+    for (size_t i = 0; i < cameras.size(); i++)
+    {
+        image img;
+        img.orientation = Eigen::Quaterniond(Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()));
+        img.position = cameras[i].first;
+        img.model = cam_model;
+        img.path = prefix + "_" + std::to_string(i) + ".png";
+        cv::imwrite(img.path, cv::Mat(cam_model->pixels_rows, cam_model->pixels_cols, CV_8UC3, cameras[i].second));
+        ridge_graph.addNode(std::move(img));
+    }
+
+    surface_model ground;
+    ground.cloud.push_back({Eigen::Vector3d(0, 0, 0)});
+    surface_model surface;
+    surface.mesh = rebuildMesh({Eigen::Vector3d(0, 0, 40), Eigen::Vector3d(1, 0, 40)}, {ground});
+    for (auto it = surface.mesh.nodebegin(); it != surface.mesh.nodeend(); ++it)
+    {
+        Eigen::Vector3d &location = it->second.payload.location;
+        location.z() = std::max(0.0, 30 * (1 - std::abs(location.x()) / 1.5));
+    }
+
+    // WHEN: generating the GeoTIFF with no blend transition
+    GeoCoord coord_system;
+    coord_system.setOrigin(0, 0);
+    OrthoMosaicConfig config;
+    config.tile_size = 256;
+    config.blend_transition_radius = 0;
+    generateGeoTIFF({surface}, ridge_graph, coord_system, ColorBalanceResult{}, prefix + ".tif", "", config);
+
+    // THEN: ground east of the ridge, hidden from the nearer red camera, is coloured by the blue camera
+    GDALDatasetPtr ds(GDALOpen((prefix + ".tif").c_str(), GA_ReadOnly));
+    ASSERT_TRUE(ds);
+    double geotransform[6];
+    GDALGetGeoTransform(ds.get(), geotransform);
+    auto rgbaAt = [&](double x, double y) {
+        const int col = static_cast<int>(std::floor((x - geotransform[0]) / geotransform[1]));
+        const int row = static_cast<int>(std::floor((y - geotransform[3]) / geotransform[5]));
+        std::array<uint8_t, 4> rgba{};
+        EXPECT_EQ(
+            GDALDatasetRasterIO(ds.get(), GF_Read, col, row, 1, 1, rgba.data(), 1, 1, GDT_Byte, 4, nullptr, 4, 4, 1),
+            CE_None);
+        return rgba;
+    };
+    for (double y = -4; y <= 4; y += 1)
+    {
+        for (double x = 2; x <= 6; x += 0.5)
+        {
+            const auto rgba = rgbaAt(x, y);
+            EXPECT_EQ(rgba[3], 255) << x << " " << y;
+            EXPECT_LT(rgba[0], 30) << x << " " << y;
+            EXPECT_GT(rgba[2], 225) << x << " " << y;
+        }
+
+        // AND: ground west of the ridge is still coloured by the nearer red camera
+        for (double x = -6; x <= -2; x += 0.5)
+        {
+            const auto rgba = rgbaAt(x, y);
+            EXPECT_GT(rgba[0], 225) << x << " " << y;
+            EXPECT_LT(rgba[2], 30) << x << " " << y;
+        }
+    }
+}
+
 TEST_F(ortho, geotiff_feathers_colours_across_camera_seams)
 {
     // GIVEN: a scene with differently coloured images

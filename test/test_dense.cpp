@@ -1,5 +1,6 @@
 #include <opencalibration/dense/densify_multiview.hpp>
 #include <opencalibration/distort/distort_keypoints.hpp>
+#include <opencalibration/surface/expand_mesh.hpp>
 #include <opencalibration/surface/intersect.hpp>
 #include <opencalibration/types/measurement_graph.hpp>
 #include <opencalibration/types/surface_model.hpp>
@@ -250,6 +251,45 @@ class DensifyMultiviewTest : public ::testing::Test
     {
         cam_ori = Eigen::Quaterniond(Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()));
         cam_model = makeDownwardCamera();
+    }
+
+    std::vector<surface_model> ridgeSurface() const
+    {
+        surface_model ground;
+        ground.cloud.push_back({Eigen::Vector3d(0, 0, 0)});
+        std::vector<surface_model> surfaces(1);
+        surfaces[0].mesh = rebuildMesh({Eigen::Vector3d(0, 0, 40), Eigen::Vector3d(1, 0, 40)}, {ground});
+        for (auto it = surfaces[0].mesh.nodebegin(); it != surfaces[0].mesh.nodeend(); ++it)
+        {
+            Eigen::Vector3d &location = it->second.payload.location;
+            location.z() = std::max(0.0, 10 * (1 - std::abs(location.x()) / 1.5));
+        }
+        return surfaces;
+    }
+
+    MeasurementGraph camerasEitherSideOfRidge() const
+    {
+        std::vector<Eigen::Vector3d> ground_points;
+        for (double x : {-12., -10., -4., -3., 3., 4., 10., 12.})
+            for (double y = -4; y <= 4; y += 2)
+                ground_points.emplace_back(x, y, 0);
+
+        MeasurementGraph graph;
+        auto model_ptr = std::make_shared<CameraModel>(cam_model);
+        for (const Eigen::Vector3d &cam_pos : {Eigen::Vector3d(-15, 0, 40), Eigen::Vector3d(15, 0, 40)})
+        {
+            image img;
+            img.model = model_ptr;
+            img.position = cam_pos;
+            img.orientation = cam_ori;
+            std::vector<feature_2d> dense;
+            uint64_t seed = 42;
+            for (const auto &pt : ground_points)
+                dense.push_back(makeFeature(projectPoint(pt, cam_model, cam_pos, cam_ori), seed++));
+            addDenseFeatures(img, std::move(dense));
+            graph.addNode(std::move(img));
+        }
+        return graph;
     }
 
     Eigen::Quaterniond cam_ori;
@@ -650,4 +690,42 @@ TEST_F(DensifyMultiviewTest, densifies_against_every_surface)
     EXPECT_TRUE(surfaces[0].cloud.empty());
     ASSERT_EQ(surfaces[1].cloud.size(), 1u);
     EXPECT_GT(surfaces[1].cloud[0].size(), 0u);
+}
+
+TEST_F(DensifyMultiviewTest, ground_hidden_behind_ridge_is_not_matched)
+{
+    // GIVEN: two cameras either side of a 10m ridge, with features at the projections of ground points on both sides
+    std::vector<surface_model> surfaces = ridgeSurface();
+    MeasurementGraph graph = camerasEitherSideOfRidge();
+
+    // WHEN: we densify
+    densifyMesh(graph, surfaces);
+
+    // THEN: only the ground far enough from the ridge to be seen by both cameras is triangulated
+    size_t far_points = 0;
+    for (const auto &cloud : surfaces[0].cloud)
+        for (const auto &pt : cloud)
+        {
+            EXPECT_GT(std::abs(pt.x()), 6) << pt.transpose();
+            far_points++;
+        }
+    EXPECT_GT(far_points, 0u);
+}
+
+TEST_F(DensifyMultiviewTest, existing_points_hidden_behind_ridge_are_removed)
+{
+    // GIVEN: two cameras either side of a 10m ridge, and existing points beside the ridge and far from it
+    std::vector<surface_model> surfaces = ridgeSurface();
+    surfaces[0].cloud.push_back({Eigen::Vector3d(-3.5, 1, 0), Eigen::Vector3d(-11, 1, 0), Eigen::Vector3d(11, -1, 0)});
+    MeasurementGraph graph = camerasEitherSideOfRidge();
+
+    // WHEN: we densify
+    densifyMesh(graph, surfaces);
+
+    // THEN: the point beside the ridge, hidden from one camera, is gone and the far points remain
+    ASSERT_FALSE(surfaces[0].cloud.empty());
+    const point_cloud &existing = surfaces[0].cloud[0];
+    ASSERT_EQ(existing.size(), 2u);
+    EXPECT_EQ(existing[0], Eigen::Vector3d(-11, 1, 0));
+    EXPECT_EQ(existing[1], Eigen::Vector3d(11, -1, 0));
 }

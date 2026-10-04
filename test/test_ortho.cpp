@@ -780,3 +780,66 @@ TEST(ortho_tiles, tile_cameras_match_nearest_camera_of_every_pixel_centre)
             expected.insert(cameras.search({col + 0.5, 10 - (row + 0.5)}).payload);
     EXPECT_EQ(std::set<size_t>(found.begin(), found.end()), std::set<size_t>(expected.begin(), expected.end()));
 }
+
+namespace
+{
+surface_model ridgeSurface(double ridge_height)
+{
+    surface_model ground;
+    ground.cloud.push_back({Eigen::Vector3d(0, 0, 0)});
+    surface_model surface;
+    surface.mesh = rebuildMesh({Eigen::Vector3d(0, 0, 40), Eigen::Vector3d(1, 0, 40)}, {ground});
+    for (auto it = surface.mesh.nodebegin(); it != surface.mesh.nodeend(); ++it)
+    {
+        Eigen::Vector3d &location = it->second.payload.location;
+        location.z() = std::max(0.0, ridge_height * (1 - std::abs(location.x()) / 1.5));
+    }
+    return surface;
+}
+} // namespace
+
+TEST_F(ortho, thumbnail_does_not_see_through_the_mesh)
+{
+    // GIVEN: a camera just west of a 30m ridge, and a camera further east
+    auto cam_model = std::make_shared<CameraModel>();
+    cam_model->focal_length_pixels = 200;
+    cam_model->principle_point << 200, 150;
+    cam_model->pixels_cols = 400;
+    cam_model->pixels_rows = 300;
+    cam_model->projection_type = opencalibration::ProjectionType::PLANAR;
+    MeasurementGraph ridge_graph;
+    const std::vector<Eigen::Vector3d> camera_positions{{-8, 0, 40}, {25, 0, 40}};
+    std::vector<size_t> camera_ids;
+    for (const auto &position : camera_positions)
+    {
+        image img;
+        img.orientation = Eigen::Quaterniond(Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()));
+        img.position = position;
+        img.model = cam_model;
+        img.thumbnail = RGBRaster(150, 200, 3);
+        img.thumbnail.layers[0].band = Band::RED;
+        img.thumbnail.layers[1].band = Band::GREEN;
+        img.thumbnail.layers[2].band = Band::BLUE;
+        camera_ids.push_back(ridge_graph.addNode(std::move(img)));
+    }
+    const surface_model surface = ridgeSurface(30);
+
+    // WHEN: we generate the thumbnail orthomosaic
+    const OrthoMosaic result = generateOrthomosaic({surface}, ridge_graph);
+
+    // THEN: ground east of the ridge, hidden from the nearer west camera, is sourced from the east camera
+    auto sourceAt = [&](double x, double y) {
+        const int col = static_cast<int>(std::floor((x - result.bounds.min_x) / result.gsd));
+        const int row = static_cast<int>(std::floor((result.bounds.max_y - y) / result.gsd));
+        return static_cast<uint32_t>(result.cameraUUID.pixels(row, col));
+    };
+    for (double y = -4; y <= 4; y += 1)
+    {
+        for (double x = 2; x <= 6; x += 0.5)
+            EXPECT_EQ(sourceAt(x, y), static_cast<uint32_t>(camera_ids[1])) << x << " " << y;
+
+        // AND: ground west of the ridge is still sourced from the nearer west camera
+        for (double x = -6; x <= -2; x += 0.5)
+            EXPECT_EQ(sourceAt(x, y), static_cast<uint32_t>(camera_ids[0])) << x << " " << y;
+    }
+}

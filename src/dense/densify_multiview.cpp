@@ -248,6 +248,51 @@ bool inFrontOfCameras(const Eigen::Vector3d &point, const std::vector<RayMeasure
     return true;
 }
 
+void removePointsNotSeenByTwoCameras(const opencalibration::MeasurementGraph &graph,
+                                     std::vector<opencalibration::surface_model> &surfaces,
+                                     const std::vector<opencalibration::MeshLineOfSight> &surface_sightlines,
+                                     const jk::tree::KDTree<size_t, 3, 8> &camera_tree)
+{
+    size_t total = 0, removed = 0;
+    for (auto &surface : surfaces)
+        for (auto &cloud : surface.cloud)
+        {
+            std::vector<char> seen_by_two(cloud.size());
+#pragma omp parallel
+            {
+                auto sightlines = surface_sightlines;
+                auto camera_searcher = camera_tree.searcher();
+#pragma omp for schedule(dynamic, 256)
+                for (int i = 0; i < static_cast<int>(cloud.size()); i++)
+                {
+                    const Eigen::Vector3d &point = cloud[i];
+                    int seen_by = 0;
+                    for (const auto &candidate :
+                         camera_searcher.search({point.x(), point.y(), point.z()}, std::numeric_limits<double>::max(),
+                                                MAX_CANDIDATE_IMAGES))
+                    {
+                        const auto &img = graph.getNode(candidate.payload)->payload;
+                        const Eigen::Vector2d pixel =
+                            opencalibration::image_from_3d(point, *img.model, img.position, img.orientation);
+                        const bool in_frame = pixel.x() >= 0 && pixel.x() < img.model->pixels_cols && pixel.y() >= 0 &&
+                                              pixel.y() < img.model->pixels_rows;
+                        if (in_frame && opencalibration::surfaceVisibleFrom(sightlines, point, img.position))
+                            seen_by++;
+                    }
+                    seen_by_two[i] = seen_by >= 2;
+                }
+            }
+            size_t kept = 0;
+            for (size_t i = 0; i < cloud.size(); i++)
+                if (seen_by_two[i])
+                    cloud[kept++] = cloud[i];
+            total += cloud.size();
+            removed += cloud.size() - kept;
+            cloud.resize(kept);
+        }
+    spdlog::info("Dense: removed {} of {} existing points not visible from two cameras", removed, total);
+}
+
 } // namespace
 
 namespace opencalibration
@@ -350,6 +395,10 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
     constexpr size_t NO_SURFACE = std::numeric_limits<size_t>::max();
     std::vector<size_t> measurement_surface(id_to_measurement.size(), NO_SURFACE);
 
+    const std::vector<MeshLineOfSight> surface_sightlines = sightlinesOver(surfaces);
+
+    removePointsNotSeenByTwoCameras(graph, surfaces, surface_sightlines, camera_tree);
+
     const int num_nodes = static_cast<int>(node_ids.size());
 #pragma omp parallel for schedule(dynamic) // NOLINT(modernize-loop-convert)
     for (int ni = 0; ni < num_nodes; ni++)
@@ -365,6 +414,7 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
         for (size_t si = 0; si < surfaces.size(); si++)
             if (!searchers[si].init(surfaces[si].mesh))
                 searchers[si] = MeshIntersectionSearcher();
+        auto sightlines = surface_sightlines;
 
         const CellSortedFeatures &src_features = *features_by_node.at(src_nid);
         std::vector<Eigen::Vector2d> src_locations(src_features.size());
@@ -396,6 +446,8 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
                 continue;
 
             const Eigen::Vector3d pt3d = searchers[surface_index].lastResult().intersectionLocation;
+            if (!surfaceVisibleFrom(sightlines, pt3d, src_pos))
+                continue;
             size_t src_id = measurementId(src_nid, global_fi);
             measurement_surface[src_id] = surface_index;
 
@@ -431,11 +483,12 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
                 if (slot == CellSortedFeatures::NO_MATCH)
                     continue;
 
-                // Mutual check: the candidate's best match back in the source image must be this feature. Centre the
-                // reverse search where the candidate maps to, assuming the local src->cand offset is a translation.
-                const Eigen::Vector2d reverse_center = src_location + (cand.location(slot) - predicted);
-                const size_t back = src_features.ratioTestMatchSlotNear(cand.descriptor(slot), reverse_center);
-                if (back != CellSortedFeatures::NO_MATCH && src_features.imageIndex(back) == global_fi)
+                const Eigen::Vector2d candidate_in_source_image = src_location + (cand.location(slot) - predicted);
+                const size_t back =
+                    src_features.ratioTestMatchSlotNear(cand.descriptor(slot), candidate_in_source_image);
+                const bool mutual_best_match =
+                    back != CellSortedFeatures::NO_MATCH && src_features.imageIndex(back) == global_fi;
+                if (mutual_best_match && surfaceVisibleFrom(sightlines, pt3d, cand_pos))
                 {
                     local_matches.push_back({src_id, measurementId(cand_nid, cand.imageIndex(slot))});
                 }
@@ -507,65 +560,69 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
     std::vector<char> track_valid(multi_tracks.size(), 0);
 
     const int num_tracks = static_cast<int>(multi_tracks.size());
-#pragma omp parallel for schedule(dynamic) // NOLINT(modernize-loop-convert)
-    for (int ti = 0; ti < num_tracks; ti++)
+#pragma omp parallel
     {
-        const auto &ids = multi_tracks[ti];
-
-        std::vector<RayMeasurement> measurements;
-        for (size_t id : ids)
+        auto sightlines = surface_sightlines;
+#pragma omp for schedule(dynamic) // NOLINT(modernize-loop-convert)
+        for (int ti = 0; ti < num_tracks; ti++)
         {
-            const auto &m = id_to_measurement[id];
-            const auto &img = graph.getNode(m.node_id)->payload;
-            measurements.push_back({image_to_3d(m.pixel, *img.model, img.position, img.orientation), m.pixel,
-                                    img.model.get(), &img.position, &img.orientation});
-        }
+            const auto &ids = multi_tracks[ti];
 
-        std::vector<ray_d> rays;
-        for (const auto &rm : measurements)
-            rays.push_back(rm.ray);
+            std::vector<RayMeasurement> measurements;
+            for (size_t id : ids)
+            {
+                const auto &m = id_to_measurement[id];
+                const auto &img = graph.getNode(m.node_id)->payload;
+                measurements.push_back({image_to_3d(m.pixel, *img.model, img.position, img.orientation), m.pixel,
+                                        img.model.get(), &img.position, &img.orientation});
+            }
 
-        auto triangulated = rayIntersection(rays);
-        if (!triangulated.first.allFinite() || triangulated.second < 0)
-            continue;
+            std::vector<ray_d> rays;
+            for (const auto &rm : measurements)
+                rays.push_back(rm.ray);
 
-        std::vector<size_t> all_indices(measurements.size());
-        std::iota(all_indices.begin(), all_indices.end(), 0);
-        Eigen::Vector3d point = refineTriangulation(triangulated.first, measurements, all_indices);
-
-        std::vector<size_t> inlier_indices;
-        for (size_t i = 0; i < measurements.size(); i++)
-        {
-            if (reprojectionResidual(point, measurements[i]).squaredNorm() <= max_reproj_err_sq)
-                inlier_indices.push_back(i);
-        }
-
-        if (inlier_indices.size() < 2)
-            continue;
-
-        if (inlier_indices.size() < measurements.size())
-        {
-            // Restart from the inliers' algebraic solution so outliers don't bias the initial guess
-            rays.clear();
-            for (size_t i : inlier_indices)
-                rays.push_back(measurements[i].ray);
-            triangulated = rayIntersection(rays);
+            auto triangulated = rayIntersection(rays);
             if (!triangulated.first.allFinite() || triangulated.second < 0)
                 continue;
-            point = refineTriangulation(triangulated.first, measurements, inlier_indices);
 
-            bool all_inliers = std::all_of(inlier_indices.begin(), inlier_indices.end(), [&](size_t i) {
-                return reprojectionResidual(point, measurements[i]).squaredNorm() <= max_reproj_err_sq;
-            });
-            if (!all_inliers)
+            std::vector<size_t> all_indices(measurements.size());
+            std::iota(all_indices.begin(), all_indices.end(), 0);
+            Eigen::Vector3d point = refineTriangulation(triangulated.first, measurements, all_indices);
+
+            std::vector<size_t> inlier_indices;
+            for (size_t i = 0; i < measurements.size(); i++)
+            {
+                if (reprojectionResidual(point, measurements[i]).squaredNorm() <= max_reproj_err_sq &&
+                    surfaceVisibleFrom(sightlines, point, *measurements[i].position))
+                    inlier_indices.push_back(i);
+            }
+
+            if (inlier_indices.size() < 2)
                 continue;
+
+            if (inlier_indices.size() < measurements.size())
+            {
+                std::vector<ray_d> inlier_rays;
+                for (size_t i : inlier_indices)
+                    inlier_rays.push_back(measurements[i].ray);
+                triangulated = rayIntersection(inlier_rays);
+                if (!triangulated.first.allFinite() || triangulated.second < 0)
+                    continue;
+                point = refineTriangulation(triangulated.first, measurements, inlier_indices);
+
+                bool all_inliers = std::all_of(inlier_indices.begin(), inlier_indices.end(), [&](size_t i) {
+                    return reprojectionResidual(point, measurements[i]).squaredNorm() <= max_reproj_err_sq;
+                });
+                if (!all_inliers)
+                    continue;
+            }
+
+            if (!point.allFinite() || !inFrontOfCameras(point, measurements, inlier_indices))
+                continue;
+
+            track_results[ti] = point;
+            track_valid[ti] = true;
         }
-
-        if (!point.allFinite() || !inFrontOfCameras(point, measurements, inlier_indices))
-            continue;
-
-        track_results[ti] = point;
-        track_valid[ti] = true;
     }
 
     spdlog::info("Dense: triangulated {} tracks in {:.1f}s", multi_tracks.size(), lapSeconds());

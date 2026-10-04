@@ -701,9 +701,11 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
     std::vector<ThumbnailSample> pixel_sources(static_cast<size_t>(image_dimensions.height) * image_dimensions.width);
     std::vector<ColorCorrespondence> correspondences;
 
+    const std::vector<MeshLineOfSight> surface_sightlines = sightlinesOver(surfaces);
 #pragma omp parallel
     {
         RayTraceContext rayTrace(surfaces);
+        auto sightlines = surface_sightlines;
         auto cameraSearcher = context.imageGPSLocations.searcher();
         const std::vector<jk::tree::KDTree<size_t, 2>::DistancePayload> noCameras;
         std::vector<ColorCorrespondence> local_correspondences;
@@ -752,7 +754,8 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
                     const int px = static_cast<int>(std::floor(thumb_pixel.x()));
                     const int py = static_cast<int>(std::floor(thumb_pixel.y()));
 
-                    if (px >= 0 && px < cc.thumb_size[1] && py >= 0 && py < cc.thumb_size[0])
+                    if (px >= 0 && px < cc.thumb_size[1] && py >= 0 && py < cc.thumb_size[0] &&
+                        surfaceVisibleFrom(sightlines, sample_point, payload.position))
                     {
                         overlapCount++;
                         Eigen::Vector<uint8_t, Eigen::Dynamic> pixelValue(3);
@@ -1223,7 +1226,8 @@ void buildOverviews(GDALDatasetH dataset, int width, int height)
 
 std::vector<uint8_t> renderTile(int tile_x, int tile_y, int tile_size, const OrthoMosaicBounds &bounds, double gsd,
                                 int output_width, int output_height, const std::vector<float> &dsm_tile,
-                                const MeasurementGraph &graph, const jk::tree::KDTree<size_t, 2> &imageGPSLocations,
+                                const std::vector<MeshLineOfSight> &sightlines, const MeasurementGraph &graph,
+                                const jk::tree::KDTree<size_t, 2> &imageGPSLocations,
                                 const ankerl::unordered_dense::map<size_t, Eigen::Matrix3d> &inv_rotation_cache,
                                 FullResolutionImageCache &image_cache, const ColorBalanceResult &color_balance,
                                 double feather_distance)
@@ -1248,6 +1252,7 @@ std::vector<uint8_t> renderTile(int tile_x, int tile_y, int tile_size, const Ort
         PerformanceMeasure thread_perf("Ortho - render");
 
         PatchSampler sampler;
+        auto local_sightlines = sightlines;
 
         jk::tree::KDTree<size_t, 2>::Searcher tree_searcher(imageGPSLocations);
         ankerl::unordered_dense::map<uint64_t, cv::Mat> local_image_cache;
@@ -1318,7 +1323,8 @@ std::vector<uint8_t> renderTile(int tile_x, int tile_y, int tile_size, const Ort
                             continue;
 
                         Eigen::Vector2d pixel;
-                        if (!projectIntoImage(*cam.payload, *cam.inv_rotation, sample_point, pixel))
+                        if (!projectIntoImage(*cam.payload, *cam.inv_rotation, sample_point, pixel) ||
+                            !surfaceVisibleFrom(local_sightlines, sample_point, cam.payload->position))
                             continue;
 
                         const double distance = std::sqrt(distance2(rank[r]));
@@ -1414,6 +1420,7 @@ void generateGeoTIFF(const std::vector<surface_model> &surfaces, const Measureme
             inv_rotation_cache[node_id] = node->payload.orientation.inverse().toRotationMatrix();
         }
     }
+    const std::vector<MeshLineOfSight> sightlines = sightlinesOver(surfaces);
 
     int num_tiles_x = (width + tile_size - 1) / tile_size;
     int num_tiles_y = (height + tile_size - 1) / tile_size;
@@ -1472,7 +1479,7 @@ void generateGeoTIFF(const std::vector<surface_model> &surfaces, const Measureme
             loadImages(tile_camera_map.at(static_cast<size_t>(tile_y) * num_tiles_x + tile_x), graph, image_cache);
             lap(load_s);
             rgba_tile =
-                renderTile(tile_x, tile_y, tile_size, bounds, gsd, width, height, dsm_tile, graph,
+                renderTile(tile_x, tile_y, tile_size, bounds, gsd, width, height, dsm_tile, sightlines, graph,
                            context.imageGPSLocations, inv_rotation_cache, image_cache, color_balance, feather_distance);
         }
 

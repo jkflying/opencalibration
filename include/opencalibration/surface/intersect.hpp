@@ -2,6 +2,9 @@
 
 #include <opencalibration/types/mesh_graph.hpp>
 #include <opencalibration/types/ray.hpp>
+#include <opencalibration/types/surface_model.hpp>
+
+#include <memory>
 
 namespace opencalibration
 {
@@ -52,4 +55,31 @@ class MeshIntersectionSearcher
 
     std::vector<size_t> _keepNodes;
 };
+
+class MeshLineOfSight
+{
+  public:
+    [[nodiscard]] bool init(const MeshGraph &meshGraph);
+
+    double surfaceHeight(const Eigen::Vector2d &xy);
+
+    bool surfaceVisibleFrom(const Eigen::Vector2d &xy, const Eigen::Vector3d &viewpoint);
+
+  private:
+    struct MaxMipmap;
+    struct ShadowRay;
+
+    bool traceUnoccluded(const ShadowRay &ray, double tMax, double epsilon);
+    bool marchUnoccluded(const ShadowRay &ray, double tStart, double tEnd, double epsilon);
+
+    MeshIntersectionSearcher _searcher;
+    std::shared_ptr<const MaxMipmap> _maxMipmap;
+    double _maxSurfaceZ = NAN;
+    double _marchStep = NAN;
+};
+
+std::vector<MeshLineOfSight> sightlinesOver(const std::vector<surface_model> &surfaces);
+
+bool surfaceVisibleFrom(std::vector<MeshLineOfSight> &sightlines, const Eigen::Vector3d &point,
+                        const Eigen::Vector3d &viewpoint);
 } // namespace opencalibration
