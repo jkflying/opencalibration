@@ -1211,6 +1211,7 @@ void buildOverviews(GDALDatasetH dataset, int width, int height)
 
     PerformanceMeasure p("Ortho - overviews");
     const auto start = std::chrono::steady_clock::now();
+    GDALFlushCache(dataset);
     CPLSetThreadLocalConfigOption("GDAL_NUM_THREADS", "ALL_CPUS");
     CPLErr err = GDALBuildOverviews(dataset, "AVERAGE", static_cast<int>(overview_levels.size()),
                                     overview_levels.data(), 0, nullptr, nullptr, nullptr);

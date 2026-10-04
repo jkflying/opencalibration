@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <omp.h>
 #include <queue>
+#include <tuple>
 
 namespace opencalibration
 {
@@ -570,6 +571,9 @@ size_t refineByPointDensity(MeshGraph &mesh, const std::vector<point_cloud> &poi
         spdlog::info("refineByPointDensity: iteration {}, refining {} triangles exceeding {} points", iter,
                      toRefine.size(), maxPointsPerTriangle);
 
+        std::sort(toRefine.begin(), toRefine.end(), [](const auto &a, const auto &b) {
+            return std::tie(a.first.edgeId, a.first.side) < std::tie(b.first.edgeId, b.first.side);
+        });
         size_t createdThisIter = 0;
         for (const auto &[tri, queuedVerts] : toRefine)
         {
