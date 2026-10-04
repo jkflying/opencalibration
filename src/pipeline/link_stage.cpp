@@ -42,7 +42,7 @@ WorkingSet loadWorkingSet(const MeasurementGraph &graph, const std::vector<NodeL
 
     const auto start = std::chrono::steady_clock::now();
 #pragma omp parallel for schedule(dynamic, 1)
-    for (size_t i = 0; i < node_ids.size(); i++)
+    for (size_t i = 0; i < node_ids.size(); i++) // NOLINT(modernize-loop-convert)
     {
         const image &img = graph.getNode(node_ids[i])->payload;
         LinkFeatures &entry = working_set.find(node_ids[i])->second;

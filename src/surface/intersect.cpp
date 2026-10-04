@@ -195,12 +195,12 @@ struct MeshLineOfSight::MaxMipmap
         double cellSize;
         std::vector<double> maxHeight, maxGradient;
 
-        size_t index(int col, int row) const
+        [[nodiscard]] size_t index(int col, int row) const
         {
             return static_cast<size_t>(row) * cols + col;
         }
 
-        bool contains(const Eigen::Vector2d &cell) const
+        [[nodiscard]] bool contains(const Eigen::Vector2d &cell) const
         {
             return cell.x() >= 0 && cell.y() >= 0 && cell.x() < cols && cell.y() < rows;
         }
@@ -211,7 +211,7 @@ struct MeshLineOfSight::MaxMipmap
             maxGradient[i] = std::max(maxGradient[i], gradient);
         }
 
-        Level downsampled() const
+        [[nodiscard]] Level downsampled() const
         {
             Level coarse((cols + 1) / 2, (rows + 1) / 2, cellSize * 2);
             for (int row = 0; row < rows; row++)
@@ -232,12 +232,12 @@ struct MeshLineOfSight::ShadowRay
     Eigen::Vector2d directionXY;
     double gradient;
 
-    Eigen::Vector2d xy(double t) const
+    [[nodiscard]] Eigen::Vector2d xy(double t) const
     {
         return origin.head<2>() + t * directionXY;
     }
 
-    double height(double t) const
+    [[nodiscard]] double height(double t) const
     {
         return origin.z() + t * gradient;
     }

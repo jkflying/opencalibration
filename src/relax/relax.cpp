@@ -99,7 +99,7 @@ std::optional<Eigen::Quaterniond> decomposedOrientation(
         const Eigen::Vector3d baseline =
             (node_is_source ? other.position - node.position : node.position - other.position);
         double best_angle = MAX_BASELINE_ANGLE;
-        std::optional<Eigen::Quaterniond> best;
+        Eigen::Quaterniond best = Eigen::Quaterniond::Identity();
         for (const auto &pose : edge->payload.relative_poses)
         {
             if (pose.score <= 0 || !pose.orientation.coeffs().allFinite() || !pose.position.allFinite())
@@ -114,8 +114,8 @@ std::optional<Eigen::Quaterniond> decomposedOrientation(
                 best = node_is_source ? source : other.orientation * relative.inverse();
             }
         }
-        if (best)
-            candidates.emplace_back(*best, edge->payload.inlier_matches.size());
+        if (best_angle < MAX_BASELINE_ANGLE)
+            candidates.emplace_back(best, edge->payload.inlier_matches.size());
     }
 
     double best_weight = 0;

@@ -12,6 +12,6 @@ struct surface_model
 {
     std::vector<point_cloud> cloud;
     MeshGraph mesh;
-    ankerl::unordered_dense::set<size_t> observed_vertices{};
+    ankerl::unordered_dense::set<size_t> observed_vertices{}; // NOLINT(readability-redundant-member-init)
 };
 } // namespace opencalibration

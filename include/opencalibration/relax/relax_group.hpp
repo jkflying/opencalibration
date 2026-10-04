@@ -22,13 +22,13 @@ class RelaxGroup
 
     std::vector<size_t> finalize(MeasurementGraph &graph);
 
-    std::vector<size_t> nodeIds() const;
-    const std::vector<size_t> &fixedNodeIds() const
+    [[nodiscard]] std::vector<size_t> nodeIds() const;
+    [[nodiscard]] const std::vector<size_t> &fixedNodeIds() const
     {
         return _fixed_node_ids;
     }
 
-    bool modelChanged() const;
+    [[nodiscard]] bool modelChanged() const;
 
   private:
     bool _incremental_relax;
