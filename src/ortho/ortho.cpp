@@ -1438,9 +1438,7 @@ void generateGeoTIFF(const std::vector<surface_model> &surfaces, const Measureme
 
     const size_t image_cache_size = computeImageCacheSize(tile_camera_map);
     FullResolutionImageCache image_cache(image_cache_size);
-    constexpr size_t kFreeLoadsPerTile = 1;
-    auto tile_order =
-        computeCacheAwareTileOrder(tile_camera_map, {num_tiles_x, num_tiles_y, image_cache_size, kFreeLoadsPerTile});
+    const auto tile_order = hilbertTileOrder(num_tiles_x, num_tiles_y);
 
     const ImageUseSchedule image_schedule(tile_order, tile_camera_map, num_tiles_x);
     std::atomic<size_t> current_tile_position{0};
