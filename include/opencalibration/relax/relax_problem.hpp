@@ -234,6 +234,7 @@ class RelaxProblem
         double sigma;
     };
     std::vector<IntrinsicsPrior> _intrinsics_priors;
+    void fixIntrinsicsLessObservableThanPriors();
     void addIntrinsicsPriors(double *focal_length_pixels, double *principal_point,
                              const image_metadata::camera_info_t &camera_info, const RelaxOptionSet &options);
     MeshGraph _mesh;

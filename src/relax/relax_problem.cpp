@@ -1,8 +1,8 @@
 #include <opencalibration/relax/relax_problem.hpp>
 
 #include <Eigen/Eigenvalues>
+#include <Eigen/SparseCholesky>
 #include <Eigen/SparseCore>
-#include <Eigen/SparseQR>
 #include <opencalibration/relax/autodiff_cost_function.hpp>
 #include <opencalibration/relax/relax_cost_function.hpp>
 
@@ -153,6 +153,37 @@ std::optional<Eigen::Vector3d> confidentPoint(const std::vector<WorldRay> &rays)
     if (!(min_info > 0) || 3 * std::sqrt(max_variance) > MAX_EXTENT_FRACTION * mean_range)
         return std::nullopt;
     return p;
+}
+
+constexpr double JACOBI_REGULARIZATION = 1e-12;
+constexpr double UNOBSERVABLE_SCALED_INFORMATION = 100 * JACOBI_REGULARIZATION;
+
+Eigen::SparseMatrix<double> rowWeightedJacobian(const ceres::CRSMatrix &crs, const std::vector<double> &row_weights)
+{
+    std::vector<Eigen::Triplet<double>> triplets;
+    triplets.reserve(crs.values.size());
+    for (int row = 0; row < crs.num_rows; row++)
+        for (int k = crs.rows[row]; k < crs.rows[row + 1]; k++)
+            triplets.emplace_back(row, crs.cols[k], crs.values[k] * row_weights[row]);
+    Eigen::SparseMatrix<double> jacobian(crs.num_rows, crs.num_cols);
+    jacobian.setFromTriplets(triplets.begin(), triplets.end());
+    return jacobian;
+}
+
+double minEigenvalue(const Eigen::MatrixXd &symmetric)
+{
+    return Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd>(symmetric, Eigen::EigenvaluesOnly).eigenvalues()(0);
+}
+
+double dataOnlySigma(const Eigen::MatrixXd &scaled_posterior_covariance, const Eigen::VectorXd &jacobi_scale,
+                     double prior_sigma)
+{
+    Eigen::MatrixXd scaled_data_information = scaled_posterior_covariance.inverse();
+    scaled_data_information.diagonal() -= jacobi_scale.cwiseAbs2() / (prior_sigma * prior_sigma);
+    if (minEigenvalue(scaled_data_information) <= UNOBSERVABLE_SCALED_INFORMATION)
+        return std::numeric_limits<double>::infinity();
+    const auto unscale = jacobi_scale.cwiseInverse().asDiagonal();
+    return 1 / std::sqrt(minEigenvalue(unscale * scaled_data_information * unscale));
 }
 } // namespace
 
@@ -958,6 +989,91 @@ void RelaxProblem::addIntrinsicsPriors(double *focal_length_pixels, double *prin
         _intrinsics_priors.push_back({principal_point, sigma});
         _problem->AddResidualBlock(new ceres::NormalPrior(inverse_sigma, expected_principal_point), nullptr,
                                    principal_point);
+    }
+}
+
+void RelaxProblem::fixIntrinsicsLessObservableThanPriors()
+{
+    if (_intrinsics_priors.empty())
+        return;
+    PerformanceMeasure p("Relax intrinsics observability");
+
+    ankerl::unordered_dense::map<ceres::ResidualBlockId, double> inverse_noise_scale;
+    for (const auto *group : {&_ray_residuals, &_mesh_point_residuals})
+        for (const auto &block : group->blocks)
+            inverse_noise_scale[block.id] = 1.0 / group->scale;
+
+    ceres::Problem::EvaluateOptions evaluate_options;
+    _problem->GetResidualBlocks(&evaluate_options.residual_blocks);
+    std::vector<double> row_weights;
+    for (auto id : evaluate_options.residual_blocks)
+    {
+        auto scale = inverse_noise_scale.find(id);
+        row_weights.insert(row_weights.end(), _problem->GetCostFunctionForResidualBlock(id)->num_residuals(),
+                           scale == inverse_noise_scale.end() ? 1.0 : scale->second);
+    }
+    std::vector<double *> all_parameter_blocks;
+    _problem->GetParameterBlocks(&all_parameter_blocks);
+    ankerl::unordered_dense::map<const double *, int> block_start;
+    int num_columns = 0;
+    for (double *block : all_parameter_blocks)
+    {
+        if (_problem->IsParameterBlockConstant(block))
+            continue;
+        block_start[block] = num_columns;
+        num_columns += _problem->ParameterBlockTangentSize(block);
+        evaluate_options.parameter_blocks.push_back(block);
+    }
+    struct FreePrior
+    {
+        const IntrinsicsPrior &prior;
+        int start;
+        int size;
+        int column;
+    };
+    std::vector<FreePrior> free_priors;
+    int prior_columns = 0;
+    for (const auto &prior : _intrinsics_priors)
+    {
+        if (auto start = block_start.find(prior.parameters); start != block_start.end())
+        {
+            const int size = _problem->ParameterBlockTangentSize(prior.parameters);
+            free_priors.push_back({prior, start->second, size, prior_columns});
+            prior_columns += size;
+        }
+    }
+    if (free_priors.empty())
+        return;
+
+    ceres::CRSMatrix crs;
+    if (!_problem->Evaluate(evaluate_options, nullptr, nullptr, nullptr, &crs))
+        return;
+
+    const Eigen::SparseMatrix<double> jacobian = rowWeightedJacobian(crs, row_weights);
+    const Eigen::SparseMatrix<double> information = jacobian.transpose() * jacobian;
+    const Eigen::VectorXd jacobi_scale =
+        information.diagonal().unaryExpr([](double d) { return d > 0 ? 1 / std::sqrt(d) : 1.0; });
+    Eigen::SparseMatrix<double> identity(num_columns, num_columns);
+    identity.setIdentity();
+    const Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>> ldlt(
+        jacobi_scale.asDiagonal() * information * jacobi_scale.asDiagonal() + JACOBI_REGULARIZATION * identity);
+    if (ldlt.info() != Eigen::Success)
+        return;
+
+    Eigen::MatrixXd unit_columns = Eigen::MatrixXd::Zero(num_columns, prior_columns);
+    for (const auto &[prior, start, size, column] : free_priors)
+        unit_columns.block(start, column, size, size).setIdentity();
+    const Eigen::MatrixXd scaled_posterior_covariance = ldlt.solve(unit_columns);
+
+    for (const auto &[prior, start, size, column] : free_priors)
+    {
+        const double data_sigma = dataOnlySigma(scaled_posterior_covariance.block(start, column, size, size),
+                                                jacobi_scale.segment(start, size), prior.sigma);
+        const bool observable = data_sigma < prior.sigma;
+        spdlog::info("{}-parameter intrinsics data sigma {} vs prior sigma {}: {}", size, data_sigma, prior.sigma,
+                     observable ? "optimizing" : "holding fixed");
+        if (!observable)
+            _problem->SetParameterBlockConstant(prior.parameters);
     }
 }
 
@@ -2027,6 +2143,7 @@ void RelaxProblem::solve()
 
     updateRobustLossScale(_ray_residuals);
     updateRobustLossScale(_mesh_point_residuals);
+    fixIntrinsicsLessObservableThanPriors();
     _solver.Solve(_solver_options, _problem.get(), &_summary);
     spdlog::info(
         "Thread {} end relax: iterations {}, cost ratio {}, time {}s (preprocess {}s, linear solve {}s, "
