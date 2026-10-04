@@ -563,7 +563,6 @@ TEST_F(relax_group, prior_2_images)
     std::vector<NodePose> np;
     ankerl::unordered_dense::map<size_t, CameraModel> cam_models;
 
-
     const Eigen::Quaterniond down(Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()));
     Eigen::Quaterniond ori = down * Eigen::AngleAxisd(0.3, Eigen::Vector3d::UnitX());
     Eigen::Vector3d pos(9, 9, 9);
@@ -1101,6 +1100,26 @@ TEST_F(relax_group, measurement_3_images_mesh_internals_multi_ray_tracks_include
     // AND: it should stay fixed
     rp.solve();
     EXPECT_EQ(graph.getNode(id[0])->payload.orientation.coeffs(), ground_ori[0].coeffs());
+}
+
+TEST_F(relax_group, measurement_mesh_reports_vertices_observed_only_by_two_ray_costs)
+{
+    // GIVEN: a graph of 3 images observing planar points, relaxed using only the edge between the first two
+    init_cameras();
+    add_point_measurements(generate_planar_points());
+
+    // WHEN: we solve the ground mesh problem
+    ankerl::unordered_dense::set<size_t> edges{edge_id[0]};
+    TestRelaxProblem rp;
+    rp.setupGroundMeshProblem(graph, np, cam_models, edges, {Option::ORIENTATION, Option::GROUND_MESH}, {});
+    rp.solve();
+    const surface_model surface = rp.getSurfaceModel();
+
+    // THEN: the vertices under the 2-ray measurements are reported as observed, and the rest of the mesh is not
+    EXPECT_FALSE(surface.observed_vertices.empty());
+    EXPECT_LT(surface.observed_vertices.size(), surface.mesh.size_nodes());
+    for (size_t id : surface.observed_vertices)
+        EXPECT_NE(surface.mesh.getNode(id), nullptr);
 }
 
 TEST_F(relax_group, measurement_3_images_mesh_focal_with_non_optimizable_model)
@@ -1821,4 +1840,68 @@ TEST(relax, mesh_height_problem_recovers_surface_despite_outliers)
         }
         EXPECT_LT(maxError, 0.05);
     }
+}
+
+TEST(relax, mesh_height_fit_relaxes_unobserved_heights)
+{
+    point_cloud cameras;
+    cameras.push_back(Eigen::Vector3d(0, 0, 10));
+    cameras.push_back(Eigen::Vector3d(10, 10, 10));
+    surface_model surface;
+    surface.mesh = buildMinimalMesh(cameras, {});
+    point_cloud everywhere;
+    for (double x = 0.25; x < 10; x += 0.25)
+        for (double y = 0.25; y < 10; y += 0.25)
+            everywhere.push_back(Eigen::Vector3d(x, y, std::sin(x + y)));
+    refineByPointDensity(surface.mesh, {everywhere}, 5, 0.0, 14);
+    ASSERT_GT(surface.mesh.size_nodes(), 50);
+
+    // GIVEN: points over the left half only, and jagged heights on the unobserved vertices without any points
+    point_cloud left_half;
+    for (const auto &p : everywhere)
+        if (p.x() < 4)
+            left_half.push_back(p);
+    const auto samples = sampleMeshPoints(surface.mesh, {left_half});
+    ankerl::unordered_dense::set<size_t> observed;
+    for (const auto &sample : samples)
+        observed.insert(sample.vertices.begin(), sample.vertices.end());
+    std::mt19937 gen(42);
+    std::uniform_real_distribution<double> jag(-5, 5);
+    for (auto it = surface.mesh.nodebegin(); it != surface.mesh.nodeend(); ++it)
+        if (!observed.contains(it->first))
+            it->second.payload.location.z() = jag(gen);
+    auto steepestEdge = [&observed](const MeshGraph &mesh, int observedEnds) {
+        double steepest = 0;
+        for (auto it = mesh.cedgebegin(); it != mesh.cedgeend(); ++it)
+            if (observed.contains(it->second.getSource()) + observed.contains(it->second.getDest()) == observedEnds)
+                steepest = std::max(steepest, std::abs(mesh.getNode(it->second.getSource())->payload.location.z() -
+                                                       mesh.getNode(it->second.getDest())->payload.location.z()));
+        return steepest;
+    };
+    const double jaggedInterior = steepestEdge(surface.mesh, 0);
+    ASSERT_GT(jaggedInterior, 5);
+
+    // WHEN: fitting the mesh heights
+    MeshGraph fitted = surface.mesh;
+    fitMeshHeights(fitted, {left_half}, 0.02);
+
+    // THEN: the steps between unobserved vertices shrink, and each sits at the mean height of its neighbours
+    EXPECT_LT(steepestEdge(fitted, 0), 0.1 * jaggedInterior);
+    double largestOffsetFromNeighbours = 0;
+    for (auto it = fitted.cnodebegin(); it != fitted.cnodeend(); ++it)
+    {
+        if (observed.contains(it->first))
+            continue;
+        double neighbourSum = 0;
+        for (size_t e : it->second.getEdges())
+        {
+            const auto *edge = fitted.getEdge(e);
+            const size_t other = edge->getSource() == it->first ? edge->getDest() : edge->getSource();
+            neighbourSum += fitted.getNode(other)->payload.location.z();
+        }
+        const double neighbourMean = neighbourSum / static_cast<double>(it->second.getEdges().size());
+        largestOffsetFromNeighbours =
+            std::max(largestOffsetFromNeighbours, std::abs(it->second.payload.location.z() - neighbourMean));
+    }
+    EXPECT_LT(largestOffsetFromNeighbours, 1e-3);
 }

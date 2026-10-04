@@ -226,6 +226,7 @@ struct Pipeline::Impl : public usm::StateMachine<PipelineState, PipelineTransiti
                        std::optional<TileUpdate> tile_update = std::nullopt);
     void report_progress(bool starting);
     void report_relax_groups();
+    void adoptSurfacesAndRelaxUnobservedHeights();
     void rebuildGPSLocationsTree();
 
     void resetState(PipelineState state, uint64_t run_count = 0)
@@ -711,6 +712,15 @@ Pipeline::Impl::Transition Pipeline::Impl::initial_processing()
         USM_MAKE_DECISION(queue_empty && next_loaded_ids.size() == 0 && next_linked_ids.size() == 0, Transition::NEXT));
 }
 
+void Pipeline::Impl::adoptSurfacesAndRelaxUnobservedHeights()
+{
+    surfaces = relax_stage->getSurfaceModels();
+    for (auto &surface : surfaces)
+        if (!surface.observed_vertices.empty())
+            relaxUnobservedHeights(surface.mesh, surface.observed_vertices);
+    relax_stage->setSurfaceModels(surfaces);
+}
+
 Pipeline::Impl::Transition Pipeline::Impl::initial_global_relax()
 {
     if (skip_initial_global_relax)
@@ -726,7 +736,7 @@ Pipeline::Impl::Transition Pipeline::Impl::initial_global_relax()
     run_parallel(relax_funcs, parallelism);
     spdlog::info("global relaxed all");
     relax_stage->finalize(graph);
-    surfaces = relax_stage->getSurfaceModels();
+    adoptSurfacesAndRelaxUnobservedHeights();
 
     USM_DECISION_TABLE(Transition::REPEAT,
                        USM_MAKE_DECISION(stateRunCount() >= RELAX_MAX_ITERATIONS, Transition::NEXT));
@@ -802,7 +812,7 @@ Pipeline::Impl::Transition Pipeline::Impl::final_global_relax()
     fvec relax_funcs = relax_stage->get_runners(graph);
     run_parallel(relax_funcs, parallelism);
     relax_stage->finalize(graph);
-    surfaces = relax_stage->getSurfaceModels();
+    adoptSurfacesAndRelaxUnobservedHeights();
 
     USM_DECISION_TABLE(Transition::REPEAT,
                        USM_MAKE_DECISION(stateRunCount() >= FINAL_RELAX_MAX_ITERATIONS, Transition::NEXT));
@@ -863,7 +873,7 @@ Pipeline::Impl::Transition Pipeline::Impl::mesh_refinement()
     fvec relax_funcs = relax_stage->get_runners(graph);
     run_parallel(relax_funcs, parallelism);
     relax_stage->finalize(graph);
-    surfaces = relax_stage->getSurfaceModels();
+    adoptSurfacesAndRelaxUnobservedHeights();
 
     if (surfaces.empty())
     {

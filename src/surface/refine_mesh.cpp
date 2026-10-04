@@ -826,6 +826,8 @@ surface_model mergeSurfaceModels(const std::vector<surface_model> &surfaces)
     {
         if (surfaces[surfIdx].mesh.size_nodes() > 0)
             result.cloud.insert(result.cloud.end(), surfaces[surfIdx].cloud.begin(), surfaces[surfIdx].cloud.end());
+        result.observed_vertices.insert(surfaces[surfIdx].observed_vertices.begin(),
+                                        surfaces[surfIdx].observed_vertices.end());
         for (const auto &[nodeId, weightPair] : threadLocalWeights[surfIdx])
         {
             auto &[sumPos, sumWeight] = vertexWeights[nodeId];

@@ -258,10 +258,10 @@ void RelaxProblem::setupGroundMeshProblem(const MeasurementGraph &graph, std::ve
     addGPSPositionPrior(graph, options);
     if (meshOrigin == MeshOrigin::PREVIOUS_SURFACE)
     {
-        const HeightSet measured = measuredMeshHeights();
-        addMeshFlatPrior(&measured);
-        addMeshSmoothPrior(&measured);
-        keepPreviousHeightsWhereUnmeasured(measured);
+        const HeightSet observed = observedMeshHeights();
+        addMeshFlatPrior(&observed);
+        addMeshSmoothPrior(&observed);
+        keepPreviousHeightsWhereUnobserved(observed);
     }
     else
     {
@@ -479,6 +479,54 @@ void fitMeshHeights(MeshGraph &mesh, const std::vector<point_cloud> &cloud, doub
     }
     spdlog::info("Fitted mesh heights to {} samples in {} regions x {} passes, {:.2f}s", samples.size(), num_regions,
                  num_passes, std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
+
+    ankerl::unordered_dense::set<size_t> observed;
+    for (const auto &sample : samples)
+        observed.insert(sample.vertices.begin(), sample.vertices.end());
+    relaxUnobservedHeights(mesh, observed);
+}
+
+void relaxUnobservedHeights(MeshGraph &mesh, const ankerl::unordered_dense::set<size_t> &observed)
+{
+    constexpr double SMOOTHNESS_WEIGHT = 1;
+    constexpr double PRIOR_HEIGHT_WEIGHT = 1e-3;
+    auto height = [&mesh](size_t node) { return &mesh.getNode(node)->payload.location.z(); };
+
+    ceres::Problem problem;
+    size_t unobservedCount = 0;
+    for (auto it = mesh.nodebegin(); it != mesh.nodeend(); ++it)
+        if (!observed.contains(it->first))
+        {
+            double *z = &it->second.payload.location.z();
+            problem.AddResidualBlock(newAutoDiffValuePrior(*z, PRIOR_HEIGHT_WEIGHT), nullptr, z);
+            unobservedCount++;
+        }
+    if (unobservedCount == 0)
+        return;
+
+    for (auto it = mesh.cedgebegin(); it != mesh.cedgeend(); ++it)
+    {
+        const size_t source = it->second.getSource(), dest = it->second.getDest();
+        const bool sourceUnobserved = !observed.contains(source), destUnobserved = !observed.contains(dest);
+        if (sourceUnobserved && destUnobserved)
+            problem.AddResidualBlock(newAutoDiffDifferenceCost(SMOOTHNESS_WEIGHT), nullptr, height(source),
+                                     height(dest));
+        else if (sourceUnobserved)
+            problem.AddResidualBlock(newAutoDiffValuePrior(*height(dest), SMOOTHNESS_WEIGHT), nullptr, height(source));
+        else if (destUnobserved)
+            problem.AddResidualBlock(newAutoDiffValuePrior(*height(source), SMOOTHNESS_WEIGHT), nullptr, height(dest));
+    }
+
+    ceres::Solver::Options options;
+    options.linear_solver_type = ceres::SPARSE_NORMAL_CHOLESKY;
+    options.sparse_linear_algebra_library_type = ceres::EIGEN_SPARSE;
+    options.num_threads = omp_get_max_threads();
+    options.initial_trust_region_radius = 1e16;
+    options.logging_type = ceres::SILENT;
+    ceres::Solver::Summary summary;
+    ceres::Solve(options, &problem, &summary);
+    spdlog::info("Relaxed {} unobserved mesh heights in {} iterations, {:.2f}s", unobservedCount,
+                 summary.iterations.size(), summary.total_time_in_seconds);
 }
 
 double RelaxProblem::meshHeightConvergedStepSize() const
@@ -1697,31 +1745,31 @@ RelaxProblem::MeshOrigin RelaxProblem::initializeGroundMesh(const std::vector<su
     return MeshOrigin::NEWLY_BUILT;
 }
 
-RelaxProblem::HeightSet RelaxProblem::measuredMeshHeights() const
+RelaxProblem::HeightSet RelaxProblem::observedMeshHeights() const
 {
-    HeightSet measuredParameters;
+    HeightSet observedParameters;
     std::vector<double *> residualParameters;
     for (const auto &block : _ray_residuals.blocks)
     {
         _problem->GetParameterBlocksForResidualBlock(block.id, &residualParameters);
-        measuredParameters.insert(residualParameters.begin(), residualParameters.end());
+        observedParameters.insert(residualParameters.begin(), residualParameters.end());
     }
-    return measuredParameters;
+    return observedParameters;
 }
 
-void RelaxProblem::keepPreviousHeightsWhereUnmeasured(const HeightSet &measuredParameters)
+void RelaxProblem::keepPreviousHeightsWhereUnobserved(const HeightSet &observedParameters)
 {
-    size_t unmeasuredHeights = 0;
+    size_t unobservedHeights = 0;
     for (auto iter = _mesh.nodebegin(); iter != _mesh.nodeend(); ++iter)
     {
         double *height = &iter->second.payload.location.z();
-        if (!measuredParameters.contains(height) && _problem->HasParameterBlock(height))
+        if (!observedParameters.contains(height) && _problem->HasParameterBlock(height))
         {
             _problem->SetParameterBlockConstant(height);
-            unmeasuredHeights++;
+            unobservedHeights++;
         }
     }
-    spdlog::debug("Holding {} unmeasured of {} mesh heights at their previous values", unmeasuredHeights,
+    spdlog::debug("Holding {} unobserved of {} mesh heights at their previous values", unobservedHeights,
                   _mesh.size_nodes());
 }
 
@@ -2042,6 +2090,10 @@ surface_model RelaxProblem::getSurfaceModel()
     }
 
     s.mesh = _mesh;
+    const HeightSet observedHeights = observedMeshHeights();
+    for (auto it = _mesh.cnodebegin(); it != _mesh.cnodeend(); ++it)
+        if (observedHeights.contains(&it->second.payload.location.z()))
+            s.observed_vertices.insert(it->first);
 
     return s;
 }

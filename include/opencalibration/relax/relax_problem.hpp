@@ -151,8 +151,8 @@ class RelaxProblem
 
     void trackRadialObservation(double *radial_data, size_t pixels_rows, size_t pixels_cols, double focal_length);
     void addMonotonicityCosts();
-    HeightSet measuredMeshHeights() const;
-    void keepPreviousHeightsWhereUnmeasured(const HeightSet &measured);
+    HeightSet observedMeshHeights() const;
+    void keepPreviousHeightsWhereUnobserved(const HeightSet &measured);
     void setRadialDistortionParameterization(double *radial_distortion, const RelaxOptionSet &options);
 
     ceres::Solver::Options _solver_options;
@@ -246,5 +246,6 @@ class RelaxProblem
 
 void fitMeshHeights(MeshGraph &mesh, const std::vector<point_cloud> &cloud, double pointSigma,
                     size_t samplesPerRegion = 250000);
+void relaxUnobservedHeights(MeshGraph &mesh, const ankerl::unordered_dense::set<size_t> &observed);
 
 } // namespace opencalibration
