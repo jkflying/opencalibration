@@ -916,9 +916,7 @@ template <int N> struct MultiRayPlaneIntersectionAngleCost_FocalRadial
         {
             const QuaternionTCM rot(rotations[i]);
             const Vector3T p_cam = rot.inverse() * (centroid - positions[i]);
-            const Vector3T &ray = camera_ray[i];
-            const T min_depth = T(0.5) * p_cam.norm() * ray.z() / ray.norm();
-            const T depth = p_cam.z() > min_depth ? p_cam.z() : min_depth;
+            const T depth = p_cam.z();
             Eigen::Matrix<T, 2, 1> reprojected_pixel;
             all_valid &= pixelFromProjectedRay(Eigen::Matrix<T, 2, 1>(p_cam.template head<2>() / depth), model,
                                                camera_pixel[i], reprojected_pixel);
