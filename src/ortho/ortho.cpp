@@ -10,7 +10,7 @@
 
 #include <ceres/jet.h>
 #include <cpl_string.h>
-#include <eigen3/Eigen/Eigenvalues>
+#include <eigen3/Eigen/LU>
 #include <jk/KDTree.h>
 #include <opencalibration/distort/distort_keypoints.hpp>
 #include <opencalibration/geo_coord/geo_coord.hpp>
@@ -211,22 +211,20 @@ void PatchSampler::sampleBlock(const cv::Mat &bgr_image, const Eigen::Vector3d &
         return bgr_image.at<cv::Vec3b>(static_cast<int>(pixel.y()), static_cast<int>(pixel.x()));
     };
 
-    Eigen::Matrix2d J = computeJacobian(reference_point, model, camera_position, camera_orientation_inverse);
-    Eigen::Matrix2d M = output_gsd * output_gsd * J * J.transpose();
+    const Eigen::Matrix2d J = computeJacobian(reference_point, model, camera_position, camera_orientation_inverse);
+    const Eigen::Matrix2d half_footprint = 0.5 * output_gsd * J;
+    const Eigen::Matrix2d ellipse = half_footprint * half_footprint.transpose();
 
-    Eigen::SelfAdjointEigenSolver<Eigen::Matrix2d> solver(M);
-    const double a = std::sqrt(std::max(solver.eigenvalues()(1), 1e-6));
-    const double b = std::sqrt(std::max(solver.eigenvalues()(0), 1e-6));
-
-    if ((a < 1.0 && b < 1.0) || M.determinant() < 1e-12)
+    const double half_extent = std::sqrt(ellipse.diagonal().maxCoeff());
+    if (half_extent < 0.5 || ellipse.determinant() < 1e-12)
     {
         for (const auto &sample : samples)
             *sample.out = nearest(sample.pixel);
         return;
     }
 
-    const int radius = std::min(static_cast<int>(std::ceil(a)), MAX_PATCH_RADIUS);
-    const Eigen::Matrix2d M_inv = M.inverse();
+    const int radius = std::min(static_cast<int>(std::ceil(half_extent)), MAX_PATCH_RADIUS);
+    const Eigen::Matrix2d ellipse_inv = ellipse.inverse();
 
     int x_min = bgr_image.cols - 1, y_min = bgr_image.rows - 1, x_max = 0, y_max = 0;
     for (const auto &sample : samples)
@@ -257,8 +255,8 @@ void PatchSampler::sampleBlock(const cv::Mat &bgr_image, const Eigen::Vector3d &
         {
             for (int px = std::max(x_min, cx - radius); px <= std::min(x_max, cx + radius); px++)
             {
-                Eigen::Vector2d diff(px - pixel.x(), py - pixel.y());
-                if (diff.transpose() * M_inv * diff <= 1.0)
+                Eigen::Vector2d diff(px + 0.5 - pixel.x(), py + 0.5 - pixel.y());
+                if (diff.transpose() * ellipse_inv * diff <= 1.0)
                 {
                     const cv::Vec3b &lab = _lab_roi.at<cv::Vec3b>(py - y_min, px - x_min);
                     sum_L += lab[0];

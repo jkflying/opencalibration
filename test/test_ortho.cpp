@@ -758,6 +758,20 @@ TEST(ortho_patch, patch_sampler_averaging)
     EXPECT_EQ(result[1], result[2]);
 }
 
+TEST(ortho_patch, patch_sampler_footprint_is_centred_and_one_output_pixel_wide)
+{
+    // GIVEN: a black image with a white stripe three pixels wide centred on the principal point
+    cv::Mat image(100, 100, CV_8UC3, cv::Scalar(0, 0, 0));
+    image.colRange(49, 52).setTo(cv::Scalar(255, 255, 255));
+    const NadirCamera camera;
+
+    // WHEN: we sample with an output GSD exactly three source pixels wide
+    const cv::Vec3b result = camera.sample(image, 3.0 / 50.0);
+
+    // THEN: the footprint stays inside the stripe
+    EXPECT_EQ(result, cv::Vec3b(255, 255, 255));
+}
+
 TEST(ortho_tiles, tile_cameras_match_nearest_camera_of_every_pixel_centre)
 {
     // GIVEN: a 10x10 pixel raster and cameras scattered around it
