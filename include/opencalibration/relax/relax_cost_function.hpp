@@ -154,6 +154,27 @@ struct ValuePrior
     const double _weight;
 };
 
+struct Vector2Prior
+{
+    static const int NUM_RESIDUALS = 2;
+    static const int NUM_PARAMETERS_1 = 2;
+
+    Vector2Prior(const Eigen::Vector2d &target, double weight) : _target(target), _weight(weight)
+    {
+    }
+
+    template <typename T> bool operator()(const T *val, T *residual) const
+    {
+        for (int i = 0; i < 2; i++)
+            residual[i] = T(_weight) * (val[i] - T(_target[i]));
+        return true;
+    }
+
+  private:
+    const Eigen::Vector2d _target;
+    const double _weight;
+};
+
 struct GPSPositionPrior
 {
     static const int NUM_RESIDUALS = 3;

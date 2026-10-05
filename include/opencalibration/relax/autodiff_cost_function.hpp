@@ -76,6 +76,8 @@ ceres::CostFunction *newAutoDiffDifferenceCost(double weight);
 
 ceres::CostFunction *newAutoDiffValuePrior(double target, double weight);
 
+ceres::CostFunction *newAutoDiffVector2Prior(const Eigen::Vector2d &target, double weight);
+
 ceres::CostFunction *newAutoDiffPointsDownwardsPrior(double weight);
 
 ceres::CostFunction *newAutoDiffPointsDownwardsPrior_FixedPosition(double weight);

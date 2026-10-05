@@ -12,7 +12,6 @@
 #include "ceres_log_forwarding.cpp.inc"
 
 #include <algorithm>
-#include <ceres/normal_prior.h>
 #include <omp.h>
 #include <opencalibration/distort/invert_distortion.hpp>
 #include <opencalibration/geometry/KMeans.hpp>
@@ -971,10 +970,8 @@ void RelaxProblem::addIntrinsicsPriors(double *focal_length_pixels, double *prin
     if (options.hasAny({Option::FOCAL_LENGTH}) && camera_info.focal_length_px > 0 && !has_prior(focal_length_pixels))
     {
         const double sigma = FOCAL_LENGTH_PRIOR_RELATIVE_SIGMA * camera_info.focal_length_px;
-        const Eigen::Matrix<double, 1, 1> inverse_sigma(1.0 / sigma);
-        const Eigen::Matrix<double, 1, 1> exif_focal_length(camera_info.focal_length_px);
         _intrinsics_priors.push_back({focal_length_pixels, sigma});
-        _problem->AddResidualBlock(new ceres::NormalPrior(inverse_sigma, exif_focal_length), nullptr,
+        _problem->AddResidualBlock(newAutoDiffValuePrior(camera_info.focal_length_px, 1 / sigma), nullptr,
                                    focal_length_pixels);
     }
 
@@ -985,9 +982,8 @@ void RelaxProblem::addIntrinsicsPriors(double *focal_length_pixels, double *prin
                 ? camera_info.principal_point_px
                 : Eigen::Vector2d(camera_info.width_px, camera_info.height_px) * 0.5;
         const double sigma = PRINCIPAL_POINT_PRIOR_SIGMA_IMAGE_WIDTHS * camera_info.width_px;
-        const Eigen::Matrix2d inverse_sigma = Eigen::Matrix2d::Identity() / sigma;
         _intrinsics_priors.push_back({principal_point, sigma});
-        _problem->AddResidualBlock(new ceres::NormalPrior(inverse_sigma, expected_principal_point), nullptr,
+        _problem->AddResidualBlock(newAutoDiffVector2Prior(expected_principal_point, 1 / sigma), nullptr,
                                    principal_point);
     }
 }
