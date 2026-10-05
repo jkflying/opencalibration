@@ -61,6 +61,13 @@ image_metadata extract_metadata(const std::string &path)
                                      ? imageEXIF.DateTimeOriginal + imageEXIF.SubSecTimeOriginal
                                      : imageEXIF.DateTime;
 
+    if (imageEXIF.ExposureTime > 0)
+        res.capture_info.exposureSeconds = imageEXIF.ExposureTime;
+    if (imageEXIF.FNumber > 0)
+        res.capture_info.fNumber = imageEXIF.FNumber;
+    if (imageEXIF.ISOSpeedRatings > 0)
+        res.capture_info.iso = imageEXIF.ISOSpeedRatings;
+
     if (imageEXIF.GeoLocation.hasLatLon())
     {
         res.capture_info.latitude = imageEXIF.GeoLocation.Latitude;

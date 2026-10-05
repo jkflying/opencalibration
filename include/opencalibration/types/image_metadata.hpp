@@ -50,6 +50,10 @@ struct image_metadata
         double accuracyXY = NAN;
         double accuracyZ = NAN;
 
+        double exposureSeconds = NAN;
+        double fNumber = NAN;
+        double iso = NAN;
+
         std::string datum;
         std::string timestamp;
         std::string datestamp;
@@ -67,6 +71,9 @@ struct image_metadata
                     double_eq(yawDegree, other.yawDegree) &&
                     double_eq(accuracyXY, other.accuracyXY) &&
                     double_eq(accuracyZ, other.accuracyZ) &&
+                    double_eq(exposureSeconds, other.exposureSeconds) &&
+                    double_eq(fNumber, other.fNumber) &&
+                    double_eq(iso, other.iso) &&
                     datum == other.datum &&
                     timestamp == other.timestamp &&
                     datestamp == other.datestamp;

@@ -8,6 +8,7 @@
 #define RAPIDJSON_PARSE_DEFAULT_FLAGS (kParseFullPrecisionFlag | kParseNanAndInfFlag)
 
 #include <opencalibration/io/cv_raster_conversion.hpp>
+#include <opencalibration/io/json_fields.hpp>
 #include <rapidjson/document.h>
 #include <rapidjson/prettywriter.h>
 #include <rapidjson/stringbuffer.h>
@@ -196,7 +197,7 @@ template <> class Deserializer<MeasurementGraph>
             }
 
             {
-                const auto &capture_info_j = metadata["capture_info"].GetObject();
+                const rapidjson::Value &capture_info_j = metadata["capture_info"];
                 auto &capture_info = node.payload.metadata.capture_info;
                 capture_info.latitude = capture_info_j["latitude"].GetDouble();
                 capture_info.longitude = capture_info_j["longitude"].GetDouble();
@@ -209,6 +210,10 @@ template <> class Deserializer<MeasurementGraph>
 
                 capture_info.accuracyXY = capture_info_j["accuracy_xy"].GetDouble();
                 capture_info.accuracyZ = capture_info_j["accuracy_z"].GetDouble();
+
+                readJsonField(capture_info_j, "exposure_seconds", capture_info.exposureSeconds);
+                readJsonField(capture_info_j, "f_number", capture_info.fNumber);
+                readJsonField(capture_info_j, "iso", capture_info.iso);
 
                 capture_info.datum = capture_info_j["datum"].GetString();
                 capture_info.timestamp = capture_info_j["timestamp"].GetString();

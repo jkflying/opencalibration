@@ -420,6 +420,15 @@ template <> class Serializer<MeasurementGraph>
                 writer.Key("accuracy_z");
                 writer.Double(capture_info.accuracyZ);
 
+                writer.Key("exposure_seconds");
+                writer.Double(capture_info.exposureSeconds);
+
+                writer.Key("f_number");
+                writer.Double(capture_info.fNumber);
+
+                writer.Key("iso");
+                writer.Double(capture_info.iso);
+
                 writer.Key("datum");
                 writer.String(capture_info.datum.c_str());
 

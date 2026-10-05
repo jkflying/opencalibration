@@ -20,4 +20,7 @@ TEST(extract_metadata, gives_exif)
     EXPECT_NEAR(d.camera_info.focal_length_px, 2795.7, 1.0);
     EXPECT_DOUBLE_EQ(d.capture_info.latitude, 41.227004460009582);
     EXPECT_NEAR(d.capture_info.longitude, -81.702642, 1e-5);
+    EXPECT_DOUBLE_EQ(d.capture_info.exposureSeconds, 0.0005);
+    EXPECT_DOUBLE_EQ(d.capture_info.fNumber, 2.0);
+    EXPECT_DOUBLE_EQ(d.capture_info.iso, 200);
 }
