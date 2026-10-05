@@ -579,25 +579,29 @@ ThumbnailColorSampling thumbnailColorSampling(const OrthoMosaicContext &context,
     return {static_cast<int>(std::lround(1 / std::sqrt(full_res_samples_per_thumbnail_pixel))), 1};
 }
 
-void appendCameraPairs(const std::vector<ThumbnailSample> &samples, size_t max_pairs,
-                       std::vector<ColorCorrespondence> &correspondences)
+size_t pixelHash(int row, int col)
 {
-    size_t pairs = 0;
-    for (size_t b = 1; b < samples.size() && pairs < max_pairs; b++)
+    return static_cast<size_t>(row) * 7919u + static_cast<size_t>(col) * 104729u;
+}
+
+void appendSourceToPartnerPairs(const std::vector<ThumbnailSample> &samples, size_t max_pairs, size_t first_partner,
+                                std::vector<ColorCorrespondence> &correspondences)
+{
+    if (samples.size() < 2)
+        return;
+    const ThumbnailSample &source = samples.front();
+    const size_t partners = samples.size() - 1;
+    for (size_t p = 0; p < std::min(max_pairs, partners); p++)
     {
-        for (size_t a = 0; a < b && pairs < max_pairs; a++, pairs++)
-        {
-            const auto &sa = samples[a];
-            const auto &sb = samples[b];
-            correspondences.push_back({{sa.lab[0], sa.lab[1], sa.lab[2]},
-                                       {sb.lab[0], sb.lab[1], sb.lab[2]},
-                                       sa.camera_id,
-                                       sb.camera_id,
-                                       sa.model_id,
-                                       sb.model_id,
-                                       sa.geometry,
-                                       sb.geometry});
-        }
+        const ThumbnailSample &partner = samples[1 + (first_partner + p) % partners];
+        correspondences.push_back({{source.lab[0], source.lab[1], source.lab[2]},
+                                   {partner.lab[0], partner.lab[1], partner.lab[2]},
+                                   source.camera_id,
+                                   partner.camera_id,
+                                   source.model_id,
+                                   partner.model_id,
+                                   source.geometry,
+                                   partner.geometry});
     }
 }
 
@@ -689,7 +693,7 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
     auto last_log_time = std::chrono::steady_clock::now();
 
     constexpr size_t maxOverlapCameras = 64;
-    constexpr size_t colorCandidateCameras = 5;
+    constexpr size_t colorCandidateCameras = 12;
     constexpr uint32_t noSource = std::numeric_limits<uint32_t>::max();
 
     const ThumbnailColorSampling color_sampling = thumbnailColorSampling(context, graph, config);
@@ -775,7 +779,8 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
                     pixel_sources[static_cast<size_t>(row) * image_dimensions.width + col] = samples.front();
 
                 if (row % color_sampling.pixel_step == 0 && col % color_sampling.pixel_step == 0)
-                    appendCameraPairs(samples, color_sampling.pairs_per_sample, local_correspondences);
+                    appendSourceToPartnerPairs(samples, color_sampling.pairs_per_sample, pixelHash(row, col),
+                                               local_correspondences);
 
                 if (pixelSource == noSource)
                 {
