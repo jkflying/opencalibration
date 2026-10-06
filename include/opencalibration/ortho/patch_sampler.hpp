@@ -29,7 +29,8 @@ class PatchSampler
     void sampleBlock(const cv::Mat &bgr_image, const Eigen::Vector3d &reference_point,
                      const DifferentiableCameraModel<double> &model, const Eigen::Vector3d &camera_position,
                      const Eigen::Matrix3d &camera_orientation_inverse, double output_gsd,
-                     const std::vector<BlockSample> &samples);
+                     const std::vector<BlockSample> &samples,
+                     const Eigen::Vector2d &pixel_scale = Eigen::Vector2d::Ones());
 
   private:
     cv::Mat _lab_roi;

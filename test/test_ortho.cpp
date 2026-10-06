@@ -361,16 +361,18 @@ TEST_F(ortho, functional_ortho_scene)
     const int col_x0 = static_cast<int>((0.0 - scene_min_x) / result.gsd);
     const int col_x10 = static_cast<int>((10.0 - scene_min_x) / result.gsd);
 
+    constexpr int kLabRoundTripTolerance = 2;
+
     // Image 0 center at world (0, 0)
-    EXPECT_EQ((int)pixels.layers[0].pixels(row_y0, col_x0), 255); // R
-    EXPECT_EQ((int)pixels.layers[1].pixels(row_y0, col_x0), 0);   // G
-    EXPECT_EQ((int)pixels.layers[2].pixels(row_y0, col_x0), 0);   // B
+    EXPECT_NEAR(pixels.layers[0].pixels(row_y0, col_x0), 255, kLabRoundTripTolerance); // R
+    EXPECT_NEAR(pixels.layers[1].pixels(row_y0, col_x0), 0, kLabRoundTripTolerance);   // G
+    EXPECT_NEAR(pixels.layers[2].pixels(row_y0, col_x0), 0, kLabRoundTripTolerance);   // B
     EXPECT_EQ(result.cameraUUID.pixels(row_y0, col_x0), static_cast<uint32_t>(id0 & 0xFFFFFFFF));
 
     // Image 1 center at world (10, 0)
-    EXPECT_EQ((int)pixels.layers[0].pixels(row_y0, col_x10), 0);   // R
-    EXPECT_EQ((int)pixels.layers[1].pixels(row_y0, col_x10), 0);   // G
-    EXPECT_EQ((int)pixels.layers[2].pixels(row_y0, col_x10), 255); // B
+    EXPECT_NEAR(pixels.layers[0].pixels(row_y0, col_x10), 0, kLabRoundTripTolerance);   // R
+    EXPECT_NEAR(pixels.layers[1].pixels(row_y0, col_x10), 0, kLabRoundTripTolerance);   // G
+    EXPECT_NEAR(pixels.layers[2].pixels(row_y0, col_x10), 255, kLabRoundTripTolerance); // B
     EXPECT_EQ(result.cameraUUID.pixels(row_y0, col_x10), static_cast<uint32_t>(id1 & 0xFFFFFFFF));
 }
 
@@ -436,11 +438,9 @@ TEST_F(ortho, thumbnail_pixels_are_georeferenced_at_pixel_centres)
                                       static_cast<double>(thumb_rows) / cam_model->pixels_rows);
     const std::vector<surface_model> surfaces{surface};
     RayTraceContext ray_trace(surfaces);
-    auto onPixelBoundary = [](const Eigen::Vector2d &pixel) {
-        const Eigen::Array2d frac = pixel.array() - pixel.array().floor();
-        return (frac < 1e-6).any() || (frac > 1 - 1e-6).any();
-    };
     constexpr int kLabRoundTripTolerance = 2;
+    constexpr double kFootprintTolerance = 6 + kLabRoundTripTolerance;
+    double r_error_sum = 0, g_error_sum = 0;
     int dsm_checked = 0, colour_checked = 0, dsm_mismatches = 0, colour_mismatches = 0;
     for (int row = 0; row < height; row++)
     {
@@ -464,8 +464,6 @@ TEST_F(ortho, thumbnail_pixels_are_georeferenced_at_pixel_centres)
             const Eigen::Vector2d thumb_pixel =
                 image_from_3d(Eigen::Vector3d(x, y, z), *cam_model, camera.position, inv_rotation)
                     .cwiseProduct(thumb_scale);
-            if (onPixelBoundary(thumb_pixel))
-                continue;
             const int tc = static_cast<int>(std::floor(thumb_pixel.x()));
             const int tr = static_cast<int>(std::floor(thumb_pixel.y()));
             const uint8_t alpha = pixels.layers[3].pixels(row, col);
@@ -474,10 +472,15 @@ TEST_F(ortho, thumbnail_pixels_are_georeferenced_at_pixel_centres)
                 colour_mismatches += alpha != 0;
                 continue;
             }
+            if (tc < 2 || tc >= thumb_cols - 2 || tr < 2 || tr >= thumb_rows - 2)
+                continue;
             colour_checked++;
-            colour_mismatches += alpha != 255 ||
-                                 std::abs(pixels.layers[0].pixels(row, col) - 5 * tc) > kLabRoundTripTolerance ||
-                                 std::abs(pixels.layers[1].pixels(row, col) - 6 * tr) > kLabRoundTripTolerance ||
+            const double r_error = pixels.layers[0].pixels(row, col) - 5 * (thumb_pixel.x() - 0.5);
+            const double g_error = pixels.layers[1].pixels(row, col) - 6 * (thumb_pixel.y() - 0.5);
+            r_error_sum += r_error;
+            g_error_sum += g_error;
+            colour_mismatches += alpha != 255 || std::abs(r_error) > kFootprintTolerance ||
+                                 std::abs(g_error) > kFootprintTolerance ||
                                  std::abs(pixels.layers[2].pixels(row, col) - 100) > kLabRoundTripTolerance;
         }
     }
@@ -485,6 +488,8 @@ TEST_F(ortho, thumbnail_pixels_are_georeferenced_at_pixel_centres)
     EXPECT_GT(colour_checked, 500);
     EXPECT_EQ(dsm_mismatches, 0);
     EXPECT_EQ(colour_mismatches, 0);
+    EXPECT_LT(std::abs(r_error_sum / colour_checked), 1.0);
+    EXPECT_LT(std::abs(g_error_sum / colour_checked), 1.0);
 }
 
 TEST_F(ortho, thumbnail_colour_balance_preserves_channel_order)

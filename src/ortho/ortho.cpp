@@ -21,6 +21,7 @@
 #include <opencalibration/performance/performance.hpp>
 #include <opencalibration/surface/intersect.hpp>
 
+#include <opencv2/core/eigen.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <spdlog/spdlog.h>
@@ -29,6 +30,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <fstream>
+#include <functional>
 #include <future>
 #include <mutex>
 #include <numeric>
@@ -138,13 +140,14 @@ cv::Vec3f rgbToLab(uint8_t r, uint8_t g, uint8_t b)
     return pixel.at<cv::Vec3f>(0, 0);
 }
 
-cv::Vec3b labToRgb(const cv::Vec3f &lab)
+cv::Mat thumbnailToBgr(const opencalibration::RGBRaster &thumbnail)
 {
-    cv::Mat pixel(1, 1, CV_32FC3, cv::Scalar(lab[0], lab[1], lab[2]));
-    cv::cvtColor(pixel, pixel, cv::COLOR_Lab2RGB);
-    cv::Mat rgb;
-    pixel.convertTo(rgb, CV_8UC3, 255.0);
-    return rgb.at<cv::Vec3b>(0, 0);
+    std::vector<cv::Mat> bgr(3);
+    for (int channel = 0; channel < 3; channel++)
+        cv::eigen2cv(thumbnail.layers[channel].pixels, bgr[2 - channel]);
+    cv::Mat result;
+    cv::merge(bgr, result);
+    return result;
 }
 
 } // namespace
@@ -191,13 +194,14 @@ Eigen::Matrix2d PatchSampler::computeJacobian(const Eigen::Vector3d &world_point
 void PatchSampler::sampleBlock(const cv::Mat &bgr_image, const Eigen::Vector3d &reference_point,
                                const DifferentiableCameraModel<double> &model, const Eigen::Vector3d &camera_position,
                                const Eigen::Matrix3d &camera_orientation_inverse, double output_gsd,
-                               const std::vector<BlockSample> &samples)
+                               const std::vector<BlockSample> &samples, const Eigen::Vector2d &pixel_scale)
 {
     auto nearest = [&](const Eigen::Vector2d &pixel) {
         return bgr_image.at<cv::Vec3b>(static_cast<int>(pixel.y()), static_cast<int>(pixel.x()));
     };
 
-    const Eigen::Matrix2d J = computeJacobian(reference_point, model, camera_position, camera_orientation_inverse);
+    const Eigen::Matrix2d J =
+        pixel_scale.asDiagonal() * computeJacobian(reference_point, model, camera_position, camera_orientation_inverse);
     const Eigen::Matrix2d half_footprint = 0.5 * output_gsd * J;
     const Eigen::Matrix2d ellipse = half_footprint * half_footprint.transpose();
 
@@ -547,17 +551,21 @@ struct ThumbnailColorSampling
     size_t pairs_per_sample;
 };
 
-ThumbnailColorSampling thumbnailColorSampling(const OrthoMosaicContext &context, const MeasurementGraph &graph,
+double fullResolutionOutputGsd(const OrthoMosaicContext &context, const MeasurementGraph &graph,
+                               const OrthoMosaicConfig &config)
+{
+    double gsd =
+        calculateGSD(graph, context.involved_nodes, context.bounds.mean_surface_z, ImageResolution::FullResolution);
+    int width, height;
+    rasterSizeCovering(context.bounds, gsd, width, height);
+    clampOutputResolution(gsd, width, height, context, graph, "Full resolution");
+    clampOutputMegapixels(gsd, width, height, context.bounds, config.max_output_megapixels, "Full resolution");
+    return gsd;
+}
+
+ThumbnailColorSampling thumbnailColorSampling(const OrthoMosaicContext &context, double full_resolution_gsd,
                                               const OrthoMosaicConfig &config)
 {
-    double full_resolution_gsd =
-        calculateGSD(graph, context.involved_nodes, context.bounds.mean_surface_z, ImageResolution::FullResolution);
-    int full_width, full_height;
-    rasterSizeCovering(context.bounds, full_resolution_gsd, full_width, full_height);
-    clampOutputResolution(full_resolution_gsd, full_width, full_height, context, graph, "Color sampling");
-    clampOutputMegapixels(full_resolution_gsd, full_width, full_height, context.bounds, config.max_output_megapixels,
-                          "Color sampling");
-
     const double full_res_samples_per_thumbnail_pixel =
         std::pow(context.gsd / (full_resolution_gsd * std::max(1, config.color_sample_spacing_full_res_px)), 2);
     if (full_res_samples_per_thumbnail_pixel >= 1)
@@ -603,29 +611,67 @@ ankerl::unordered_dense::map<size_t, double> exifExposureValues(const Measuremen
     }
     return exposure_values;
 }
-void applyThumbnailColorBalance(const ColorBalanceResult &balance, const std::vector<ThumbnailSample> &pixel_sources,
-                                const Eigen::Matrix<int32_t, Eigen::Dynamic, Eigen::Dynamic> &cameraUUID,
-                                MultiLayerRaster<uint8_t> &pixelValues)
+
+std::vector<float> computeDSMTile(int tile_x, int tile_y, int tile_size, const OrthoMosaicBounds &bounds, double gsd,
+                                  int output_width, int output_height, const std::vector<surface_model> &surfaces,
+                                  double mean_camera_z, const MeasurementGraph &graph,
+                                  const jk::tree::KDTree<size_t, 2> &imageGPSLocations)
 {
-    constexpr uint32_t noSource = std::numeric_limits<uint32_t>::max();
-#pragma omp parallel for schedule(dynamic)
-    for (int row = 0; row < cameraUUID.rows(); row++)
+    int x_offset = tile_x * tile_size;
+    int y_offset = tile_y * tile_size;
+    int tile_width = std::min(tile_size, output_width - x_offset);
+    int tile_height = std::min(tile_size, output_height - y_offset);
+
+    std::vector<float> tile_buffer(tile_width * tile_height, std::numeric_limits<float>::quiet_NaN());
+
+#pragma omp parallel
     {
-        Eigen::Vector<uint8_t, Eigen::Dynamic> color(4);
-        for (int col = 0; col < cameraUUID.cols(); col++)
+        PerformanceMeasure thread_perf("DSM tile rows");
+
+        RayTraceContext rayTrace(surfaces);
+        jk::tree::KDTree<size_t, 2>::Searcher cameras(imageGPSLocations);
+
+#pragma omp for schedule(dynamic)
+        for (int local_row = 0; local_row < tile_height; local_row++)
         {
-            if (static_cast<uint32_t>(cameraUUID(row, col)) == noSource)
-                continue;
-            ThumbnailSample source = pixel_sources[static_cast<size_t>(row) * cameraUUID.cols() + col];
-            if (!applyColorBalance(balance, source.camera_id, source.model_id, source.geometry, source.lab))
-                continue;
-            const cv::Vec3b rgb = labToRgb(source.lab);
-            color << rgb[0], rgb[1], rgb[2], 255;
-            pixelValues.set(row, col, color);
+            for (int local_col = 0; local_col < tile_width; local_col++)
+            {
+                int global_col = x_offset + local_col;
+                int global_row = y_offset + local_row;
+
+                const Eigen::Vector2d centre = pixelCentre(bounds, gsd, global_col, global_row);
+                const double x = centre.x(), y = centre.y();
+
+                const double z = coneHeightOrNan(cameras, graph, x, y, rayTrace.traceHeight(x, y, mean_camera_z));
+
+                int idx = local_row * tile_width + local_col;
+                tile_buffer[idx] = static_cast<float>(z);
+            }
         }
     }
+
+    return tile_buffer;
 }
 } // namespace
+
+using ImageSource = std::function<cv::Mat(size_t node_id, const std::string &path)>;
+
+constexpr uint32_t kNoSourceCamera = std::numeric_limits<uint32_t>::max();
+
+struct RenderedTile
+{
+    std::vector<uint8_t> rgba;
+    std::vector<uint32_t> source_camera;
+    std::vector<uint8_t> overlap;
+};
+
+RenderedTile renderTile(int tile_x, int tile_y, int tile_size, const OrthoMosaicBounds &bounds, double gsd,
+                        int output_width, int output_height, const std::vector<float> &dsm_tile,
+                        const std::vector<MeshLineOfSight> &sightlines, const MeasurementGraph &graph,
+                        const jk::tree::KDTree<size_t, 2> &imageGPSLocations,
+                        const ankerl::unordered_dense::map<size_t, Eigen::Matrix3d> &inv_rotation_cache,
+                        const ImageSource &image_source, const ColorBalanceResult &color_balance,
+                        double feather_distance, bool with_camera_layers);
 
 OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph,
                                 const OrthoMosaicConfig &config)
@@ -645,14 +691,6 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
     OrthoMosaic result;
     result.gsd = context.gsd;
     result.bounds = context.bounds;
-    MultiLayerRaster<uint8_t> pixelValues(image_dimensions.height, image_dimensions.width, 4);
-    pixelValues.layers[0].band = Band::RED;
-    pixelValues.layers[1].band = Band::GREEN;
-    pixelValues.layers[2].band = Band::BLUE;
-    pixelValues.layers[3].band = Band::ALPHA;
-    result.cameraUUID.pixels.resize(image_dimensions.height, image_dimensions.width);
-    result.overlap.pixels.resize(image_dimensions.height, image_dimensions.width);
-    result.dsm.pixels.resize(image_dimensions.height, image_dimensions.width);
 
     PerformanceMeasure p("Generate thumbnail");
 
@@ -679,21 +717,24 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
     std::atomic<int> completed_rows{0};
     auto last_log_time = std::chrono::steady_clock::now();
 
-    constexpr size_t maxOverlapCameras = 64;
     constexpr size_t colorCandidateCameras = 12;
-    constexpr uint32_t noSource = std::numeric_limits<uint32_t>::max();
 
-    const ThumbnailColorSampling color_sampling = thumbnailColorSampling(context, graph, config);
+    const double full_resolution_gsd = fullResolutionOutputGsd(context, graph, config);
+    const ThumbnailColorSampling color_sampling = thumbnailColorSampling(context, full_resolution_gsd, config);
     spdlog::info("Color sampling: thumbnail sample step {} px, up to {} camera pairs per sample",
                  color_sampling.pixel_step, color_sampling.pairs_per_sample);
 
-    std::vector<ThumbnailSample> pixel_sources(static_cast<size_t>(image_dimensions.height) * image_dimensions.width);
+    const std::vector<float> dsm =
+        computeDSMTile(0, 0, std::max(width, height), context.bounds, context.gsd, width, height, surfaces,
+                       context.mean_camera_z, graph, context.imageGPSLocations);
+    result.dsm.pixels = Eigen::Map<const Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>(
+        dsm.data(), height, width);
+
     std::vector<ColorCorrespondence> correspondences;
 
     const std::vector<MeshLineOfSight> surface_sightlines = sightlinesOver(surfaces);
 #pragma omp parallel
     {
-        RayTraceContext rayTrace(surfaces);
         auto sightlines = surface_sightlines;
         auto cameraSearcher = context.imageGPSLocations.searcher();
         const std::vector<jk::tree::KDTree<size_t, 2>::DistancePayload> noCameras;
@@ -701,33 +742,25 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
         std::vector<ThumbnailSample> samples;
 
 #pragma omp for schedule(dynamic)
-        for (int row = 0; row < image_dimensions.height; row++)
+        for (int row = 0; row < image_dimensions.height; row += color_sampling.pixel_step)
         {
-            for (int col = 0; col < image_dimensions.width; col++)
+            for (int col = 0; col < image_dimensions.width; col += color_sampling.pixel_step)
             {
                 const Eigen::Vector2d centre = pixelCentre(context.bounds, context.gsd, col, row);
                 const double x = centre.x(), y = centre.y();
 
-                const double z =
-                    coneHeightOrNan(cameraSearcher, graph, x, y, rayTrace.traceHeight(x, y, context.mean_camera_z));
+                const double z = dsm[static_cast<size_t>(row) * width + col];
 
                 Eigen::Vector3d sample_point(x, y, z);
-
-                Eigen::Vector<uint8_t, Eigen::Dynamic> color;
-                color.resize(4);
-                color.fill(0);
-                uint32_t pixelSource = noSource;
 
                 const auto &nearestCameras =
                     std::isnan(z)
                         ? noCameras
-                        : cameraSearcher.search({x, y}, std::numeric_limits<double>::max(), maxOverlapCameras);
-                uint8_t overlapCount = 0;
+                        : cameraSearcher.search({x, y}, std::numeric_limits<double>::max(), colorCandidateCameras);
                 samples.clear();
 
-                for (size_t i = 0; i < nearestCameras.size(); i++)
+                for (const auto &candidate : nearestCameras)
                 {
-                    const auto &candidate = nearestCameras[i];
                     const auto &payload = graph.getNode(candidate.payload)->payload;
                     const auto &cc = camera_cache.at(candidate.payload);
 
@@ -743,45 +776,20 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
                     const int px = static_cast<int>(std::floor(thumb_pixel.x()));
                     const int py = static_cast<int>(std::floor(thumb_pixel.y()));
 
+                    Eigen::Vector<uint8_t, Eigen::Dynamic> pixelValue(3);
                     if (px >= 0 && px < cc.thumb_size[1] && py >= 0 && py < cc.thumb_size[0] &&
+                        payload.thumbnail.get(py, px, pixelValue) &&
                         surfaceVisibleFrom(sightlines, sample_point, payload.position))
-                    {
-                        overlapCount++;
-                        Eigen::Vector<uint8_t, Eigen::Dynamic> pixelValue(3);
-                        if (i < colorCandidateCameras && payload.thumbnail.get(py, px, pixelValue))
-                        {
-                            if (pixelSource == noSource)
-                            {
-                                color << pixelValue, 255;
-                                pixelSource = candidate.payload & 0xFFFFFFFF;
-                            }
-                            samples.push_back({candidate.payload, static_cast<uint32_t>(payload.model->id),
-                                               sampleGeometry(payload, sample_point, pixel),
-                                               rgbToLab(pixelValue[0], pixelValue[1], pixelValue[2])});
-                        }
-                    }
+                        samples.push_back({candidate.payload, static_cast<uint32_t>(payload.model->id),
+                                           sampleGeometry(payload, sample_point, pixel),
+                                           rgbToLab(pixelValue[0], pixelValue[1], pixelValue[2])});
                 }
 
-                if (!samples.empty())
-                    pixel_sources[static_cast<size_t>(row) * image_dimensions.width + col] = samples.front();
-
-                if (row % color_sampling.pixel_step == 0 && col % color_sampling.pixel_step == 0)
-                    appendSourceToPartnerPairs(samples, color_sampling.pairs_per_sample, pixelHash(row, col),
-                                               local_correspondences);
-
-                if (pixelSource == noSource)
-                {
-                    uint8_t grey = (row + col) % 2 == 0 ? 64 : 128;
-                    color << grey, grey, grey, 0;
-                }
-
-                pixelValues.set(row, col, color);
-                result.cameraUUID.pixels(row, col) = pixelSource;
-                result.overlap.pixels(row, col) = overlapCount;
-                result.dsm.pixels(row, col) = static_cast<float>(z);
+                appendSourceToPartnerPairs(samples, color_sampling.pairs_per_sample, pixelHash(row, col),
+                                           local_correspondences);
             }
 
-            int current_completed = ++completed_rows;
+            int current_completed = (completed_rows += color_sampling.pixel_step);
             if (omp_get_thread_num() == 0)
             {
                 auto now = std::chrono::steady_clock::now();
@@ -802,9 +810,34 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
     if (!correspondences.empty())
         result.color_balance = solveColorBalance(correspondences, exifExposureValues(graph, context.involved_nodes));
 
-    applyThumbnailColorBalance(result.color_balance, pixel_sources, result.cameraUUID.pixels, pixelValues);
-
-    result.pixelValues = std::move(pixelValues);
+    ankerl::unordered_dense::map<size_t, cv::Mat> thumbnails;
+    ankerl::unordered_dense::map<size_t, Eigen::Matrix3d> inv_rotations;
+    for (const auto &[node_id, cc] : camera_cache)
+    {
+        thumbnails[node_id] = thumbnailToBgr(graph.getNode(node_id)->payload.thumbnail);
+        inv_rotations[node_id] = cc.inv_rotation;
+    }
+    RenderedTile tile = renderTile(
+        0, 0, std::max(width, height), context.bounds, context.gsd, width, height, dsm, surface_sightlines, graph,
+        context.imageGPSLocations, inv_rotations,
+        [&](size_t node_id, const std::string &) { return thumbnails.at(node_id); }, result.color_balance,
+        2.0 * config.blend_transition_radius * full_resolution_gsd, true);
+    result.cameraUUID.pixels =
+        Eigen::Map<const Eigen::Matrix<uint32_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>(
+            tile.source_camera.data(), height, width)
+            .cast<int32_t>();
+    result.overlap.pixels = Eigen::Map<const Eigen::Matrix<uint8_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>(
+        tile.overlap.data(), height, width);
+    std::vector<cv::Mat> channels;
+    cv::split(cv::Mat(height, width, CV_8UC4, tile.rgba.data()), channels);
+    MultiLayerRaster<uint8_t> pixel_values(height, width, 4);
+    for (int channel = 0; channel < 4; channel++)
+        cv::cv2eigen(channels[channel], pixel_values.layers[channel].pixels);
+    pixel_values.layers[0].band = Band::RED;
+    pixel_values.layers[1].band = Band::GREEN;
+    pixel_values.layers[2].band = Band::BLUE;
+    pixel_values.layers[3].band = Band::ALPHA;
+    result.pixelValues = std::move(pixel_values);
     return result;
 }
 
@@ -871,47 +904,6 @@ void writeInterleavedWindow(GDALDatasetH dataset, int x_offset, int y_offset, in
                             height, type, bands, nullptr, pixel_space, pixel_space * width, sizeof(T));
     if (err != CE_None)
         throw std::runtime_error(std::string("Failed to write tile to ") + GDALGetDescription(dataset));
-}
-
-std::vector<float> computeDSMTile(int tile_x, int tile_y, int tile_size, const OrthoMosaicBounds &bounds, double gsd,
-                                  int output_width, int output_height, const std::vector<surface_model> &surfaces,
-                                  double mean_camera_z, const MeasurementGraph &graph,
-                                  const jk::tree::KDTree<size_t, 2> &imageGPSLocations)
-{
-    int x_offset = tile_x * tile_size;
-    int y_offset = tile_y * tile_size;
-    int tile_width = std::min(tile_size, output_width - x_offset);
-    int tile_height = std::min(tile_size, output_height - y_offset);
-
-    std::vector<float> tile_buffer(tile_width * tile_height, std::numeric_limits<float>::quiet_NaN());
-
-#pragma omp parallel
-    {
-        PerformanceMeasure thread_perf("DSM tile rows");
-
-        RayTraceContext rayTrace(surfaces);
-        jk::tree::KDTree<size_t, 2>::Searcher cameras(imageGPSLocations);
-
-#pragma omp for schedule(dynamic)
-        for (int local_row = 0; local_row < tile_height; local_row++)
-        {
-            for (int local_col = 0; local_col < tile_width; local_col++)
-            {
-                int global_col = x_offset + local_col;
-                int global_row = y_offset + local_row;
-
-                const Eigen::Vector2d centre = pixelCentre(bounds, gsd, global_col, global_row);
-                const double x = centre.x(), y = centre.y();
-
-                const double z = coneHeightOrNan(cameras, graph, x, y, rayTrace.traceHeight(x, y, mean_camera_z));
-
-                int idx = local_row * tile_width + local_col;
-                tile_buffer[idx] = static_cast<float>(z);
-            }
-        }
-    }
-
-    return tile_buffer;
 }
 
 ankerl::unordered_dense::set<size_t> findTileCameras(int tile_x, int tile_y, int tile_size,
@@ -1070,6 +1062,7 @@ struct BlockCamera
     const image *payload = nullptr;
     const Eigen::Matrix3d *inv_rotation = nullptr;
     cv::Mat full_image;
+    Eigen::Vector2d pixel_scale = Eigen::Vector2d::Ones();
     bool image_fetched = false;
     Eigen::Vector3d reference_point;
     std::vector<PatchSampler::BlockSample> samples;
@@ -1087,6 +1080,7 @@ struct BlendSample
 constexpr size_t kMaxBlendCameras = 3;
 constexpr size_t kBlockCandidates = 8;
 constexpr size_t kPixelCandidates = 5;
+constexpr size_t kOverlapCandidates = 64;
 
 std::vector<uint8_t> backgroundTile(int x_offset, int y_offset, int tile_width, int tile_height)
 {
@@ -1215,20 +1209,26 @@ void buildOverviews(GDALDatasetH dataset, int width, int height)
 
 } // namespace
 
-std::vector<uint8_t> renderTile(int tile_x, int tile_y, int tile_size, const OrthoMosaicBounds &bounds, double gsd,
-                                int output_width, int output_height, const std::vector<float> &dsm_tile,
-                                const std::vector<MeshLineOfSight> &sightlines, const MeasurementGraph &graph,
-                                const jk::tree::KDTree<size_t, 2> &imageGPSLocations,
-                                const ankerl::unordered_dense::map<size_t, Eigen::Matrix3d> &inv_rotation_cache,
-                                FullResolutionImageCache &image_cache, const ColorBalanceResult &color_balance,
-                                double feather_distance)
+RenderedTile renderTile(int tile_x, int tile_y, int tile_size, const OrthoMosaicBounds &bounds, double gsd,
+                        int output_width, int output_height, const std::vector<float> &dsm_tile,
+                        const std::vector<MeshLineOfSight> &sightlines, const MeasurementGraph &graph,
+                        const jk::tree::KDTree<size_t, 2> &imageGPSLocations,
+                        const ankerl::unordered_dense::map<size_t, Eigen::Matrix3d> &inv_rotation_cache,
+                        const ImageSource &image_source, const ColorBalanceResult &color_balance,
+                        double feather_distance, bool with_camera_layers)
 {
     int x_offset = tile_x * tile_size;
     int y_offset = tile_y * tile_size;
     int tile_width = std::min(tile_size, output_width - x_offset);
     int tile_height = std::min(tile_size, output_height - y_offset);
 
-    std::vector<uint8_t> rgba_tile = backgroundTile(x_offset, y_offset, tile_width, tile_height);
+    RenderedTile tile;
+    tile.rgba = backgroundTile(x_offset, y_offset, tile_width, tile_height);
+    if (with_camera_layers)
+    {
+        tile.source_camera.assign(static_cast<size_t>(tile_width) * tile_height, kNoSourceCamera);
+        tile.overlap.assign(static_cast<size_t>(tile_width) * tile_height, 0);
+    }
 
     constexpr int kBlockSize = 8;
     const int blocks_x = (tile_width + kBlockSize - 1) / kBlockSize;
@@ -1251,13 +1251,14 @@ std::vector<uint8_t> renderTile(int tile_x, int tile_y, int tile_size, const Ort
             auto it = local_image_cache.find(cam.id);
             if (it != local_image_cache.end())
                 return it->second;
-            cv::Mat full_image = image_cache.getImage(cam.id, cam.payload->path);
+            cv::Mat full_image = image_source(cam.id, cam.payload->path);
             if (!full_image.empty())
                 local_image_cache.emplace(cam.id, full_image);
             return full_image;
         };
 
         std::vector<BlockCamera> cameras;
+        std::vector<BlockCamera> overlap_cameras;
         std::vector<size_t> rank;
         std::vector<BlendSample> samples;
         samples.reserve(kBlockSize * kBlockSize * kMaxBlendCameras);
@@ -1270,21 +1271,25 @@ std::vector<uint8_t> renderTile(int tile_x, int tile_y, int tile_size, const Ort
             const int row_end = std::min(row_begin + kBlockSize, tile_height);
             const int col_end = std::min(col_begin + kBlockSize, tile_width);
 
-            cameras.clear();
             samples.clear();
             const Eigen::Vector2d block_centre =
                 localPixelCentre(0.5 * (col_begin + col_end - 1), 0.5 * (row_begin + row_end - 1));
-            const auto &candidates =
-                tree_searcher.search({block_centre.x(), block_centre.y()}, INFINITY, kBlockCandidates);
-            for (const auto &candidate : candidates)
-            {
-                auto &cam = cameras.emplace_back();
-                cam.id = candidate.payload;
-                cam.payload = &graph.getNode(candidate.payload)->payload;
-                auto inv_rot_it = inv_rotation_cache.find(candidate.payload);
-                if (inv_rot_it != inv_rotation_cache.end())
-                    cam.inv_rotation = &inv_rot_it->second;
-            }
+            auto collectCameras = [&](size_t max_cameras, std::vector<BlockCamera> &out) {
+                out.clear();
+                for (const auto &candidate :
+                     tree_searcher.search({block_centre.x(), block_centre.y()}, INFINITY, max_cameras))
+                {
+                    auto &cam = out.emplace_back();
+                    cam.id = candidate.payload;
+                    cam.payload = &graph.getNode(candidate.payload)->payload;
+                    auto inv_rot_it = inv_rotation_cache.find(candidate.payload);
+                    if (inv_rot_it != inv_rotation_cache.end())
+                        cam.inv_rotation = &inv_rot_it->second;
+                }
+            };
+            collectCameras(kBlockCandidates, cameras);
+            if (with_camera_layers)
+                collectCameras(kOverlapCandidates, overlap_cameras);
 
             for (int local_row = row_begin; local_row < row_end; local_row++)
             {
@@ -1295,6 +1300,18 @@ std::vector<uint8_t> renderTile(int tile_x, int tile_y, int tile_size, const Ort
                         continue;
                     Eigen::Vector3d sample_point;
                     sample_point << localPixelCentre(local_col, local_row), z;
+                    const int tile_pixel = local_row * tile_width + local_col;
+
+                    if (with_camera_layers)
+                    {
+                        Eigen::Vector2d pixel;
+                        tile.overlap[tile_pixel] = static_cast<uint8_t>(
+                            std::count_if(overlap_cameras.begin(), overlap_cameras.end(), [&](const BlockCamera &cam) {
+                                return cam.inv_rotation != nullptr &&
+                                       projectIntoImage(*cam.payload, *cam.inv_rotation, sample_point, pixel) &&
+                                       surfaceVisibleFrom(local_sightlines, sample_point, cam.payload->position);
+                            }));
+                    }
 
                     rank.resize(cameras.size());
                     std::iota(rank.begin(), rank.end(), 0);
@@ -1329,14 +1346,18 @@ std::vector<uint8_t> renderTile(int tile_x, int tile_y, int tile_size, const Ort
                         if (!cam.image_fetched)
                         {
                             cam.full_image = fetchImage(cam);
+                            cam.pixel_scale = {
+                                static_cast<double>(cam.full_image.cols) / cam.payload->model->pixels_cols,
+                                static_cast<double>(cam.full_image.rows) / cam.payload->model->pixels_rows};
                             cam.image_fetched = true;
                         }
-                        if (cam.full_image.empty() || pixel.x() >= cam.full_image.cols ||
-                            pixel.y() >= cam.full_image.rows)
+                        const Eigen::Vector2d image_pixel = pixel.cwiseProduct(cam.pixel_scale);
+                        if (cam.full_image.empty() || image_pixel.x() >= cam.full_image.cols ||
+                            image_pixel.y() >= cam.full_image.rows)
                             continue;
 
                         auto &sample = samples.emplace_back();
-                        sample.tile_pixel = local_row * tile_width + local_col;
+                        sample.tile_pixel = tile_pixel;
                         sample.camera = &cam;
                         sample.geometry = sampleGeometry(*cam.payload, sample_point, pixel);
                         sample.weight =
@@ -1347,7 +1368,9 @@ std::vector<uint8_t> renderTile(int tile_x, int tile_y, int tile_size, const Ort
 
                         if (cam.samples.empty())
                             cam.reference_point = sample_point;
-                        cam.samples.push_back({pixel, &sample.color_bgr});
+                        cam.samples.push_back({image_pixel, &sample.color_bgr});
+                        if (num_blended == 0 && with_camera_layers)
+                            tile.source_camera[tile_pixel] = cam.id & 0xFFFFFFFF;
                         num_blended++;
                     }
                 }
@@ -1357,15 +1380,15 @@ std::vector<uint8_t> renderTile(int tile_x, int tile_y, int tile_size, const Ort
             {
                 if (!cam.samples.empty())
                     sampler.sampleBlock(cam.full_image, cam.reference_point, *cam.payload->model, cam.payload->position,
-                                        *cam.inv_rotation, gsd, cam.samples);
+                                        *cam.inv_rotation, gsd, cam.samples, cam.pixel_scale);
             }
 
             if (!samples.empty())
-                blendSamplesInto(samples, color_balance, rgba_tile);
+                blendSamplesInto(samples, color_balance, tile.rgba);
         }
     }
 
-    return rgba_tile;
+    return tile;
 }
 
 void generateGeoTIFF(const std::vector<surface_model> &surfaces, const MeasurementGraph &graph,
@@ -1470,8 +1493,12 @@ void generateGeoTIFF(const std::vector<surface_model> &surfaces, const Measureme
             loadImages(tile_camera_map.at(static_cast<size_t>(tile_y) * num_tiles_x + tile_x), graph, image_cache);
             lap(load_s);
             rgba_tile =
-                renderTile(tile_x, tile_y, tile_size, bounds, gsd, width, height, dsm_tile, sightlines, graph,
-                           context.imageGPSLocations, inv_rotation_cache, image_cache, color_balance, feather_distance);
+                renderTile(
+                    tile_x, tile_y, tile_size, bounds, gsd, width, height, dsm_tile, sightlines, graph,
+                    context.imageGPSLocations, inv_rotation_cache,
+                    [&](size_t node_id, const std::string &path) { return image_cache.getImage(node_id, path); },
+                    color_balance, feather_distance, false)
+                    .rgba;
         }
 
         const int x_off = tile_x * tile_size;
