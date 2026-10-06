@@ -62,8 +62,6 @@ template <typename Writer> void writeColorBalance(Writer &writer, const orthomos
         writer.Double(params.log_cbrt_exposure);
         writer.Key("ab_offset");
         writeArray(writer, params.ab_offset);
-        writer.Key("brdf_coeff");
-        writer.Double(params.brdf_coeff);
         writer.Key("slope");
         writeArray(writer, params.slope);
         writer.EndObject();
@@ -102,7 +100,6 @@ void readColorBalance(const rapidjson::Value &value, orthomosaic::ColorBalanceRe
             auto &params = cb.per_image_params[id];
             readJsonField(image, "log_cbrt_exposure", params.log_cbrt_exposure);
             readJsonArrayField(image, "ab_offset", params.ab_offset);
-            readJsonField(image, "brdf_coeff", params.brdf_coeff);
             readJsonArrayField(image, "slope", params.slope);
         }
 

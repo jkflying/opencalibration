@@ -103,7 +103,7 @@ TEST_F(CheckpointTest, save_and_load_color_balance)
     data.color_balance.final_cost = 1.5;
     data.color_balance.num_iterations = 7;
     data.color_balance.horizontal_view_dir_log_cbrt_gain = {0.01, -0.02};
-    data.color_balance.per_image_params[0xFFFFFFFF12345678ull] = {0.1, {1.0, -2.0}, 0.3, {0.04, -0.05}};
+    data.color_balance.per_image_params[0xFFFFFFFF12345678ull] = {0.1, {1.0, -2.0}, {0.04, -0.05}};
     data.color_balance.per_model_params[3] = {{-0.1, 0.02, -0.003}};
 
     // WHEN: saving and loading it
@@ -121,7 +121,6 @@ TEST_F(CheckpointTest, save_and_load_color_balance)
     const auto &img = cb.per_image_params.at(0xFFFFFFFF12345678ull);
     EXPECT_DOUBLE_EQ(0.1, img.log_cbrt_exposure);
     EXPECT_EQ((std::array<double, 2>{1.0, -2.0}), img.ab_offset);
-    EXPECT_DOUBLE_EQ(0.3, img.brdf_coeff);
     EXPECT_EQ((std::array<double, 2>{0.04, -0.05}), img.slope);
     ASSERT_EQ(1u, cb.per_model_params.count(3));
     EXPECT_EQ((std::array<double, 3>{-0.1, 0.02, -0.003}), cb.per_model_params.at(3).log_cbrt_falloff_coeffs);

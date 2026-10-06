@@ -610,7 +610,7 @@ TEST_F(ortho_, measurement_3_images_mesh_radial)
 }
 */
 
-TEST(ortho_sample_geometry, view_angle_is_zero_along_tilted_optical_axis)
+TEST(ortho_sample_geometry, horizontal_view_direction_matches_tilt_along_optical_axis)
 {
     // GIVEN: a camera tilted off nadir and yawed, and a world point straight along its optical axis
     image payload;
@@ -626,8 +626,8 @@ TEST(ortho_sample_geometry, view_angle_is_zero_along_tilted_optical_axis)
     // WHEN: we compute the sample geometry for that point
     const SampleGeometry g = sampleGeometry(payload, world_point, Eigen::Vector2d(400, 300));
 
-    // THEN: the view angle relative to the optical axis is zero
-    EXPECT_NEAR(g.view_angle_rad, 0.0, 1e-3);
+    // THEN: the horizontal view direction has the magnitude of the camera tilt
+    EXPECT_NEAR(std::hypot(g.view_dir_x, g.view_dir_y), std::sin(0.3), 1e-3);
 }
 
 TEST(ortho_coarsen_gsd, fits_regular_bounds)

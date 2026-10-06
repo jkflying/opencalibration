@@ -3,6 +3,7 @@
 #include <opencalibration/ortho/color_balance.hpp>
 
 #include <cmath>
+#include <optional>
 
 namespace opencalibration::orthomosaic
 {
@@ -36,18 +37,31 @@ template <typename T> struct RadiometricModel
 {
     const T *log_cbrt_exposure;
     const T *ab_offset;
-    const T *brdf;
     const T *slope;
     const T *vignetting;
     const T *horizontal_view_dir_gain;
 };
 
+inline std::optional<RadiometricModel<double>> radiometricModel(const ColorBalanceResult &balance, size_t camera_id,
+                                                                uint32_t model_id)
+{
+    const auto img_it = balance.per_image_params.find(camera_id);
+    if (img_it == balance.per_image_params.end())
+        return std::nullopt;
+    static const VignettingParams no_vignetting;
+    const auto mdl_it = balance.per_model_params.find(model_id);
+    const auto &vig = mdl_it != balance.per_model_params.end() ? mdl_it->second : no_vignetting;
+    const auto &p = img_it->second;
+    return RadiometricModel<double>{&p.log_cbrt_exposure, p.ab_offset.data(), p.slope.data(),
+                                    vig.log_cbrt_falloff_coeffs.data(),
+                                    balance.horizontal_view_dir_log_cbrt_gain.data()};
+}
+
 template <typename T> T totalLogCbrtGain(const RadiometricModel<T> &m, const SampleGeometry &g)
 {
     return vignettingLogCbrtFalloff(m.vignetting, g.normalized_radius) + m.log_cbrt_exposure[0] +
-           m.brdf[0] * T(g.view_angle_rad * g.view_angle_rad) + m.slope[0] * T(g.normalized_x) +
-           m.slope[1] * T(g.normalized_y) + m.horizontal_view_dir_gain[0] * T(g.view_dir_x) +
-           m.horizontal_view_dir_gain[1] * T(g.view_dir_y);
+           m.slope[0] * T(g.normalized_x) + m.slope[1] * T(g.normalized_y) +
+           m.horizontal_view_dir_gain[0] * T(g.view_dir_x) + m.horizontal_view_dir_gain[1] * T(g.view_dir_y);
 }
 
 template <typename T>
@@ -69,17 +83,16 @@ struct RadiometricMatchCost
     }
 
     template <typename T>
-    bool operator()(const T *exposure_a, const T *ab_a, const T *brdf_a, const T *slope_a, const T *vig_a,
-                    const T *exposure_b, const T *ab_b, const T *brdf_b, const T *slope_b, const T *vig_b,
-                    const T *view_dir_gain, T *residuals) const
+    bool operator()(const T *exposure_a, const T *ab_a, const T *slope_a, const T *vig_a, const T *exposure_b,
+                    const T *ab_b, const T *slope_b, const T *vig_b, const T *view_dir_gain, T *residuals) const
     {
         T obs_a[3] = {T(_observed_a[0]), T(_observed_a[1]), T(_observed_a[2])};
         T obs_b[3] = {T(_observed_b[0]), T(_observed_b[1]), T(_observed_b[2])};
         T corr_a[3], corr_b[3];
-        correctRadiometry(obs_a, RadiometricModel<T>{exposure_a, ab_a, brdf_a, slope_a, vig_a, view_dir_gain},
-                          _geometry_a, corr_a);
-        correctRadiometry(obs_b, RadiometricModel<T>{exposure_b, ab_b, brdf_b, slope_b, vig_b, view_dir_gain},
-                          _geometry_b, corr_b);
+        correctRadiometry(obs_a, RadiometricModel<T>{exposure_a, ab_a, slope_a, vig_a, view_dir_gain}, _geometry_a,
+                          corr_a);
+        correctRadiometry(obs_b, RadiometricModel<T>{exposure_b, ab_b, slope_b, vig_b, view_dir_gain}, _geometry_b,
+                          corr_b);
         T mean_brightness_above_black = T(0.5) * (corr_a[0] + corr_b[0]) + T(LAB_L_BLACK_OFFSET);
         T brightness_invariant_scale = T(L_UNITS_PER_LOG_CBRT_GAIN) / mean_brightness_above_black;
         for (int c = 0; c < 3; c++)
@@ -97,27 +110,22 @@ struct RadiometricMatchCostSharedVig
     }
 
     template <typename T>
-    bool operator()(const T *exposure_a, const T *ab_a, const T *brdf_a, const T *slope_a, const T *exposure_b,
-                    const T *ab_b, const T *brdf_b, const T *slope_b, const T *vig, const T *view_dir_gain,
-                    T *residuals) const
+    bool operator()(const T *exposure_a, const T *ab_a, const T *slope_a, const T *exposure_b, const T *ab_b,
+                    const T *slope_b, const T *vig, const T *view_dir_gain, T *residuals) const
     {
-        return _cost(exposure_a, ab_a, brdf_a, slope_a, vig, exposure_b, ab_b, brdf_b, slope_b, vig, view_dir_gain,
-                     residuals);
+        return _cost(exposure_a, ab_a, slope_a, vig, exposure_b, ab_b, slope_b, vig, view_dir_gain, residuals);
     }
 };
 
-template <int N> struct ZeroPrior
+template <int N> struct TargetPrior
 {
-    double _weight;
-
-    explicit ZeroPrior(double weight) : _weight(weight)
-    {
-    }
+    double weight;
+    std::array<double, N> target{};
 
     template <typename T> bool operator()(const T *params, T *residuals) const
     {
         for (int i = 0; i < N; i++)
-            residuals[i] = T(_weight) * params[i];
+            residuals[i] = T(weight) * (params[i] - T(target[i]));
         return true;
     }
 };

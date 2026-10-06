@@ -106,8 +106,6 @@ SampleGeometry sampleGeometry(const image &payload, const Eigen::Vector3d &world
     std::tie(g.normalized_x, g.normalized_y) = normalizedImagePosition(pixel.x(), pixel.y(), cols, rows);
 
     const Eigen::Vector3d view_dir = (world_point - payload.position).normalized();
-    const Eigen::Vector3d camera_down = payload.orientation * Eigen::Vector3d::UnitZ();
-    g.view_angle_rad = static_cast<float>(std::acos(std::clamp(camera_down.dot(view_dir), -1.0, 1.0)));
     g.view_dir_x = static_cast<float>(view_dir.x());
     g.view_dir_y = static_cast<float>(view_dir.y());
     return g;
@@ -122,24 +120,12 @@ bool applyColorBalance(const opencalibration::orthomosaic::ColorBalanceResult &c
                        uint32_t model_id, const opencalibration::orthomosaic::SampleGeometry &geometry, cv::Vec3f &lab)
 {
     using namespace opencalibration::orthomosaic;
-    auto img_it = color_balance.per_image_params.find(camera_id);
-    if (img_it == color_balance.per_image_params.end())
+    const auto model = radiometricModel(color_balance, camera_id, model_id);
+    if (!model)
         return false;
-    const auto &img_params = img_it->second;
-
-    static const VignettingParams no_vignetting;
-    auto mdl_it = color_balance.per_model_params.find(model_id);
-    const auto &vig = mdl_it != color_balance.per_model_params.end() ? mdl_it->second : no_vignetting;
-
-    const RadiometricModel<double> model{&img_params.log_cbrt_exposure,
-                                         img_params.ab_offset.data(),
-                                         &img_params.brdf_coeff,
-                                         img_params.slope.data(),
-                                         vig.log_cbrt_falloff_coeffs.data(),
-                                         color_balance.horizontal_view_dir_log_cbrt_gain.data()};
     const double in[3] = {lab[0], lab[1], lab[2]};
     double out[3];
-    correctRadiometry(in, model, geometry, out);
+    correctRadiometry(in, *model, geometry, out);
     lab =
         cv::Vec3f(std::clamp(out[0], 0.0, 100.0), std::clamp(out[1], -127.0, 127.0), std::clamp(out[2], -127.0, 127.0));
     return true;
@@ -605,16 +591,17 @@ void appendSourceToPartnerPairs(const std::vector<ThumbnailSample> &samples, siz
     }
 }
 
-ankerl::unordered_dense::map<size_t, CameraPosition> cameraPositions(
-    const MeasurementGraph &graph, const ankerl::unordered_dense::set<size_t> &node_ids)
+ankerl::unordered_dense::map<size_t, double> exifExposureValues(const MeasurementGraph &graph,
+                                                                const ankerl::unordered_dense::set<size_t> &node_ids)
 {
-    ankerl::unordered_dense::map<size_t, CameraPosition> positions;
+    ankerl::unordered_dense::map<size_t, double> exposure_values;
     for (size_t node_id : node_ids)
     {
-        const auto &position = graph.getNode(node_id)->payload.position;
-        positions[node_id] = {position.x(), position.y()};
+        const auto &info = graph.getNode(node_id)->payload.metadata.capture_info;
+        if (info.exposureSeconds > 0 && info.iso > 0 && info.fNumber > 0)
+            exposure_values[node_id] = info.exposureSeconds * info.iso / (info.fNumber * info.fNumber);
     }
-    return positions;
+    return exposure_values;
 }
 void applyThumbnailColorBalance(const ColorBalanceResult &balance, const std::vector<ThumbnailSample> &pixel_sources,
                                 const Eigen::Matrix<int32_t, Eigen::Dynamic, Eigen::Dynamic> &cameraUUID,
@@ -813,7 +800,7 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
 
     spdlog::info("Color balance: {} correspondences from thumbnail", correspondences.size());
     if (!correspondences.empty())
-        result.color_balance = solveColorBalance(correspondences, cameraPositions(graph, context.involved_nodes));
+        result.color_balance = solveColorBalance(correspondences, exifExposureValues(graph, context.involved_nodes));
 
     applyThumbnailColorBalance(result.color_balance, pixel_sources, result.cameraUUID.pixels, pixelValues);
 

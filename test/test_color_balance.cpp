@@ -14,7 +14,6 @@ struct ImageParams
 {
     double exposure[1] = {0};
     double ab[2] = {0, 0};
-    double brdf[1] = {0};
     double slope[2] = {0, 0};
     double vig[3] = {0, 0, 0};
 };
@@ -28,13 +27,17 @@ std::array<float, 3> observeWithLogCbrtGain(std::array<float, 3> lab, double log
 }
 
 std::array<double, 3> evaluate(const ColorCorrespondence &corr, const ImageParams &a, const ImageParams &b,
-                               const double view_dir_gain[2] = nullptr)
+                               const std::array<double, 2> &view = {})
 {
-    const double zero[2] = {0, 0};
     std::array<double, 3> residuals;
-    RadiometricMatchCost{corr}(a.exposure, a.ab, a.brdf, a.slope, a.vig, b.exposure, b.ab, b.brdf, b.slope, b.vig,
-                               view_dir_gain ? view_dir_gain : zero, residuals.data());
+    RadiometricMatchCost{corr}(a.exposure, a.ab, a.slope, a.vig, b.exposure, b.ab, b.slope, b.vig, view.data(),
+                               residuals.data());
     return residuals;
+}
+
+double viewLogCbrtGain(const SampleGeometry &g, const std::array<double, 2> &view)
+{
+    return view[0] * g.view_dir_x + view[1] * g.view_dir_y;
 }
 
 ColorCorrespondence makeCorrespondence(size_t cam_a, size_t cam_b, std::array<float, 3> lab_a,
@@ -49,8 +52,6 @@ ColorCorrespondence makeCorrespondence(size_t cam_a, size_t cam_b, std::array<fl
     corr.model_id_b = 1;
     corr.geometry_a.normalized_radius = 0.3f;
     corr.geometry_b.normalized_radius = 0.3f;
-    corr.geometry_a.view_angle_rad = 0.05f;
-    corr.geometry_b.view_angle_rad = 0.05f;
     return corr;
 }
 } // namespace
@@ -142,19 +143,23 @@ TEST(ColorBalance, radiometric_match_cost_slope_correction)
 
 TEST(ColorBalance, radiometric_match_cost_view_direction_correction)
 {
-    // GIVEN: A point that looks brighter when viewed looking east than looking west
+    // GIVEN: A point seen from two view directions with a global view-direction gain
     const std::array<float, 3> true_lab = {60, 0, 10};
-    const double view_dir_gain[2] = {0.3, 0.0};
-    auto corr = makeCorrespondence(1, 2, observeWithLogCbrtGain(true_lab, 0.3 * 0.4),
-                                   observeWithLogCbrtGain(true_lab, 0.3 * -0.4));
+    const std::array<double, 2> view = {0.1, -0.05};
+    ColorCorrespondence corr = makeCorrespondence(1, 2, true_lab, true_lab);
     corr.geometry_a.view_dir_x = 0.4f;
-    corr.geometry_b.view_dir_x = -0.4f;
+    corr.geometry_b.view_dir_x = -0.05f;
+    corr.geometry_b.view_dir_y = 0.1f;
+    corr.lab_a = observeWithLogCbrtGain(true_lab, viewLogCbrtGain(corr.geometry_a, view));
+    corr.lab_b = observeWithLogCbrtGain(true_lab, viewLogCbrtGain(corr.geometry_b, view));
 
-    // WHEN: Evaluating with the global view direction gain
-    auto residuals = evaluate(corr, {}, {}, view_dir_gain);
+    // WHEN: Evaluating without and with the view coefficients
+    auto uncorrected = evaluate(corr, {}, {});
+    auto corrected = evaluate(corr, {}, {}, view);
 
-    // THEN: There is no residual
-    for (double r : residuals)
+    // THEN: Only the corrected residual vanishes
+    EXPECT_GT(std::abs(uncorrected[0]), 0.5);
+    for (double r : corrected)
         EXPECT_NEAR(r, 0.0, 1e-4);
 }
 
@@ -163,17 +168,17 @@ TEST(ColorBalance, shared_vignetting_cost_matches_separate_cost)
     // GIVEN: A correspondence between two images of the same camera model
     auto corr = makeCorrespondence(1, 2, {55, 3, 4}, {48, 2, 6});
     corr.geometry_a.normalized_radius = 0.9f;
+    corr.geometry_b.view_dir_x = 0.3f;
     ImageParams a, b;
     a.exposure[0] = 0.02;
-    b.brdf[0] = 0.1;
     a.vig[0] = b.vig[0] = -0.1;
-    const double view_dir_gain[2] = {0.05, -0.02};
+    const std::array<double, 2> view = {-0.02, 0.03};
 
     // WHEN: Evaluating both cost variants
-    auto separate = evaluate(corr, a, b, view_dir_gain);
+    auto separate = evaluate(corr, a, b, view);
     std::array<double, 3> shared;
-    RadiometricMatchCostSharedVig{corr}(a.exposure, a.ab, a.brdf, a.slope, b.exposure, b.ab, b.brdf, b.slope, a.vig,
-                                        view_dir_gain, shared.data());
+    RadiometricMatchCostSharedVig{corr}(a.exposure, a.ab, a.slope, b.exposure, b.ab, b.slope, a.vig, view.data(),
+                                        shared.data());
 
     // THEN: They agree
     for (int c = 0; c < 3; c++)
@@ -232,32 +237,60 @@ TEST(ColorBalance, solve_three_cameras)
     EXPECT_NEAR(exp_b - exp_c, 0.04, 0.015);
 }
 
-TEST(ColorBalance, camera_positions_remove_planar_exposure_trend)
+TEST(ColorBalance, weak_link_between_clusters_keeps_full_exposure_difference)
 {
-    // GIVEN: four cameras on a square whose exposure rises linearly across the survey
-    const ankerl::unordered_dense::map<size_t, CameraPosition> positions = {
-        {1, {0, 0}}, {2, {10, 0}}, {3, {0, 10}}, {4, {10, 10}}};
-    const auto gain = [&](size_t id) { return 0.01 * positions.at(id).x + 0.02 * positions.at(id).y; };
+    // GIVEN: two well connected clusters of cameras, the second 0.2 brighter, joined by only a few correspondences
     std::vector<ColorCorrespondence> correspondences;
-    for (const auto &[a, b] : std::vector<std::pair<size_t, size_t>>{{1, 2}, {1, 3}, {2, 4}, {3, 4}})
-        for (int i = 0; i < 100; i++)
+    const auto gain = [](size_t id) { return id >= 10 ? 0.2 : 0.0; };
+    const auto link = [&](size_t a, size_t b, int n) {
+        for (int i = 0; i < n; i++)
         {
             const std::array<float, 3> true_lab = {40.0f + (i % 30), 0.0f, 0.0f};
             correspondences.push_back(makeCorrespondence(a, b, observeWithLogCbrtGain(true_lab, gain(a)),
                                                          observeWithLogCbrtGain(true_lab, gain(b))));
         }
+    };
+    for (size_t c = 0; c < 20; c++)
+        link(c, c / 10 * 10 + (c + 1) % 10, 100);
+    link(0, 10, 5);
 
-    // WHEN: we solve with and without the camera positions
-    const auto trended = solveColorBalance(correspondences);
-    const auto detrended = solveColorBalance(correspondences, positions);
+    // WHEN: we solve
+    const auto result = solveColorBalance(correspondences);
 
-    // THEN: the trend is only removed when positions are given
-    ASSERT_TRUE(trended.success);
-    ASSERT_TRUE(detrended.success);
-    EXPECT_NEAR(trended.per_image_params.at(4).log_cbrt_exposure - trended.per_image_params.at(1).log_cbrt_exposure,
-                0.3, 0.02);
-    for (const auto &[id, position] : positions)
-        EXPECT_NEAR(detrended.per_image_params.at(id).log_cbrt_exposure, 0, 0.02) << id;
+    // THEN: the offset prior does not pull the clusters back towards their raw exposure
+    ASSERT_TRUE(result.success);
+    EXPECT_NEAR(result.per_image_params.at(15).log_cbrt_exposure - result.per_image_params.at(5).log_cbrt_exposure, 0.2,
+                0.01);
+}
+
+TEST(ColorBalance, exif_exposure_anchors_chain_against_correspondence_bias)
+{
+    // GIVEN: a long chain of cameras with varying EXIF exposure, each link biased by 0.01 so the chain alone drifts
+    // 0.89
+    constexpr size_t n = 90;
+    const auto exposure_value = [](size_t c) { return 1e-3 * (1.0 + 0.5 * static_cast<double>(c % 3)); };
+    const auto gain = [&](size_t c) { return std::log(exposure_value(c) / exposure_value(1)) / 3.0; };
+    ankerl::unordered_dense::map<size_t, double> exif_exposure_values;
+    std::vector<ColorCorrespondence> correspondences;
+    for (size_t c = 0; c < n; c++)
+    {
+        exif_exposure_values[c] = exposure_value(c);
+        for (int i = 0; c + 1 < n && i < 20; i++)
+        {
+            const std::array<float, 3> true_lab = {40.0f + static_cast<float>(i % 30), 0.0f, 0.0f};
+            correspondences.push_back(makeCorrespondence(c, c + 1, observeWithLogCbrtGain(true_lab, gain(c)),
+                                                         observeWithLogCbrtGain(true_lab, gain(c + 1) + 0.01)));
+        }
+    }
+
+    // WHEN: we solve with the EXIF exposures
+    const auto result = solveColorBalance(correspondences, exif_exposure_values);
+
+    // THEN: the drift stays bounded near the EXIF exposures instead of growing along the chain
+    ASSERT_TRUE(result.success);
+    EXPECT_NEAR(result.per_image_params.at(n - 1).log_cbrt_exposure - result.per_image_params.at(0).log_cbrt_exposure,
+                gain(n - 1) - gain(0), 0.2);
+    EXPECT_NEAR(result.per_image_params.at(n / 2).log_cbrt_exposure, gain(n / 2), 0.05);
 }
 
 TEST(ColorBalance, solve_empty_correspondences)
@@ -275,7 +308,7 @@ TEST(ColorBalance, solve_empty_correspondences)
 TEST(ColorBalance, zero_prior_penalizes_params)
 {
     // GIVEN: A prior with weight 0.5
-    ZeroPrior<3> prior(0.5);
+    TargetPrior<3> prior{0.5};
     double params[3] = {10.0, -5.0, 3.0};
     double residuals[3];
 
@@ -349,37 +382,36 @@ TEST(ColorBalance, solve_synthetic_directional_slope)
     EXPECT_NEAR(b.slope[1], 0.0, 0.02);
 }
 
-TEST(ColorBalance, solve_synthetic_view_direction_gain)
+TEST(ColorBalance, solve_recovers_horizontal_view_direction_gain)
 {
-    // GIVEN: Many cameras where every point is brighter when viewed looking towards the same bearing
+    // GIVEN: a chain of overlapping cameras under a global horizontal view-direction gain
+    constexpr size_t num_cameras = 30;
+    const std::array<double, 2> true_view = {0.08, -0.05};
     std::vector<ColorCorrespondence> correspondences;
     std::mt19937 rng(7);
-    std::uniform_real_distribution<float> dir_dist(-0.5f, 0.5f);
-    std::uniform_int_distribution<size_t> cam_dist(0, 9);
-    const double true_gain[2] = {0.08, -0.05};
+    std::uniform_real_distribution<float> dir_dist(-0.6f, 0.6f);
+    for (size_t c = 0; c < num_cameras; c++)
+        for (size_t d = 1; d <= 3 && c + d < num_cameras; d++)
+            for (int i = 0; i < 150; i++)
+            {
+                const std::array<float, 3> true_lab = {30.0f + static_cast<float>(i % 40), 5.0f, 0.0f};
+                auto corr = makeCorrespondence(c, c + d, true_lab, true_lab);
+                corr.geometry_a.view_dir_x = dir_dist(rng);
+                corr.geometry_a.view_dir_y = dir_dist(rng);
+                corr.geometry_b.view_dir_x = dir_dist(rng);
+                corr.geometry_b.view_dir_y = dir_dist(rng);
+                corr.lab_a = observeWithLogCbrtGain(true_lab, viewLogCbrtGain(corr.geometry_a, true_view));
+                corr.lab_b = observeWithLogCbrtGain(true_lab, viewLogCbrtGain(corr.geometry_b, true_view));
+                correspondences.push_back(corr);
+            }
 
-    for (int i = 0; i < 2000; i++)
-    {
-        const std::array<float, 3> true_lab = {30.0f + (i % 40), 5.0f, 0.0f};
-        size_t cam_a = cam_dist(rng), cam_b = (cam_a + 1 + cam_dist(rng) % 9) % 10;
-        float vx_a = dir_dist(rng), vy_a = dir_dist(rng), vx_b = dir_dist(rng), vy_b = dir_dist(rng);
-        auto corr = makeCorrespondence(cam_a, cam_b,
-                                       observeWithLogCbrtGain(true_lab, true_gain[0] * vx_a + true_gain[1] * vy_a),
-                                       observeWithLogCbrtGain(true_lab, true_gain[0] * vx_b + true_gain[1] * vy_b));
-        corr.geometry_a.view_dir_x = vx_a;
-        corr.geometry_a.view_dir_y = vy_a;
-        corr.geometry_b.view_dir_x = vx_b;
-        corr.geometry_b.view_dir_y = vy_b;
-        correspondences.push_back(corr);
-    }
+    // WHEN: we solve
+    const auto result = solveColorBalance(correspondences);
 
-    // WHEN: We solve
-    auto result = solveColorBalance(correspondences);
-
-    // THEN: The global view direction gain is recovered
-    EXPECT_TRUE(result.success);
-    EXPECT_NEAR(result.horizontal_view_dir_log_cbrt_gain[0], true_gain[0], 0.01);
-    EXPECT_NEAR(result.horizontal_view_dir_log_cbrt_gain[1], true_gain[1], 0.01);
+    // THEN: the global horizontal view gain is recovered
+    ASSERT_TRUE(result.success);
+    EXPECT_NEAR(result.horizontal_view_dir_log_cbrt_gain[0], true_view[0], 0.01);
+    EXPECT_NEAR(result.horizontal_view_dir_log_cbrt_gain[1], true_view[1], 0.01);
 }
 
 TEST(ColorBalance, solve_does_not_darken_to_shrink_noisy_residuals)
@@ -404,12 +436,10 @@ TEST(ColorBalance, solve_does_not_darken_to_shrink_noisy_residuals)
 
     // THEN: Cameras are not systematically darkened
     EXPECT_TRUE(result.success);
-    double mean_exposure = 0, mean_brdf = 0;
+    double mean_exposure = 0;
     for (const auto &[cam_id, params] : result.per_image_params)
-    {
         mean_exposure += params.log_cbrt_exposure / result.per_image_params.size();
-        mean_brdf += params.brdf_coeff / result.per_image_params.size();
-    }
     EXPECT_NEAR(mean_exposure, 0.0, 0.003);
-    EXPECT_NEAR(mean_brdf, 0.0, 0.03);
+    EXPECT_NEAR(result.horizontal_view_dir_log_cbrt_gain[0], 0.0, 0.01);
+    EXPECT_NEAR(result.horizontal_view_dir_log_cbrt_gain[1], 0.0, 0.01);
 }

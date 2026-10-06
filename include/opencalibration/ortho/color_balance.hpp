@@ -4,7 +4,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <string>
 #include <vector>
 
 namespace opencalibration::orthomosaic
@@ -14,8 +13,7 @@ struct RadiometricParams
 {
     double log_cbrt_exposure = 0;
     std::array<double, 2> ab_offset = {0, 0};
-    double brdf_coeff = 0;
-    std::array<double, 2> slope = {0, 0}; // directional brightness: slope_x, slope_y in image space
+    std::array<double, 2> slope = {0, 0};
 };
 
 struct VignettingParams
@@ -26,7 +24,6 @@ struct VignettingParams
 struct SampleGeometry
 {
     float normalized_radius = 0;
-    float view_angle_rad = 0;
     float normalized_x = 0;
     float normalized_y = 0;
     float view_dir_x = 0;
@@ -58,12 +55,7 @@ struct ColorBalanceResult
     int num_iterations = 0;
 };
 
-struct CameraPosition
-{
-    double x, y;
-};
-
 ColorBalanceResult solveColorBalance(const std::vector<ColorCorrespondence> &correspondences,
-                                     const ankerl::unordered_dense::map<size_t, CameraPosition> &camera_positions = {});
+                                     const ankerl::unordered_dense::map<size_t, double> &exif_exposure_values = {});
 
 } // namespace opencalibration::orthomosaic
