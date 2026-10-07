@@ -26,15 +26,18 @@
 #include <opencv2/imgproc.hpp>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <fstream>
 #include <functional>
 #include <future>
+#include <iterator>
 #include <mutex>
 #include <numeric>
 #include <omp.h>
+#include <random>
 #include <thread>
 #include <type_traits>
 
@@ -545,12 +548,6 @@ struct ThumbnailSample
     cv::Vec3f lab;
 };
 
-struct ThumbnailColorSampling
-{
-    int pixel_step;
-    size_t pairs_per_sample;
-};
-
 double fullResolutionOutputGsd(const OrthoMosaicContext &context, const MeasurementGraph &graph,
                                const OrthoMosaicConfig &config)
 {
@@ -563,40 +560,50 @@ double fullResolutionOutputGsd(const OrthoMosaicContext &context, const Measurem
     return gsd;
 }
 
-ThumbnailColorSampling thumbnailColorSampling(const OrthoMosaicContext &context, double full_resolution_gsd,
-                                              const OrthoMosaicConfig &config)
-{
-    const double full_res_samples_per_thumbnail_pixel =
-        std::pow(context.gsd / (full_resolution_gsd * std::max(1, config.color_sample_spacing_full_res_px)), 2);
-    if (full_res_samples_per_thumbnail_pixel >= 1)
-        return {1, static_cast<size_t>(std::lround(full_res_samples_per_thumbnail_pixel))};
-    return {static_cast<int>(std::lround(1 / std::sqrt(full_res_samples_per_thumbnail_pixel))), 1};
-}
-
 size_t pixelHash(int row, int col)
 {
     return static_cast<size_t>(row) * 7919u + static_cast<size_t>(col) * 104729u;
 }
 
-void appendSourceToPartnerPairs(const std::vector<ThumbnailSample> &samples, size_t max_pairs, size_t first_partner,
-                                std::vector<ColorCorrespondence> &correspondences)
+void appendColorPairs(const std::vector<ThumbnailSample> &samples, size_t random_pairs, size_t seed,
+                      std::vector<ColorCorrespondence> &correspondences)
 {
     if (samples.size() < 2)
         return;
-    const ThumbnailSample &source = samples.front();
-    const size_t partners = samples.size() - 1;
-    for (size_t p = 0; p < std::min(max_pairs, partners); p++)
-    {
-        const ThumbnailSample &partner = samples[1 + (first_partner + p) % partners];
-        correspondences.push_back({{source.lab[0], source.lab[1], source.lab[2]},
-                                   {partner.lab[0], partner.lab[1], partner.lab[2]},
-                                   source.camera_id,
-                                   partner.camera_id,
-                                   source.model_id,
-                                   partner.model_id,
-                                   source.geometry,
-                                   partner.geometry});
-    }
+
+    auto append = [&](const ThumbnailSample &a, const ThumbnailSample &b) {
+        correspondences.push_back({{a.lab[0], a.lab[1], a.lab[2]},
+                                   {b.lab[0], b.lab[1], b.lab[2]},
+                                   a.camera_id,
+                                   b.camera_id,
+                                   a.model_id,
+                                   b.model_id,
+                                   a.geometry,
+                                   b.geometry});
+    };
+    append(samples[0], samples[1]);
+
+    std::vector<std::pair<size_t, size_t>> other_pairs;
+    for (size_t i = 0; i < samples.size(); i++)
+        for (size_t j = i + 1; j < samples.size(); j++)
+            if (i != 0 || j != 1)
+                other_pairs.emplace_back(i, j);
+    std::vector<std::pair<size_t, size_t>> chosen;
+    std::sample(other_pairs.begin(), other_pairs.end(), std::back_inserter(chosen), random_pairs,
+                std::minstd_rand(seed));
+    for (const auto &[i, j] : chosen)
+        append(samples[i], samples[j]);
+}
+
+bool projectIntoImage(const image &payload, const Eigen::Matrix3d &inv_rotation, const Eigen::Vector3d &world_point,
+                      Eigen::Vector2d &pixel)
+{
+    if ((inv_rotation * (world_point - payload.position)).z() <= 0 || !withinNadirCone(payload.position, world_point))
+        return false;
+
+    pixel = image_from_3d(world_point, *payload.model, payload.position, inv_rotation);
+    return pixel.x() >= 0 && pixel.x() < payload.model->pixels_cols && pixel.y() >= 0 &&
+           pixel.y() < payload.model->pixels_rows;
 }
 
 ankerl::unordered_dense::map<size_t, double> exifExposureValues(const MeasurementGraph &graph,
@@ -684,9 +691,8 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
     int width, height;
     rasterSizeCovering(context.bounds, context.gsd, width, height);
     clampOutputResolution(context.gsd, width, height, context, graph, "Thumbnail");
-    const cv::Size image_dimensions(width, height);
 
-    spdlog::info("gsd {}  img dims {}x{}", context.gsd, image_dimensions.width, image_dimensions.height);
+    spdlog::info("gsd {}  img dims {}x{}", context.gsd, width, height);
 
     OrthoMosaic result;
     result.gsd = context.gsd;
@@ -714,15 +720,8 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
         camera_cache[node_id] = cc;
     }
 
-    std::atomic<int> completed_rows{0};
-    auto last_log_time = std::chrono::steady_clock::now();
-
     constexpr size_t colorCandidateCameras = 12;
-
-    const double full_resolution_gsd = fullResolutionOutputGsd(context, graph, config);
-    const ThumbnailColorSampling color_sampling = thumbnailColorSampling(context, full_resolution_gsd, config);
-    spdlog::info("Color sampling: thumbnail sample step {} px, up to {} camera pairs per sample",
-                 color_sampling.pixel_step, color_sampling.pairs_per_sample);
+    constexpr size_t colorRandomPairsPerSample = 3;
 
     const std::vector<float> dsm =
         computeDSMTile(0, 0, std::max(width, height), context.bounds, context.gsd, width, height, surfaces,
@@ -742,9 +741,9 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
         std::vector<ThumbnailSample> samples;
 
 #pragma omp for schedule(dynamic)
-        for (int row = 0; row < image_dimensions.height; row += color_sampling.pixel_step)
+        for (int row = 0; row < height; row++)
         {
-            for (int col = 0; col < image_dimensions.width; col += color_sampling.pixel_step)
+            for (int col = 0; col < width; col++)
             {
                 const Eigen::Vector2d centre = pixelCentre(context.bounds, context.gsd, col, row);
                 const double x = centre.x(), y = centre.y();
@@ -764,41 +763,21 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
                     const auto &payload = graph.getNode(candidate.payload)->payload;
                     const auto &cc = camera_cache.at(candidate.payload);
 
-                    Eigen::Vector3d camera_ray = cc.inv_rotation * (sample_point - payload.position);
-                    if (camera_ray.z() <= 0 || !withinNadirCone(payload.position, sample_point))
+                    Eigen::Vector2d pixel;
+                    if (!projectIntoImage(payload, cc.inv_rotation, sample_point, pixel))
                         continue;
-
-                    Eigen::Vector2d pixel = image_from_3d(camera_ray, *payload.model);
-                    const Eigen::Vector2d thumb_pixel = pixel.cwiseProduct(cc.thumb_scale_xy);
-                    if (!thumb_pixel.allFinite())
-                        continue;
-
-                    const int px = static_cast<int>(std::floor(thumb_pixel.x()));
-                    const int py = static_cast<int>(std::floor(thumb_pixel.y()));
+                    const int px = static_cast<int>(pixel.x() * cc.thumb_scale_xy.x());
+                    const int py = static_cast<int>(pixel.y() * cc.thumb_scale_xy.y());
 
                     Eigen::Vector<uint8_t, Eigen::Dynamic> pixelValue(3);
-                    if (px >= 0 && px < cc.thumb_size[1] && py >= 0 && py < cc.thumb_size[0] &&
-                        payload.thumbnail.get(py, px, pixelValue) &&
+                    if (px < cc.thumb_size[1] && py < cc.thumb_size[0] && payload.thumbnail.get(py, px, pixelValue) &&
                         surfaceVisibleFrom(sightlines, sample_point, payload.position))
                         samples.push_back({candidate.payload, static_cast<uint32_t>(payload.model->id),
                                            sampleGeometry(payload, sample_point, pixel),
                                            rgbToLab(pixelValue[0], pixelValue[1], pixelValue[2])});
                 }
 
-                appendSourceToPartnerPairs(samples, color_sampling.pairs_per_sample, pixelHash(row, col),
-                                           local_correspondences);
-            }
-
-            int current_completed = (completed_rows += color_sampling.pixel_step);
-            if (omp_get_thread_num() == 0)
-            {
-                auto now = std::chrono::steady_clock::now();
-                if (std::chrono::duration_cast<std::chrono::seconds>(now - last_log_time).count() >= 5)
-                {
-                    spdlog::info("Thumbnail generation progress: {:.1f}%",
-                                 100.0 * current_completed / image_dimensions.height);
-                    last_log_time = now;
-                }
+                appendColorPairs(samples, colorRandomPairsPerSample, pixelHash(row, col), local_correspondences);
             }
         }
 
@@ -817,6 +796,7 @@ OrthoMosaic generateOrthomosaic(const std::vector<surface_model> &surfaces, cons
         thumbnails[node_id] = thumbnailToBgr(graph.getNode(node_id)->payload.thumbnail);
         inv_rotations[node_id] = cc.inv_rotation;
     }
+    const double full_resolution_gsd = fullResolutionOutputGsd(context, graph, config);
     RenderedTile tile = renderTile(
         0, 0, std::max(width, height), context.bounds, context.gsd, width, height, dsm, surface_sightlines, graph,
         context.imageGPSLocations, inv_rotations,
@@ -1044,17 +1024,6 @@ class LookaheadPrefetcher
     size_t generation_ = 0;
     std::vector<std::thread> threads_;
 };
-
-bool projectIntoImage(const image &payload, const Eigen::Matrix3d &inv_rotation, const Eigen::Vector3d &world_point,
-                      Eigen::Vector2d &pixel)
-{
-    if ((inv_rotation * (world_point - payload.position)).z() <= 0 || !withinNadirCone(payload.position, world_point))
-        return false;
-
-    pixel = image_from_3d(world_point, *payload.model, payload.position, inv_rotation);
-    return pixel.x() >= 0 && pixel.x() < payload.model->pixels_cols && pixel.y() >= 0 &&
-           pixel.y() < payload.model->pixels_rows;
-}
 
 struct BlockCamera
 {

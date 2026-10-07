@@ -90,7 +90,6 @@ OrthoMosaicContext prepareOrthoMosaicContext(const std::vector<surface_model> &s
 struct OrthoMosaicConfig
 {
     int tile_size = 1024;
-    int color_sample_spacing_full_res_px = 50;
     int blend_transition_radius = 64;
     double max_output_megapixels = 0.0; // 0 = unlimited
 };
