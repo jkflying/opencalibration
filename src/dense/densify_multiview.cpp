@@ -386,7 +386,7 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
 
     spdlog::info("Dense: sorted features of {} images into cells, {} measurements in {:.1f}s", node_ids.size(),
                  id_to_measurement.size(), lapSeconds());
-    p.reset("Dense match");
+    p.reset("Dense sightlines");
 
     std::atomic<size_t> images_done{0};
     std::mutex uf_mutex;
@@ -397,10 +397,21 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
 
     const std::vector<MeshLineOfSight> surface_sightlines = sightlinesOver(surfaces);
 
+    p.reset("Dense remove unseen points");
     removePointsNotSeenByTwoCameras(graph, surfaces, surface_sightlines, camera_tree);
+    p.reset("");
+
+    struct LocalMatch
+    {
+        size_t src_id, dst_id;
+    };
 
     const int num_nodes = static_cast<int>(node_ids.size());
-#pragma omp parallel for schedule(dynamic) // NOLINT(modernize-loop-convert)
+#pragma omp parallel
+    {
+    auto camera_searcher = camera_tree.searcher();
+    std::vector<LocalMatch> local_matches;
+#pragma omp for schedule(dynamic) // NOLINT(modernize-loop-convert)
     for (int ni = 0; ni < num_nodes; ni++)
     {
         const size_t src_nid = node_ids[ni];
@@ -410,6 +421,7 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
         const auto &src_pos = src_img.position;
         const auto &src_ori = src_img.orientation;
 
+        PerformanceMeasure p_image("Dense match setup");
         std::vector<MeshIntersectionSearcher> searchers(surfaces.size());
         for (size_t si = 0; si < surfaces.size(); si++)
             if (!searchers[si].init(surfaces[si].mesh))
@@ -424,16 +436,12 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
             src_locations, Eigen::AlignedBox2d(Eigen::Vector2d::Zero(),
                                                Eigen::Vector2d(src_model.pixels_cols, src_model.pixels_rows)));
 
-        struct LocalMatch
-        {
-            size_t src_id, dst_id;
-        };
-        std::vector<LocalMatch> local_matches;
-
-        auto camera_searcher = camera_tree.searcher();
+        local_matches.clear();
+        p_image.reset("");
 
         for (size_t src_slot : order)
         {
+            PerformanceMeasure p_feature("Dense match intersect");
             const size_t global_fi = src_features.imageIndex(src_slot);
             const Eigen::Vector2d &src_location = src_features.location(src_slot);
 
@@ -445,14 +453,20 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
             if (surface_index == searchers.size())
                 continue;
 
-            const Eigen::Vector3d pt3d = searchers[surface_index].lastResult().intersectionLocation;
-            if (!surfaceVisibleFrom(sightlines, pt3d, src_pos))
+            const MeshIntersectionSearcher::IntersectionInfo hit = searchers[surface_index].lastResult();
+            const Eigen::Vector3d &pt3d = hit.intersectionLocation;
+            if ((pt3d - r.offset).dot(r.dir) <= 0)
+                continue;
+            p_feature.reset("Dense match source visibility");
+            if (!surfaceVisibleFrom(sightlines, surface_index, hit, src_pos))
                 continue;
             size_t src_id = measurementId(src_nid, global_fi);
             measurement_surface[src_id] = surface_index;
 
-            auto candidates = camera_searcher.search({pt3d.x(), pt3d.y(), pt3d.z()}, std::numeric_limits<double>::max(),
+            p_feature.reset("Dense match camera search");
+            const auto &candidates = camera_searcher.search({pt3d.x(), pt3d.y(), pt3d.z()}, std::numeric_limits<double>::max(),
                                                      MAX_CANDIDATE_IMAGES + 1);
+            p_feature.reset("");
 
             for (const auto &candidate : candidates)
             {
@@ -466,6 +480,7 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
                 const auto &cand_pos = cand_img.position;
                 const auto &cand_ori = cand_img.orientation;
 
+                PerformanceMeasure p_candidate("Dense match project");
                 Eigen::Vector2d predicted = image_from_3d(pt3d, cand_model, cand_pos, cand_ori);
 
                 if (predicted.x() < 0 || predicted.x() >= cand_model.pixels_cols || predicted.y() < 0 ||
@@ -479,16 +494,19 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
                     continue;
 
                 const CellSortedFeatures &cand = *cand_features->second;
+                p_candidate.reset("Dense match forward ratio test");
                 const size_t slot = cand.ratioTestMatchSlotNear(src_features.descriptor(src_slot), predicted);
                 if (slot == CellSortedFeatures::NO_MATCH)
                     continue;
 
+                p_candidate.reset("Dense match back ratio test");
                 const Eigen::Vector2d candidate_in_source_image = src_location + (cand.location(slot) - predicted);
                 const size_t back =
                     src_features.ratioTestMatchSlotNear(cand.descriptor(slot), candidate_in_source_image);
                 const bool mutual_best_match =
                     back != CellSortedFeatures::NO_MATCH && src_features.imageIndex(back) == global_fi;
-                if (mutual_best_match && surfaceVisibleFrom(sightlines, pt3d, cand_pos))
+                p_candidate.reset("Dense match candidate visibility");
+                if (mutual_best_match && surfaceVisibleFrom(sightlines, surface_index, hit, cand_pos))
                 {
                     local_matches.push_back({src_id, measurementId(cand_nid, cand.imageIndex(slot))});
                 }
@@ -497,6 +515,7 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
 
         if (!local_matches.empty())
         {
+            PerformanceMeasure p_union("Dense match union");
             std::lock_guard<std::mutex> lock(uf_mutex);
             for (const auto &lm : local_matches)
             {
@@ -510,6 +529,7 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
             std::lock_guard<std::mutex> lock(progress_mutex);
             progress_cb(static_cast<float>(done) / static_cast<float>(num_nodes));
         }
+    }
     }
 
     spdlog::info("Dense: matched {} images in {:.1f}s", node_ids.size(), lapSeconds());
@@ -526,14 +546,13 @@ void densifyMesh(const MeasurementGraph &graph, std::vector<surface_model> &surf
 
     const double max_reproj_err_sq = MAX_REPROJECTION_ERROR_PIXELS * MAX_REPROJECTION_ERROR_PIXELS;
 
-    auto hasMultipleFeaturesFromOneImage = [&id_to_measurement](const std::vector<size_t> &ids) {
-        ankerl::unordered_dense::set<size_t> track_nodes;
+    std::vector<size_t> track_nodes;
+    auto hasMultipleFeaturesFromOneImage = [&id_to_measurement, &track_nodes](const std::vector<size_t> &ids) {
+        track_nodes.clear();
         for (size_t id : ids)
-        {
-            if (!track_nodes.insert(id_to_measurement[id].node_id).second)
-                return true;
-        }
-        return false;
+            track_nodes.push_back(id_to_measurement[id].node_id);
+        std::sort(track_nodes.begin(), track_nodes.end());
+        return std::adjacent_find(track_nodes.begin(), track_nodes.end()) != track_nodes.end();
     };
 
     size_t num_tracks_built = 0;
