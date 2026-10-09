@@ -1,7 +1,7 @@
 #include <opencalibration/ortho/color_balance.hpp>
 #include <opencalibration/ortho/radiometric_cost.hpp>
 
-#include <ceres/autodiff_cost_function.h>
+#include <opencalibration/relax/padded_autodiff_cost_function.hpp>
 #include <ceres/loss_function.h>
 #include <ceres/problem.h>
 #include <ceres/solver.h>
@@ -28,7 +28,7 @@ constexpr double VIEW_DIR_PRIOR_FRACTION = 1e-3;
 template <int N>
 void addPrior(ceres::Problem &problem, double *params, double weight, const std::array<double, N> &target = {})
 {
-    problem.AddResidualBlock(new ceres::AutoDiffCostFunction<TargetPrior<N>, N, N>(new TargetPrior<N>{weight, target}),
+    problem.AddResidualBlock(new PaddedAutoDiffCostFunction<TargetPrior<N>, N, N>(new TargetPrior<N>{weight, target}),
                              nullptr, params);
 }
 
@@ -107,7 +107,7 @@ ColorBalanceResult solveColorBalance(const std::vector<ColorCorrespondence> &cor
 
         if (corr.model_id_a == corr.model_id_b)
         {
-            auto *cost = new ceres::AutoDiffCostFunction<RadiometricMatchCostSharedVig, 3, 1, 2, 2, 1, 2, 2, 3, 2>(
+            auto *cost = new PaddedAutoDiffCostFunction<RadiometricMatchCostSharedVig, 3, 1, 2, 2, 1, 2, 2, 3, 2>(
                 new RadiometricMatchCostSharedVig(corr));
             problem.AddResidualBlock(cost, new ceres::HuberLoss(LAB_MATCH_HUBER_SCALE), &a.log_cbrt_exposure,
                                      a.ab_offset.data(), a.slope.data(), &b.log_cbrt_exposure, b.ab_offset.data(),
@@ -115,7 +115,7 @@ ColorBalanceResult solveColorBalance(const std::vector<ColorCorrespondence> &cor
         }
         else
         {
-            auto *cost = new ceres::AutoDiffCostFunction<RadiometricMatchCost, 3, 1, 2, 2, 3, 1, 2, 2, 3, 2>(
+            auto *cost = new PaddedAutoDiffCostFunction<RadiometricMatchCost, 3, 1, 2, 2, 3, 1, 2, 2, 3, 2>(
                 new RadiometricMatchCost(corr));
             problem.AddResidualBlock(cost, new ceres::HuberLoss(LAB_MATCH_HUBER_SCALE), &a.log_cbrt_exposure,
                                      a.ab_offset.data(), a.slope.data(), vig_a, &b.log_cbrt_exposure,

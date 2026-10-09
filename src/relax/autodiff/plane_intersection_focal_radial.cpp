@@ -1,6 +1,6 @@
 #include <opencalibration/relax/autodiff_cost_function.hpp>
 
-#include <ceres/autodiff_cost_function.h>
+#include <opencalibration/relax/padded_autodiff_cost_function.hpp>
 #include <opencalibration/relax/relax_cost_function.hpp>
 
 namespace opencalibration
@@ -12,7 +12,7 @@ ceres::CostFunction *newAutoDiffPlaneIntersectionAngleCost_FocalRadial(
 {
     using Functor = PlaneIntersectionAngleCost_OrientationFocalRadial_SharedModel;
     using CostFunction =
-        ceres::AutoDiffCostFunction<Functor, Functor::NUM_RESIDUALS, Functor::NUM_PARAMETERS_1,
+        PaddedAutoDiffCostFunction<Functor, Functor::NUM_RESIDUALS, Functor::NUM_PARAMETERS_1,
                                     Functor::NUM_PARAMETERS_2, Functor::NUM_PARAMETERS_3, Functor::NUM_PARAMETERS_4,
                                     Functor::NUM_PARAMETERS_5, Functor::NUM_PARAMETERS_6, Functor::NUM_PARAMETERS_7,
                                     Functor::NUM_PARAMETERS_8>;
@@ -27,7 +27,7 @@ ceres::CostFunction *newAutoDiffPlaneIntersectionAngleCost_FocalRadial_FixedPosi
 {
     using Functor = PlaneIntersectionAngleCost_OrientationFocalRadial_SharedModel_FixedPositions;
     using CostFunction =
-        ceres::AutoDiffCostFunction<Functor, Functor::NUM_RESIDUALS, Functor::NUM_PARAMETERS_1,
+        PaddedAutoDiffCostFunction<Functor, Functor::NUM_RESIDUALS, Functor::NUM_PARAMETERS_1,
                                     Functor::NUM_PARAMETERS_2, Functor::NUM_PARAMETERS_3, Functor::NUM_PARAMETERS_4,
                                     Functor::NUM_PARAMETERS_5, Functor::NUM_PARAMETERS_6, Functor::NUM_PARAMETERS_7,
                                     Functor::NUM_PARAMETERS_8>;

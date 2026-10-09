@@ -1,5 +1,6 @@
 #include <opencalibration/distort/distort_keypoints.hpp>
 #include <opencalibration/relax/autodiff_cost_function.hpp>
+#include <opencalibration/relax/padded_autodiff_cost_function.hpp>
 #include <opencalibration/relax/relax_cost_function.hpp>
 
 #include <ceres/ceres.h>
@@ -454,4 +455,59 @@ TEST(cost_functions, pixel_from_projected_ray_jet_matches_finite_differences)
             EXPECT_NEAR(jet_pixel[i].v[parameter], numeric[i], 1e-4 * (1 + std::abs(numeric[i])))
                 << "parameter " << parameter << " pixel axis " << i;
     }
+}
+
+namespace
+{
+struct MixedBlocksCost
+{
+    template <typename T> bool operator()(const T *a, const T *b, T *residuals) const
+    {
+        residuals[0] = a[0] * b[0] + a[2] * b[1];
+        residuals[1] = a[1] * a[1] - b[0] * b[1];
+        return true;
+    }
+};
+} // namespace
+
+TEST(cost_functions, padded_autodiff_matches_plain_autodiff)
+{
+    // GIVEN: parameter blocks of 3 and 2 doubles, whose Jet width of 5 needs padding to a whole SIMD packet
+    using Plain = ceres::AutoDiffCostFunction<MixedBlocksCost, 2, 3, 2>;
+    using Padded = PaddedAutoDiffCostFunction<MixedBlocksCost, 2, 3, 2>;
+    static_assert(!std::is_same_v<Plain, Padded>);
+    Plain plain(new MixedBlocksCost);
+    Padded padded(new MixedBlocksCost);
+    const double a[3] = {1.5, -2.0, 0.5};
+    const double b[2] = {3.0, -1.0};
+    const double *parameters[2] = {a, b};
+
+    // WHEN: both are evaluated with jacobians
+    double plain_residuals[2], padded_residuals[2];
+    double plain_jacobian_a[6], plain_jacobian_b[4], padded_jacobian_a[6], padded_jacobian_b[4];
+    double *plain_jacobians[2] = {plain_jacobian_a, plain_jacobian_b};
+    double *padded_jacobians[2] = {padded_jacobian_a, padded_jacobian_b};
+    ASSERT_TRUE(plain.Evaluate(parameters, plain_residuals, plain_jacobians));
+    ASSERT_TRUE(padded.Evaluate(parameters, padded_residuals, padded_jacobians));
+
+    // THEN: residuals and jacobians are identical, and residuals alone can also be evaluated
+    for (int i = 0; i < 2; i++)
+        EXPECT_DOUBLE_EQ(plain_residuals[i], padded_residuals[i]);
+    for (int i = 0; i < 6; i++)
+        EXPECT_DOUBLE_EQ(plain_jacobian_a[i], padded_jacobian_a[i]);
+    for (int i = 0; i < 4; i++)
+        EXPECT_DOUBLE_EQ(plain_jacobian_b[i], padded_jacobian_b[i]);
+    double residuals_only[2];
+    ASSERT_TRUE(padded.Evaluate(parameters, residuals_only, nullptr));
+    EXPECT_DOUBLE_EQ(plain_residuals[0], residuals_only[0]);
+}
+
+TEST(cost_functions, autodiff_is_not_padded_when_jets_already_fill_packets_or_are_narrow)
+{
+    // GIVEN/WHEN: parameter widths of 4 (already a whole packet) and 2 (too narrow to vectorize)
+    // THEN: the plain ceres cost function is used
+    static_assert(std::is_same_v<PaddedAutoDiffCostFunction<MixedBlocksCost, 2, 3, 1>,
+                                 ceres::AutoDiffCostFunction<MixedBlocksCost, 2, 3, 1>>);
+    static_assert(std::is_same_v<PaddedAutoDiffCostFunction<MixedBlocksCost, 2, 1, 1>,
+                                 ceres::AutoDiffCostFunction<MixedBlocksCost, 2, 1, 1>>);
 }

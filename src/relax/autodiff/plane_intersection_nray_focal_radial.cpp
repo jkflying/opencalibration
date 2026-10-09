@@ -1,6 +1,6 @@
 #include <opencalibration/relax/autodiff_cost_function.hpp>
 
-#include <ceres/autodiff_cost_function.h>
+#include <opencalibration/relax/padded_autodiff_cost_function.hpp>
 #include <opencalibration/relax/relax_cost_function.hpp>
 
 namespace opencalibration
@@ -16,7 +16,7 @@ template <int N, typename V> std::array<V, N> firstN(const std::vector<V> &value
 
 template <typename F, int... PoseSizes> ceres::CostFunction *autoDiff(F *functor)
 {
-    return new ceres::AutoDiffCostFunction<F, F::NUM_RESIDUALS, 1, 1, 1, 1, 2, 3, PoseSizes...>(functor);
+    return new PaddedAutoDiffCostFunction<F, F::NUM_RESIDUALS, 1, 1, 1, 1, 2, 3, PoseSizes...>(functor);
 }
 
 template <int N>
