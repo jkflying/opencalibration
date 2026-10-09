@@ -30,22 +30,14 @@ bool segmentsIntersect(const Eigen::Vector2d &p1, const Eigen::Vector2d &p2, con
         return false;
     }
 
-    // Compute cross products to determine orientation
-    auto cross = [](const Eigen::Vector2d &o, const Eigen::Vector2d &a, const Eigen::Vector2d &b) {
-        return (a.x() - o.x()) * (b.y() - o.y()) - (a.y() - o.y()) * (b.x() - o.x());
+    const double tolerance = 1e-9 * (p2 - p1).norm() * (p4 - p3).norm();
+    auto orientation = [tolerance](const Eigen::Vector2d &o, const Eigen::Vector2d &a, const Eigen::Vector2d &b) {
+        const double cross = (a.x() - o.x()) * (b.y() - o.y()) - (a.y() - o.y()) * (b.x() - o.x());
+        return (cross > tolerance) - (cross < -tolerance);
     };
 
-    double d1 = cross(p3, p4, p1);
-    double d2 = cross(p3, p4, p2);
-    double d3 = cross(p1, p2, p3);
-    double d4 = cross(p1, p2, p4);
-
-    if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0)))
-    {
-        return true;
-    }
-
-    return false;
+    return orientation(p3, p4, p1) * orientation(p3, p4, p2) < 0 &&
+           orientation(p1, p2, p3) * orientation(p1, p2, p4) < 0;
 }
 
 // Helper to validate mesh has no crossing edges

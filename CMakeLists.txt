@@ -58,7 +58,7 @@ if(MSVC)
 else()
     set (CMAKE_CXX_FLAGS " -Wall -Wextra -pedantic -Werror -fno-omit-frame-pointer")
     if (CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64")
-        add_compile_options(-march=x86-64-v2)
+        add_compile_options(-march=x86-64-v3)
     endif()
     set(CMAKE_CXX_FLAGS_COVERAGE "--coverage -fprofile-arcs -ftest-coverage -Og -g -fprofile-abs-path -fprofile-update=atomic"
                     CACHE STRING "Flags used by the C++ compiler during coverage builds" FORCE)
