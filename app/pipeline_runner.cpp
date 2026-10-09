@@ -34,7 +34,6 @@ int main(int argc, char *argv[])
     bool print_help = false;
 
     std::string geojson_file = "";
-    std::string serialized_graph_file = "";
     std::string pointcloud_file = "";
     std::string mesh_file = "";
     std::string geotiff_file = "";
@@ -68,7 +67,6 @@ int main(int argc, char *argv[])
     args.addArgument({"-h", "--help"}, &print_help, "Show this help message");
 
     args.addArgument({"-g", "--geojson-file"}, &geojson_file, "Output GeoJSON camera graph file");
-    args.addArgument({"--graph-file"}, &serialized_graph_file, "Output serialized camera graph file");
     args.addArgument({"-p", "--pointcloud-file"}, &pointcloud_file, "Output pointcloud XYZ CSV file");
     args.addArgument({"-m", "--mesh-file"}, &mesh_file, "Output mesh PLY file");
     args.addArgument({"-o", "--geotiff-file"}, &geotiff_file, "Output georeferenced GeoTIFF orthomosaic");
@@ -358,14 +356,6 @@ int main(int argc, char *argv[])
         std::ofstream output;
         output.open(geojson_file, std::ios::binary);
         toVisualizedGeoJson(p.getGraph(), to_wgs84, output);
-        output.close();
-    }
-
-    if (serialized_graph_file.size() > 0)
-    {
-        std::ofstream output;
-        output.open(serialized_graph_file, std::ios::binary);
-        serialize(p.getGraph(), output);
         output.close();
     }
 

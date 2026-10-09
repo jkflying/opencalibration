@@ -1,6 +1,5 @@
 set(EXPECTED_FILES
     test_data.geojson
-    test_data.json
     test_data.xyz
     test_data.ply
     test_data_ortho.tif

@@ -78,7 +78,7 @@ add_custom_target(test
                   COMMAND ${CMAKE_BINARY_DIR}/test/functional_tests
                   COMMAND ${CMAKE_BINARY_DIR}/app/pipeline_runner -i "${CMAKE_CURRENT_SOURCE_DIR}/test_data/"
                     -d 4 --ortho-max-megapixels 0.1
-                    -g test_data.geojson --graph-file test_data.json
+                    -g test_data.geojson
                     -p test_data.xyz -m test_data.ply
                     -o test_data_ortho.tif --dsm-file test_data_dsm.tif
                     -x test_data_textured.obj
