@@ -61,5 +61,13 @@
       "tangential_distortion": [-0.000010202681626136234, -5.386426685489021e-7],
       "principal_point_offset": [17.361911943503175, -15.2692149982322],
       "focal_length_pixels": 3034.282756692746
+    }, {
+      "make": "SONY",
+      "model": "DSC-WX220",
+      "lens_model": "",
+      "sensor_width_px": 4896,
+      "sensor_height_px": 3672,
+      "focal_length_pixels": 3491.5,
+      "notes": "Sony WX220 (senseFly eBee). Nominal from 4.4mm lens on 6.17mm-wide 1/2.3in sensor, refined during solve."
     }]
 }

@@ -5,8 +5,25 @@
 
 #include <spdlog/spdlog.h>
 
+#include <cmath>
+
 namespace opencalibration
 {
+
+namespace
+{
+
+const char *unusableReason(const image &img)
+{
+    const auto &capture = img.metadata.capture_info;
+    if (!std::isfinite(capture.latitude) || !std::isfinite(capture.longitude) || !std::isfinite(capture.altitude))
+        return "no GPS position";
+    if (!(img.model->focal_length_pixels > 0))
+        return "unknown focal length, add the camera to the camera database";
+    return nullptr;
+}
+
+} // namespace
 
 void LoadStage::init(const MeasurementGraph &graph, const std::vector<std::string> &paths_to_load)
 {
@@ -81,6 +98,11 @@ std::vector<size_t> LoadStage::finalize(GeoCoord &coordinate_system, Measurement
     for (auto &p : _images)
     {
         auto &img = p.second;
+        if (const char *reason = unusableReason(img))
+        {
+            spdlog::warn("Skipping {}: {}", img.path, reason);
+            continue;
+        }
         if (!coordinate_system.isInitialized())
         {
             coordinate_system.setOrigin(img.metadata.capture_info.latitude, img.metadata.capture_info.longitude);

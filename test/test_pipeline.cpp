@@ -3,6 +3,7 @@
 #include <opencalibration/ortho/gdal_dataset.hpp>
 
 #include <gtest/gtest.h>
+#include <opencv2/imgcodecs.hpp>
 
 #include <chrono>
 #include <cstdint>
@@ -57,6 +58,25 @@ TEST(pipeline, batch_size_zero_still_processes_images)
 
     // THEN: every image is loaded
     EXPECT_EQ(p.getGraph().size_nodes(), 4u);
+}
+
+TEST(pipeline, skips_image_without_gps)
+{
+    // GIVEN: the four images plus a copy of one with all EXIF stripped
+    const std::string no_gps = TEST_DATA_OUTPUT_DIR "pipeline_no_gps.jpg";
+    cv::imwrite(no_gps, cv::imread(kFourImages[0]));
+    std::vector<std::string> paths = kFourImages;
+    paths.push_back(no_gps);
+    Pipeline p(2);
+    p.set_skip_camera_param_relax(true);
+
+    // WHEN: we run to completion
+    p.add(paths);
+    runToCompletion(p);
+
+    // THEN: the image without GPS is skipped and the rest still produce a surface
+    EXPECT_EQ(p.getGraph().size_nodes(), 4u);
+    EXPECT_FALSE(p.getSurfaces().empty());
 }
 
 #include <filesystem>
