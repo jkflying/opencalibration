@@ -382,6 +382,39 @@ TEST(meshgraph, line_of_sight_along_cell_boundaries_is_blocked)
         }
 }
 
+TEST(meshgraph, line_of_sight_from_known_hit_matches_height_lookup)
+{
+    // GIVEN: rough terrain, and surface points found by intersecting rays with it
+    MeshGraph g = roughMesh();
+    MeshLineOfSight fromHit, fromXY;
+    ASSERT_TRUE(fromHit.init(g));
+    ASSERT_TRUE(fromXY.init(g));
+    MeshIntersectionSearcher s;
+    ASSERT_TRUE(s.init(g));
+    std::mt19937 rng(42);
+    std::uniform_real_distribution<double> horizontal(-20, 20), height(25, 80);
+
+    // WHEN: visibility from random viewpoints is checked from the known hit and from its xy location
+    int checked = 0, hidden = 0, disagree = 0;
+    for (int i = 0; i < 2000; i++)
+    {
+        const ray_d down{{0, 0, -1}, {horizontal(rng), horizontal(rng), 100}};
+        const auto hit = s.triangleIntersect(down);
+        const Eigen::Vector3d viewpoint(horizontal(rng), horizontal(rng), height(rng));
+        if (hit.type != MeshIntersectionSearcher::IntersectionInfo::INTERSECTION)
+            continue;
+        checked++;
+        const bool visible = fromXY.surfaceVisibleFrom(hit.intersectionLocation.head<2>(), viewpoint);
+        hidden += !visible;
+        disagree += visible != fromHit.surfaceVisibleFrom(hit, viewpoint);
+    }
+
+    // THEN: both agree on every point, and some points are hidden
+    EXPECT_GT(checked, 1000);
+    EXPECT_GT(hidden, 50);
+    EXPECT_EQ(disagree, 0);
+}
+
 TEST(meshgraph, oblique_walk_does_not_cycle_on_rough_terrain)
 {
     // GIVEN: rolling terrain, and oblique rays from above which must all hit it

@@ -60,6 +60,11 @@ bool MeshIntersectionSearcher::reinit()
     return init(*_meshGraph, _lastIntersection);
 }
 
+bool MeshIntersectionSearcher::reinit(const IntersectionInfo &info)
+{
+    return _meshGraph != nullptr && init(*_meshGraph, info);
+}
+
 namespace
 {
 using Info = MeshIntersectionSearcher::IntersectionInfo;
@@ -562,7 +567,21 @@ bool MeshLineOfSight::surfaceVisibleFrom(const Eigen::Vector2d &xy, const Eigen:
     if (std::isnan(z))
         return true;
 
-    const Eigen::Vector3d origin(xy.x(), xy.y(), z);
+    return visibleFromSurfacePoint({xy.x(), xy.y(), z}, _searcher.lastResult(), viewpoint);
+}
+
+bool MeshLineOfSight::surfaceVisibleFrom(const MeshIntersectionSearcher::IntersectionInfo &surfaceHit,
+                                         const Eigen::Vector3d &viewpoint)
+{
+    if (!(_marchStep > 0))
+        return true;
+    return visibleFromSurfacePoint(surfaceHit.intersectionLocation, surfaceHit, viewpoint);
+}
+
+bool MeshLineOfSight::visibleFromSurfacePoint(const Eigen::Vector3d &origin,
+                                              const MeshIntersectionSearcher::IntersectionInfo &originTriangle,
+                                              const Eigen::Vector3d &viewpoint)
+{
     const Eigen::Vector3d toViewpoint = viewpoint - origin;
     const double horizontalDistance = toViewpoint.head<2>().norm();
     if (toViewpoint.z() <= 0 || horizontalDistance == 0)
@@ -570,7 +589,10 @@ bool MeshLineOfSight::surfaceVisibleFrom(const Eigen::Vector2d &xy, const Eigen:
 
     const ShadowRay ray{origin, toViewpoint.head<2>() / horizontalDistance, toViewpoint.z() / horizontalDistance};
     const double tMax = std::min(horizontalDistance, (_maxSurfaceZ - origin.z()) / ray.gradient);
-    return traceUnoccluded(ray, tMax, 1e-6 * toViewpoint.norm());
+    const MeshIntersectionSearcher::IntersectionInfo start = originTriangle;
+    const bool visible = traceUnoccluded(ray, tMax, 1e-6 * toViewpoint.norm());
+    static_cast<void>(_searcher.reinit(start));
+    return visible;
 }
 
 std::vector<MeshLineOfSight> sightlinesOver(const std::vector<surface_model> &surfaces)
@@ -587,5 +609,15 @@ bool surfaceVisibleFrom(std::vector<MeshLineOfSight> &sightlines, const Eigen::V
 {
     return std::all_of(sightlines.begin(), sightlines.end(),
                        [&](auto &sightline) { return sightline.surfaceVisibleFrom(point.head<2>(), viewpoint); });
+}
+
+bool surfaceVisibleFrom(std::vector<MeshLineOfSight> &sightlines, size_t hitSurface,
+                        const MeshIntersectionSearcher::IntersectionInfo &surfaceHit, const Eigen::Vector3d &viewpoint)
+{
+    for (size_t si = 0; si < sightlines.size(); si++)
+        if (!(si == hitSurface ? sightlines[si].surfaceVisibleFrom(surfaceHit, viewpoint)
+                               : sightlines[si].surfaceVisibleFrom(surfaceHit.intersectionLocation.head<2>(), viewpoint)))
+            return false;
+    return true;
 }
 } // namespace opencalibration

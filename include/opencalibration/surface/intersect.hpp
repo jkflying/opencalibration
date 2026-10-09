@@ -38,6 +38,8 @@ class MeshIntersectionSearcher
 
     [[nodiscard]] bool reinit();
 
+    [[nodiscard]] bool reinit(const IntersectionInfo &info);
+
     // Faster if called consecutively with rays that intersect the mesh near to each other
     // Note: not threadsafe, use one instance of MeshIntersectionSearcher per thread
     const IntersectionInfo &triangleIntersect(const ray_d &r);
@@ -63,10 +65,16 @@ class MeshLineOfSight
 
     bool surfaceVisibleFrom(const Eigen::Vector2d &xy, const Eigen::Vector3d &viewpoint);
 
+    bool surfaceVisibleFrom(const MeshIntersectionSearcher::IntersectionInfo &surfaceHit,
+                            const Eigen::Vector3d &viewpoint);
+
   private:
     struct MaxMipmap;
     struct ShadowRay;
 
+    bool visibleFromSurfacePoint(const Eigen::Vector3d &origin,
+                                 const MeshIntersectionSearcher::IntersectionInfo &originTriangle,
+                                 const Eigen::Vector3d &viewpoint);
     bool traceUnoccluded(const ShadowRay &ray, double tMax, double epsilon);
     bool marchUnoccluded(const ShadowRay &ray, double tStart, double tEnd, double epsilon);
 
@@ -80,4 +88,7 @@ std::vector<MeshLineOfSight> sightlinesOver(const std::vector<surface_model> &su
 
 bool surfaceVisibleFrom(std::vector<MeshLineOfSight> &sightlines, const Eigen::Vector3d &point,
                         const Eigen::Vector3d &viewpoint);
+
+bool surfaceVisibleFrom(std::vector<MeshLineOfSight> &sightlines, size_t hitSurface,
+                        const MeshIntersectionSearcher::IntersectionInfo &surfaceHit, const Eigen::Vector3d &viewpoint);
 } // namespace opencalibration
