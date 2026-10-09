@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstdint>
 #include <string>
 
 namespace opencalibration
@@ -27,8 +28,10 @@ class PerformanceMeasure
     void initialize(const Literal &key);
     void finalize();
     bool _running = false;
-    std::string_view _key;
-    std::chrono::time_point<std::chrono::high_resolution_clock> _start;
+    int _node = -1;
+    PerformanceMeasure *_parent = nullptr;
+    int64_t _child_ns = 0;
+    std::chrono::time_point<std::chrono::steady_clock> _start;
 };
 
 void EnablePerformanceCounters(bool enable);

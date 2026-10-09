@@ -46,6 +46,7 @@ add_executable(unit_tests gtest_main.cpp
                           test_match_unit.cpp
                           test_meshgraph.cpp
                           test_ortho.cpp
+                          test_performance.cpp
                           test_ransac_benchmark.cpp
                           test_ransac_unit.cpp
                           test_raster.cpp
