@@ -381,3 +381,51 @@ TEST(meshgraph, line_of_sight_along_cell_boundaries_is_blocked)
             EXPECT_TRUE(sight.surfaceVisibleFrom({x, y}, {15, 0, 40})) << x << "," << y;
         }
 }
+
+TEST(meshgraph, oblique_walk_does_not_cycle_on_rough_terrain)
+{
+    // GIVEN: rolling terrain, and oblique rays from above which must all hit it
+    MeshGraph g = ridgeMesh(0);
+    for (auto it = g.nodebegin(); it != g.nodeend(); ++it)
+    {
+        Eigen::Vector3d &location = it->second.payload.location;
+        location.z() = 6 * std::sin(location.x() / 3) * std::cos(location.y() / 4);
+    }
+    MeshIntersectionSearcher s;
+    ASSERT_TRUE(s.init(g));
+    std::mt19937 rng(7);
+    std::uniform_real_distribution<double> horizontal(-15, 15), tilt(-0.5, 0.5);
+
+    // WHEN: we walk to each ray in turn
+    int cycles = 0, misses = 0;
+    for (int i = 0; i < 5000; i++)
+    {
+        const ray_d r{Eigen::Vector3d(tilt(rng), tilt(rng), -1).normalized(), {horizontal(rng), horizontal(rng), 100}};
+        const auto type = s.triangleIntersect(r).type;
+        cycles += type == MeshIntersectionSearcher::IntersectionInfo::MAX_STEPS_EXCEEDED;
+        misses += type != MeshIntersectionSearcher::IntersectionInfo::INTERSECTION;
+    }
+
+    // THEN: every ray finds its intersection without hitting the step limit
+    EXPECT_EQ(cycles, 0);
+    EXPECT_EQ(misses, 0);
+}
+
+TEST(meshgraph, oblique_walk_returns_first_crossing)
+{
+    // GIVEN: a 30m ridge, and a searcher whose last hit is on the ground behind it
+    MeshGraph g = ridgeMesh(30);
+    MeshIntersectionSearcher s;
+    ASSERT_TRUE(s.init(g));
+    ASSERT_EQ(s.triangleIntersect({{0, 0, -1}, {4, 2, 40}}).type,
+              MeshIntersectionSearcher::IntersectionInfo::INTERSECTION);
+
+    // WHEN: a camera in front of the ridge looks through it at that ground
+    const Eigen::Vector3d camera(-15, 0, 40);
+    const auto &result = s.triangleIntersect({(Eigen::Vector3d(4, 2, 0) - camera).normalized(), camera});
+
+    // THEN: the ray stops on the near face of the ridge
+    ASSERT_EQ(result.type, MeshIntersectionSearcher::IntersectionInfo::INTERSECTION);
+    EXPECT_GT(result.intersectionLocation.x(), -1.5);
+    EXPECT_LT(result.intersectionLocation.x(), 0);
+}

@@ -52,8 +52,6 @@ class MeshIntersectionSearcher
     const MeshGraph *_meshGraph = nullptr;
     IntersectionInfo _info;
     IntersectionInfo _lastIntersection;
-
-    std::vector<size_t> _keepNodes;
 };
 
 class MeshLineOfSight

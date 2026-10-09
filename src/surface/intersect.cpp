@@ -1,7 +1,6 @@
 #include <opencalibration/surface/intersect.hpp>
 
 #include <opencalibration/geometry/intersection.hpp>
-#include <opencalibration/geometry/utils.hpp>
 
 #include <spdlog/spdlog.h>
 
@@ -61,117 +60,238 @@ bool MeshIntersectionSearcher::reinit()
     return init(*_meshGraph, _lastIntersection);
 }
 
+namespace
+{
+using Info = MeshIntersectionSearcher::IntersectionInfo;
+
+double orient2d(const Eigen::Vector2d &p, const Eigen::Vector2d &q, const Eigen::Vector2d &x)
+{
+    return (q.x() - p.x()) * (x.y() - p.y()) - (q.y() - p.y()) * (x.x() - p.x());
+}
+
+Eigen::Vector2d cornerXY(const Info &info, int i)
+{
+    return info.nodeLocations[i % 3]->head<2>();
+}
+
+void makeAnticlockwise(Info &info)
+{
+    if (orient2d(cornerXY(info, 0), cornerXY(info, 1), cornerXY(info, 2)) < 0)
+    {
+        std::swap(info.nodeIndexes[0], info.nodeIndexes[1]);
+        std::swap(info.nodeLocations[0], info.nodeLocations[1]);
+    }
+}
+
+bool crossEdge(const MeshGraph &meshGraph, Info &info, int edgeIndex, size_t maxSteps)
+{
+    const size_t a = info.nodeIndexes[edgeIndex], b = info.nodeIndexes[(edgeIndex + 1) % 3];
+    const MeshGraph::Edge *edge = meshGraph.getEdge(a, b);
+    if (edge == nullptr)
+        edge = meshGraph.getEdge(b, a);
+    if (edge == nullptr)
+    {
+        info.type = Info::GRAPH_STRUCTURE_INCONSISTENT;
+        return false;
+    }
+    if (edge->payload.border)
+    {
+        info.type = Info::OUTSIDE_BORDER;
+        return false;
+    }
+
+    const int replaced = (edgeIndex + 2) % 3;
+    const auto &opposite = edge->payload.triangleOppositeNodes;
+    if (opposite[0] == info.nodeIndexes[replaced])
+        info.nodeIndexes[replaced] = opposite[1];
+    else if (opposite[1] == info.nodeIndexes[replaced])
+        info.nodeIndexes[replaced] = opposite[0];
+    else
+    {
+        info.type = Info::GRAPH_STRUCTURE_INCONSISTENT;
+        return false;
+    }
+    info.nodeLocations[replaced] = &meshGraph.getNode(info.nodeIndexes[replaced])->payload.location;
+
+    if (++info.steps > maxSteps)
+    {
+        info.type = Info::MAX_STEPS_EXCEEDED;
+        return false;
+    }
+    return true;
+}
+int exitEdgeTowards(const Info &info, const Eigen::Vector2d &from, const Eigen::Vector2d &to)
+{
+    const auto isOutside = [&](int i) { return orient2d(cornerXY(info, i), cornerXY(info, i + 1), to) < 0; };
+    for (int i = 0; i < 3; i++)
+        if (isOutside(i) && orient2d(from, to, cornerXY(info, i)) * orient2d(from, to, cornerXY(info, i + 1)) <= 0)
+            return i;
+    for (int i = 0; i < 3; i++)
+        if (isOutside(i))
+            return i;
+    return -1;
+}
+
+struct EdgeSpan
+{
+    double enter = -INFINITY, exit = INFINITY;
+    int enterEdge = -1, exitEdge = -1;
+};
+
+EdgeSpan spanAlong(const Info &info, const Eigen::Vector2d &origin, const Eigen::Vector2d &dir)
+{
+    EdgeSpan span;
+    for (int i = 0; i < 3; i++)
+    {
+        const Eigen::Vector2d p = cornerXY(info, i), q = cornerXY(info, i + 1);
+        const double rate = (q - p).x() * dir.y() - (q - p).y() * dir.x();
+        const double t = -orient2d(p, q, origin) / rate;
+        if (rate > 0 && t > span.enter)
+        {
+            span.enter = t;
+            span.enterEdge = i;
+        }
+        if (rate < 0 && t < span.exit)
+        {
+            span.exit = t;
+            span.exitEdge = i;
+        }
+    }
+    return span;
+}
+
+struct TrianglePlane
+{
+    explicit TrianglePlane(const Info &info)
+        : corner(*info.nodeLocations[0]),
+          normal((*info.nodeLocations[1] - corner).cross(*info.nodeLocations[2] - corner))
+    {
+    }
+
+    double heightAbove(const Eigen::Vector3d &x) const
+    {
+        return normal.dot(x - corner) / normal.z();
+    }
+
+    Eigen::Vector3d corner, normal;
+};
+
+bool walkToRayLine(const MeshGraph &meshGraph, Info &info, const Eigen::Vector2d &from, const Eigen::Vector2d &to,
+                   size_t maxSteps)
+{
+    while (true)
+    {
+        makeAnticlockwise(info);
+        const int exitEdge = exitEdgeTowards(info, from, to);
+        if (exitEdge < 0)
+            return true;
+        if (!crossEdge(meshGraph, info, exitEdge, maxSteps))
+            return false;
+    }
+}
+
+bool walkDownhillAlongRay(const MeshGraph &meshGraph, Info &info, const Eigen::Vector3d &onRay,
+                          const Eigen::Vector3d &downhill, size_t maxSteps)
+{
+    while (true)
+    {
+        makeAnticlockwise(info);
+        const EdgeSpan span = spanAlong(info, onRay.head<2>(), downhill.head<2>());
+        if (span.enterEdge < 0 || span.exitEdge < 0)
+            return true;
+
+        const TrianglePlane plane(info);
+        const double heightIn = plane.heightAbove(onRay + span.enter * downhill);
+        const double heightOut = plane.heightAbove(onRay + span.exit * downhill);
+        const int nextEdge = heightIn > 0 && heightOut > 0   ? span.exitEdge
+                             : heightIn < 0 && heightOut < 0 ? span.enterEdge
+                                                             : -1;
+        if (nextEdge < 0)
+            return true;
+        if (!crossEdge(meshGraph, info, nextEdge, maxSteps))
+            return false;
+    }
+}
+
+bool intersectTrianglePlane(const ray_d &r, Info &info)
+{
+    plane_3_corners_d plane;
+    for (size_t i = 0; i < 3; i++)
+        plane.corner[i] = *info.nodeLocations[i];
+    return rayPlaneIntersection(r, cornerPlane2normOffsetPlane(plane), info.intersectionLocation) &&
+           !info.intersectionLocation.hasNaN();
+}
+
+bool moveToNearestCrossing(const MeshGraph &meshGraph, Info &info, const ray_d &r, size_t maxSteps)
+{
+    Info walker = info;
+    bool moved = false, foundNearer = false;
+    while (true)
+    {
+        makeAnticlockwise(walker);
+        const EdgeSpan span = spanAlong(walker, r.offset.head<2>(), r.dir.head<2>());
+        if (moved)
+        {
+            const TrianglePlane plane(walker);
+            const auto heightAt = [&](double t) { return plane.heightAbove(r.offset + t * r.dir); };
+            if (heightAt(std::max(span.enter, 0.)) * heightAt(span.exit) <= 0)
+            {
+                info.nodeIndexes = walker.nodeIndexes;
+                info.nodeLocations = walker.nodeLocations;
+                foundNearer = true;
+            }
+        }
+        if (span.enterEdge < 0 || span.enter <= 0 || !crossEdge(meshGraph, walker, span.enterEdge, maxSteps))
+            break;
+        moved = true;
+    }
+    info.steps = walker.steps;
+    return !foundNearer || intersectTrianglePlane(r, info);
+}
+} // namespace
+
 const MeshIntersectionSearcher::IntersectionInfo &MeshIntersectionSearcher::triangleIntersect(const ray_d &r)
 {
     if (_meshGraph == nullptr)
     {
-        _info.type = IntersectionInfo::UNINITIALIZED;
+        _info.type = IntersectionInfo::GRAPH_STRUCTURE_INCONSISTENT;
         return _info;
     }
 
-    const bool previous_walk_stuck_in_cycle = _info.type == IntersectionInfo::MAX_STEPS_EXCEEDED;
-    if (previous_walk_stuck_in_cycle && _lastIntersection.type == IntersectionInfo::INTERSECTION)
+    const bool previous_walk_failed_midway = _info.type == IntersectionInfo::MAX_STEPS_EXCEEDED;
+    if (previous_walk_failed_midway && _lastIntersection.type == IntersectionInfo::INTERSECTION)
         _info = _lastIntersection;
-
-    plane_3_corners_d plane;
-    for (size_t i = 0; i < 3; i++)
-    {
-        plane.corner[i] = *_info.nodeLocations[i];
-    }
 
     _info.type = IntersectionInfo::PENDING;
     _info.steps = 0;
-
+    _info.intersectionLocation.fill(NAN);
     const size_t maxWalkSteps = 100 + 2 * _meshGraph->size_nodes();
 
-    while (true)
+    const Eigen::Vector3d centroid = (*_info.nodeLocations[0] + *_info.nodeLocations[1] + *_info.nodeLocations[2]) / 3;
+    const double centroidT = r.dir.z() != 0 ? (centroid.z() - r.offset.z()) / r.dir.z() : 0;
+    const Eigen::Vector3d onRay = r.offset + centroidT * r.dir;
+    const double horizontal = r.dir.head<2>().norm();
+    const Eigen::Vector3d downhill = (r.dir.z() > 0 ? -r.dir : r.dir) / horizontal;
+
+    if (!walkToRayLine(*_meshGraph, _info, centroid.head<2>(), onRay.head<2>(), maxWalkSteps))
+        return _info;
+    if (horizontal > 0 && !walkDownhillAlongRay(*_meshGraph, _info, onRay, downhill, maxWalkSteps))
+        return _info;
+
+    if (!intersectTrianglePlane(r, _info))
     {
-        if (anticlockwise(plane.corner))
-        {
-            std::swap(plane.corner[0], plane.corner[1]);
-            std::swap(_info.nodeIndexes[0], _info.nodeIndexes[1]);
-            std::swap(_info.nodeLocations[0], _info.nodeLocations[1]);
-        }
-
-        _info.intersectionLocation.fill(NAN);
-        if (!rayPlaneIntersection(r, cornerPlane2normOffsetPlane(plane), _info.intersectionLocation) ||
-            _info.intersectionLocation.hasNaN())
-        {
-            _info.type = IntersectionInfo::RAY_PARALLEL_TO_PLANE;
-            break;
-        }
-
-        // find an edge which puts two points of the old triangle + test point in the opposite rotation order
-        size_t edgeIndex = 3;
-        for (int i = 0; i < 3; i++)
-        {
-            const std::array<Eigen::Vector3d, 3> corners{_info.intersectionLocation, plane.corner[i],
-                                                         plane.corner[(i + 1) % 3]};
-            if (anticlockwise(corners))
-            {
-                edgeIndex = i;
-                break;
-            }
-        }
-
-        // the point is inside the triangle because the rotation stayed the same for all point combos
-        if (edgeIndex == 3)
-        {
-            _info.type = IntersectionInfo::INTERSECTION;
-            _lastIntersection = _info;
-            break;
-        }
-
-        _keepNodes = {_info.nodeIndexes[edgeIndex], _info.nodeIndexes[(edgeIndex + 1) % 3]};
-
-        const MeshGraph::Edge *edge = _meshGraph->getEdge(_keepNodes[0], _keepNodes[1]);
-        if (edge == nullptr)
-        {
-            edge = _meshGraph->getEdge(_keepNodes[1], _keepNodes[0]);
-        }
-
-        if (edge == nullptr)
-        {
-            _info.type = IntersectionInfo::GRAPH_STRUCTURE_INCONSISTENT;
-            break;
-        }
-
-        if (edge->payload.border)
-        {
-            _info.type = IntersectionInfo::OUTSIDE_BORDER;
-            break;
-        }
-
-        size_t replacedNode = (edgeIndex + 2) % 3;
-
-        // switch to the other triangle on that edge
-        if (edge->payload.triangleOppositeNodes[0] == _info.nodeIndexes[replacedNode])
-        {
-            _info.nodeIndexes[replacedNode] = edge->payload.triangleOppositeNodes[1];
-        }
-        else if (edge->payload.triangleOppositeNodes[1] == _info.nodeIndexes[replacedNode])
-        {
-            _info.nodeIndexes[replacedNode] = edge->payload.triangleOppositeNodes[0];
-        }
-        else
-        {
-            _info.type = IntersectionInfo::GRAPH_STRUCTURE_INCONSISTENT;
-            break;
-        }
-
-        // reload the changed node
-        const MeshGraph::Node *node = _meshGraph->getNode(_info.nodeIndexes[replacedNode]);
-        plane.corner[replacedNode] = node->payload.location;
-        _info.nodeLocations[replacedNode] = &node->payload.location;
-        _info.steps++;
-
-        if (_info.steps > maxWalkSteps)
-        {
-            _info.type = IntersectionInfo::MAX_STEPS_EXCEEDED;
-            break;
-        }
+        _info.type = IntersectionInfo::RAY_PARALLEL_TO_PLANE;
+        return _info;
     }
 
+    const bool crossingMayBeBehindNearest = horizontal > 0 && (_info.intersectionLocation - r.offset).dot(r.dir) > 0;
+    if (crossingMayBeBehindNearest && !moveToNearestCrossing(*_meshGraph, _info, r, maxWalkSteps))
+    {
+        _info.type = IntersectionInfo::RAY_PARALLEL_TO_PLANE;
+        return _info;
+    }
+    _info.type = IntersectionInfo::INTERSECTION;
+    _lastIntersection = _info;
     return _info;
 }
 
