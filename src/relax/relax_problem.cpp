@@ -518,6 +518,14 @@ void fitMeshHeights(MeshGraph &mesh, const std::vector<point_cloud> &cloud, doub
     relaxUnobservedHeights(mesh, observed);
 }
 
+void refitMeshHeights(std::vector<surface_model> &surfaces)
+{
+    for (auto &surface : surfaces)
+        if (surface.mesh.size_nodes() > 0 && !surface.cloud.empty())
+            fitMeshHeights(surface.mesh, surface.cloud,
+                                         estimatePointHeightSigma(surface.cloud));
+}
+
 void relaxUnobservedHeights(MeshGraph &mesh, const ankerl::unordered_dense::set<size_t> &observed)
 {
     constexpr double SMOOTHNESS_WEIGHT = 1;

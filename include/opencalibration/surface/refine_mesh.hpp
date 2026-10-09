@@ -219,4 +219,27 @@ std::vector<point_cloud> filterPointsWithoutHeightAgreement(const std::vector<po
  */
 surface_model mergeSurfaceModels(const std::vector<surface_model> &surfaces);
 
+struct MeshScale
+{
+    double gsd = 0.01;
+    double meanImageSize = 0;
+};
+
+MeshScale estimateMeshScale(const MeasurementGraph &graph, const std::vector<surface_model> &surfaces);
+
+struct MeshDensity
+{
+    size_t triangles = 0;
+    size_t maxPointsPerTriangle = 0;
+    size_t trianglesAboveThreshold = 0;
+};
+
+MeshDensity measureMeshDensity(const std::vector<surface_model> &surfaces, size_t maxPointsPerTriangle,
+                               double minDistanceVariance);
+
+size_t refineDenseTriangles(std::vector<surface_model> &surfaces, size_t maxPointsPerTriangle,
+                            double minDistanceVariance, double minTriangleSize);
+
+size_t countVertices(const std::vector<surface_model> &surfaces);
+
 } // namespace opencalibration

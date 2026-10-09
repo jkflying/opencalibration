@@ -242,6 +242,7 @@ surface_model runGroundMesh(const MeasurementGraph &graph, std::vector<NodePose>
     RelaxProblem rp;
     rp.setupGroundMeshProblem(graph, nodes, cam_models, edges_to_optimize, config.options, previousSurfaces,
                               config.ground_mesh_grid_fraction);
+    rp.setFunctionTolerance(config.function_tolerance);
     p.reset("Relax runner ground mesh solve");
     rp.relaxObservedModelOnly();
     rp.solve();

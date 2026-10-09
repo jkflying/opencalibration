@@ -7,6 +7,7 @@
 #include <opencalibration/combinatorics/interleave.hpp>
 #include <opencalibration/dense/densify_multiview.hpp>
 #include <opencalibration/distort/distort_keypoints.hpp>
+#include <opencalibration/geometry/utils.hpp>
 #include <opencalibration/io/checkpoint.hpp>
 #include <opencalibration/io/cv_raster_conversion.hpp>
 #include <opencalibration/ortho/color_balance.hpp>
@@ -28,6 +29,7 @@
 #include <deque>
 #include <iostream>
 #include <mutex>
+#include <tuple>
 #include <omp.h>
 
 using namespace std::chrono_literals;
@@ -54,10 +56,12 @@ void logPhaseHotspots()
 }
 
 constexpr int MESH_REFINEMENT_MAX_ITERATIONS = 20;
+constexpr double SETTLED_ROTATION_CHANGE_DEG = 0.01;
+constexpr double POSE_RELAX_FUNCTION_TOLERANCE = 1e-4;
 constexpr int MESH_REFINEMENT_MAX_GRID_LEVEL = 2;
 constexpr size_t MESH_REFINEMENT_FINAL_POINTS_PER_TRIANGLE = 25;
 constexpr int RELAX_MAX_ITERATIONS = 5;       // initial global relax, camera parameter relax
-constexpr int FINAL_RELAX_MAX_ITERATIONS = 3; // final global relax
+constexpr int FINAL_RELAX_MAX_ITERATIONS = 8; // final global relax
 
 void run_parallel(fvec &funcs, int parallelism)
 {
@@ -84,51 +88,70 @@ cv::Mat packCameraIdLow24BitsIntoRgb(const opencalibration::RasterLayer<int32_t>
     return packed;
 }
 
-struct MeshScale
-{
-    double gsd = 0.01;
-    double meanImageSize = 0;
-};
+using PoseSnapshot = std::vector<std::tuple<size_t, Eigen::Quaterniond, Eigen::Vector3d>>;
 
-double median(std::vector<double> values)
+PoseSnapshot snapshotPoses(const opencalibration::MeasurementGraph &graph)
 {
-    auto mid = values.begin() + values.size() / 2;
-    std::nth_element(values.begin(), mid, values.end());
-    return *mid;
+    PoseSnapshot poses;
+    poses.reserve(graph.size_nodes());
+    for (auto it = graph.cnodebegin(); it != graph.cnodeend(); ++it)
+        poses.emplace_back(it->first, it->second.payload.orientation, it->second.payload.position);
+    return poses;
 }
 
-MeshScale estimateMeshScale(const opencalibration::MeasurementGraph &graph,
-                            const std::vector<opencalibration::surface_model> &surfaces)
+struct PoseChange
 {
-    std::vector<double> surfaceZ;
-    for (const auto &surface : surfaces)
-        for (const auto &cloud : surface.cloud)
-            for (const auto &point : cloud)
-                surfaceZ.push_back(point.z());
-    if (surfaceZ.empty())
-        for (const auto &surface : surfaces)
-            for (auto it = surface.mesh.cnodebegin(); it != surface.mesh.cnodeend(); ++it)
-                surfaceZ.push_back(it->second.payload.location.z());
+    double rotationDeg = 0;
+    double position = 0;
+};
 
-    std::vector<double> cameraZ;
-    double meanArcPerPixel = 0;
-    double meanImageSize = 0;
-    for (auto it = graph.cnodebegin(); it != graph.cnodeend(); ++it)
+PoseChange medianPoseChange(const opencalibration::MeasurementGraph &graph, const PoseSnapshot &before)
+{
+    std::vector<double> rotations, positions;
+    rotations.reserve(before.size());
+    positions.reserve(before.size());
+    for (const auto &[id, orientation, position] : before)
     {
-        const auto &payload = it->second.payload;
-        if (!payload.model || payload.model->focal_length_pixels <= 0 || !payload.position.allFinite())
-            continue;
-        cameraZ.push_back(payload.position.z());
-        meanArcPerPixel += 1.0 / payload.model->focal_length_pixels;
-        meanImageSize += static_cast<double>(std::max(payload.model->pixels_cols, payload.model->pixels_rows));
+        const auto &payload = graph.getNode(id)->payload;
+        if (const double rotation = payload.orientation.angularDistance(orientation); std::isfinite(rotation))
+            rotations.push_back(rotation);
+        if (const double moved = (payload.position - position).norm(); std::isfinite(moved))
+            positions.push_back(moved);
+    }
+    return {rotations.empty() ? 0 : opencalibration::median(std::move(rotations)) * 180 / M_PI,
+            positions.empty() ? 0 : opencalibration::median(std::move(positions))};
+}
+
+struct PoseSettling
+{
+    double lastRotationDeg = INFINITY;
+
+    void reset()
+    {
+        lastRotationDeg = INFINITY;
     }
 
-    if (cameraZ.empty())
-        return {};
-    meanArcPerPixel /= cameraZ.size();
-    meanImageSize /= cameraZ.size();
-    const double surfaceHeight = surfaceZ.empty() ? 0 : median(std::move(surfaceZ));
-    return {std::max(0.001, std::abs(median(std::move(cameraZ)) - surfaceHeight) * meanArcPerPixel), meanImageSize};
+    bool stillMoving(const PoseChange &change)
+    {
+        const bool moving = change.rotationDeg > SETTLED_ROTATION_CHANGE_DEG && change.rotationDeg < lastRotationDeg;
+        lastRotationDeg = change.rotationDeg;
+        return moving;
+    }
+};
+
+void logPoseChange(const char *stage, const PoseChange &change, bool moving)
+{
+    spdlog::info("{}: median rotation change {:.4f} deg, position change {:.3f}m, {}", stage, change.rotationDeg,
+                 change.position, moving ? "still moving" : "settled");
+}
+
+opencalibration::RelaxConfig poseRelaxConfig(double groundMeshGridFraction)
+{
+    using opencalibration::Option;
+    opencalibration::RelaxConfig config{{Option::ORIENTATION, Option::POSITION, Option::GROUND_MESH}};
+    config.ground_mesh_grid_fraction = groundMeshGridFraction;
+    config.function_tolerance = POSE_RELAX_FUNCTION_TOLERANCE;
+    return config;
 }
 
 } // namespace
@@ -190,6 +213,10 @@ struct Pipeline::Impl : public usm::StateMachine<PipelineState, PipelineTransiti
     int mesh_refinement_grid_level = 0;
     int mesh_refinement_level_iterations = 0;
     size_t mesh_refinement_level_triangles = 0;
+    bool mesh_refinement_solve_poses = false;
+    bool mesh_refinement_last_level = false;
+    PoseSettling mesh_refinement_settling;
+    PoseSettling final_relax_settling;
 
     bool skip_mesh_refinement = false;
     bool skip_initial_global_relax = true;
@@ -227,6 +254,7 @@ struct Pipeline::Impl : public usm::StateMachine<PipelineState, PipelineTransiti
     void report_progress(bool starting);
     void report_relax_groups();
     void adoptSurfacesAndRelaxUnobservedHeights();
+    PoseChange relaxPoses(const RelaxConfig &config);
     void rebuildGPSLocationsTree();
 
     void resetState(PipelineState state, uint64_t run_count = 0)
@@ -797,6 +825,18 @@ Pipeline::Impl::Transition Pipeline::Impl::camera_parameter_relax()
                        USM_MAKE_DECISION(stateRunCount() >= RELAX_MAX_ITERATIONS, Transition::NEXT));
 }
 
+PoseChange Pipeline::Impl::relaxPoses(const RelaxConfig &config)
+{
+    relax_stage->init(graph, {}, imageGPSLocations, true, false, config);
+    const PoseSnapshot priorPoses = snapshotPoses(graph);
+    report_relax_groups();
+    fvec relax_funcs = relax_stage->get_runners(graph);
+    run_parallel(relax_funcs, parallelism);
+    relax_stage->finalize(graph);
+    adoptSurfacesAndRelaxUnobservedHeights();
+    return medianPoseChange(graph, priorPoses);
+}
+
 Pipeline::Impl::Transition Pipeline::Impl::final_global_relax()
 {
     if (skip_final_global_relax)
@@ -805,17 +845,14 @@ Pipeline::Impl::Transition Pipeline::Impl::final_global_relax()
         USM_DECISION_TABLE(Transition::NEXT, USM_MAKE_DECISION(skip_final_global_relax, Transition::NEXT));
     }
 
-    relax_stage->init(graph, {}, imageGPSLocations, true, false,
-                      {Option::ORIENTATION, Option::POSITION, Option::GROUND_MESH});
-
-    report_relax_groups();
-    fvec relax_funcs = relax_stage->get_runners(graph);
-    run_parallel(relax_funcs, parallelism);
-    relax_stage->finalize(graph);
-    adoptSurfacesAndRelaxUnobservedHeights();
+    if (stateRunCount() == 0)
+        final_relax_settling.reset();
+    const PoseChange change = relaxPoses(poseRelaxConfig(RelaxConfig().ground_mesh_grid_fraction));
+    const bool moving = final_relax_settling.stillMoving(change);
+    logPoseChange("Final global relax", change, moving);
 
     USM_DECISION_TABLE(Transition::REPEAT,
-                       USM_MAKE_DECISION(stateRunCount() >= FINAL_RELAX_MAX_ITERATIONS, Transition::NEXT));
+                       USM_MAKE_DECISION(!moving || stateRunCount() >= FINAL_RELAX_MAX_ITERATIONS, Transition::NEXT));
 }
 
 Pipeline::Impl::Transition Pipeline::Impl::mesh_refinement()
@@ -838,6 +875,9 @@ Pipeline::Impl::Transition Pipeline::Impl::mesh_refinement()
         mesh_refinement_grid_level = 0;
         mesh_refinement_level_iterations = 0;
         mesh_refinement_level_triangles = 0;
+        mesh_refinement_solve_poses = false;
+        mesh_refinement_last_level = false;
+        mesh_refinement_settling.reset();
         point_cloud cameraLocations;
         for (auto it = graph.cnodebegin(); it != graph.cnodeend(); ++it)
         {
@@ -854,6 +894,7 @@ Pipeline::Impl::Transition Pipeline::Impl::mesh_refinement()
                 initialPoints.push_back(std::move(cloud));
         if (!initialPoints.empty())
             fitMeshHeights(initialSurface.mesh, initialPoints, estimatePointHeightSigma(initialPoints));
+        initialSurface.cloud = initialPoints;
         spdlog::info("Mesh refinement: initial mesh with {} vertices from {} cameras and {} point clouds",
                      initialSurface.mesh.size_nodes(), cameraLocations.size(), initialPoints.size());
         surfaces.clear();
@@ -865,15 +906,49 @@ Pipeline::Impl::Transition Pipeline::Impl::mesh_refinement()
     const size_t maxPointsPerTriangle = MESH_REFINEMENT_FINAL_POINTS_PER_TRIANGLE
                                         << (MESH_REFINEMENT_MAX_GRID_LEVEL - mesh_refinement_grid_level);
 
-    RelaxConfig config{{Option::ORIENTATION, Option::GROUND_MESH}};
-    config.ground_mesh_grid_fraction = gridFraction;
-    relax_stage->init(graph, {}, imageGPSLocations, true, false, config);
+    if (!mesh_refinement_solve_poses)
+    {
+        PerformanceMeasure fit("Mesh refinement fit heights");
+        refitMeshHeights(surfaces);
+        relax_stage->setSurfaceModels(surfaces);
 
-    report_relax_groups();
-    fvec relax_funcs = relax_stage->get_runners(graph);
-    run_parallel(relax_funcs, parallelism);
-    relax_stage->finalize(graph);
-    adoptSurfacesAndRelaxUnobservedHeights();
+        const auto [gsd, meanImageSize] = estimateMeshScale(graph, surfaces);
+        const double reducedGsd =
+            std::sqrt(static_cast<double>(maxPointsPerTriangle) / 8.0) * gridFraction * meanImageSize * gsd;
+        const double minDistanceStddev = varianceGsdMultiplier * gsd;
+        const double minDistanceVariance = minDistanceStddev * minDistanceStddev;
+        spdlog::info("Mesh refinement level {}: GSD {:.4f}m, grid fraction {:.4f}, min triangle {:.4f}m, max {} "
+                     "points/triangle",
+                     mesh_refinement_grid_level, gsd, gridFraction, reducedGsd, maxPointsPerTriangle);
+
+        const MeshDensity density = measureMeshDensity(surfaces, maxPointsPerTriangle, minDistanceVariance);
+        spdlog::info("Mesh refinement iteration {}: max {} points/triangle, {} triangles above threshold",
+                     stateRunCount(), density.maxPointsPerTriangle, density.trianglesAboveThreshold);
+
+        size_t totalRefined = 0;
+        if (density.trianglesAboveThreshold > 0)
+        {
+            totalRefined = refineDenseTriangles(surfaces, maxPointsPerTriangle, minDistanceVariance, reducedGsd);
+            mesh_refinement_level_triangles += totalRefined;
+            spdlog::info("Mesh refinement: created {} triangles", totalRefined);
+        }
+
+        const double minRefinedTriangles = minRefinedFractionToContinue * density.triangles;
+        relax_stage->setSurfaceModels(surfaces);
+        if (totalRefined >= minRefinedTriangles && ++mesh_refinement_level_iterations < maxIterations)
+        {
+            USM_DECISION_TABLE(Transition::REPEAT, );
+        }
+
+        mesh_refinement_solve_poses = true;
+        mesh_refinement_level_iterations = 0;
+        mesh_refinement_settling.reset();
+        mesh_refinement_last_level = mesh_refinement_grid_level >= MESH_REFINEMENT_MAX_GRID_LEVEL ||
+                                     mesh_refinement_level_triangles <= minRefinedTriangles;
+        USM_DECISION_TABLE(Transition::REPEAT, );
+    }
+
+    const PoseChange change = relaxPoses(poseRelaxConfig(gridFraction));
 
     if (surfaces.empty())
     {
@@ -881,81 +956,24 @@ Pipeline::Impl::Transition Pipeline::Impl::mesh_refinement()
         USM_DECISION_TABLE(Transition::NEXT, );
     }
 
-    const auto [gsd, meanImageSize] = estimateMeshScale(graph, surfaces);
-    const double reducedGsd =
-        std::sqrt(static_cast<double>(maxPointsPerTriangle) / 8.0) * gridFraction * meanImageSize * gsd;
-    const double minDistanceStddev = varianceGsdMultiplier * gsd;
-    const double minDistanceVariance = minDistanceStddev * minDistanceStddev;
-    spdlog::info("Mesh refinement level {}: GSD {:.4f}m, grid fraction {:.4f}, min triangle {:.4f}m, max {} "
-                 "points/triangle",
-                 mesh_refinement_grid_level, gsd, gridFraction, reducedGsd, maxPointsPerTriangle);
-
-    size_t trianglesAboveThreshold = 0;
-    size_t maxPoints = 0;
-    size_t triangleCount = 0;
-    for (const auto &surface : surfaces)
+    const bool moving = mesh_refinement_settling.stillMoving(change);
+    logPoseChange("Mesh refinement pose relax", change, moving);
+    if (moving && ++mesh_refinement_level_iterations < maxIterations)
     {
-        if (surface.mesh.size_nodes() == 0)
-            continue;
-        auto stats = countPointsPerTriangle(surface.mesh, surface.cloud);
-        triangleCount += stats.size();
-        for (const auto &[key, s] : stats)
-        {
-            maxPoints = std::max(maxPoints, s.count);
-            if (s.count > maxPointsPerTriangle && s.distanceVariance > minDistanceVariance)
-                trianglesAboveThreshold++;
-        }
+        USM_DECISION_TABLE(Transition::REPEAT, );
     }
 
-    spdlog::info("Mesh refinement iteration {}: max {} points/triangle, {} triangles above threshold", stateRunCount(),
-                 maxPoints, trianglesAboveThreshold);
-
-    bool levelConverged = (trianglesAboveThreshold == 0);
-
-    if (!levelConverged && ++mesh_refinement_level_iterations >= maxIterations)
+    if (mesh_refinement_last_level)
     {
-        spdlog::warn("Mesh refinement reached max iterations ({}) at grid level {}", maxIterations,
-                     mesh_refinement_grid_level);
-        levelConverged = true;
-    }
-
-    if (!levelConverged)
-    {
-        size_t totalRefined = 0;
-        for (auto &surface : surfaces)
-        {
-            if (surface.mesh.size_nodes() == 0)
-                continue;
-            totalRefined += refineByPointDensity(surface.mesh, surface.cloud, maxPointsPerTriangle, minDistanceVariance,
-                                                 1, reducedGsd);
-        }
-
-        mesh_refinement_level_triangles += totalRefined;
-        spdlog::info("Mesh refinement: created {} triangles", totalRefined);
-        levelConverged = totalRefined < minRefinedFractionToContinue * triangleCount;
-        if (!levelConverged)
-        {
-            relax_stage->setSurfaceModels(surfaces);
-            USM_DECISION_TABLE(Transition::REPEAT, );
-        }
-    }
-
-    if (mesh_refinement_grid_level >= MESH_REFINEMENT_MAX_GRID_LEVEL ||
-        mesh_refinement_level_triangles <= minRefinedFractionToContinue * triangleCount)
-    {
-        size_t vertexCount = 0;
-        for (const auto &surface : surfaces)
-            vertexCount += surface.mesh.size_nodes();
-        spdlog::info("Mesh refinement complete: grid level {} (fraction {:.4f}) produced {} of {} triangles, mesh has "
-                     "{} vertices",
-                     mesh_refinement_grid_level, gridFraction, mesh_refinement_level_triangles, triangleCount,
-                     vertexCount);
+        spdlog::info("Mesh refinement complete: grid level {} (fraction {:.4f}), mesh has {} vertices",
+                     mesh_refinement_grid_level, gridFraction, countVertices(surfaces));
         USM_DECISION_TABLE(Transition::NEXT, );
     }
 
     mesh_refinement_grid_level++;
     mesh_refinement_level_iterations = 0;
     mesh_refinement_level_triangles = 0;
+    mesh_refinement_solve_poses = false;
     spdlog::info("Mesh refinement advancing to grid level {} (fraction {:.4f})", mesh_refinement_grid_level,
                  baseGridFraction / std::pow(2.0, mesh_refinement_grid_level));
     relax_stage->setSurfaceModels(surfaces);

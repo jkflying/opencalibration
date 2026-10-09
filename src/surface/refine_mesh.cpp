@@ -1,5 +1,7 @@
 #include <opencalibration/surface/refine_mesh.hpp>
 
+#include <opencalibration/geometry/utils.hpp>
+
 #include <jk/KDTree.h>
 #include <spdlog/spdlog.h>
 
@@ -855,6 +857,77 @@ surface_model mergeSurfaceModels(const std::vector<surface_model> &surfaces)
                  result.mesh.size_nodes(), result.mesh.size_edges(), result.cloud.size());
 
     return result;
+}
+
+MeshScale estimateMeshScale(const MeasurementGraph &graph, const std::vector<surface_model> &surfaces)
+{
+    std::vector<double> surfaceZ;
+    for (const auto &surface : surfaces)
+        for (const auto &cloud : surface.cloud)
+            for (const auto &point : cloud)
+                surfaceZ.push_back(point.z());
+    if (surfaceZ.empty())
+        for (const auto &surface : surfaces)
+            for (auto it = surface.mesh.cnodebegin(); it != surface.mesh.cnodeend(); ++it)
+                surfaceZ.push_back(it->second.payload.location.z());
+
+    std::vector<double> cameraZ;
+    double meanArcPerPixel = 0;
+    double meanImageSize = 0;
+    for (auto it = graph.cnodebegin(); it != graph.cnodeend(); ++it)
+    {
+        const auto &payload = it->second.payload;
+        if (!payload.model || payload.model->focal_length_pixels <= 0 || !payload.position.allFinite())
+            continue;
+        cameraZ.push_back(payload.position.z());
+        meanArcPerPixel += 1.0 / payload.model->focal_length_pixels;
+        meanImageSize += static_cast<double>(std::max(payload.model->pixels_cols, payload.model->pixels_rows));
+    }
+
+    if (cameraZ.empty())
+        return {};
+    meanArcPerPixel /= cameraZ.size();
+    meanImageSize /= cameraZ.size();
+    const double surfaceHeight = surfaceZ.empty() ? 0 : median(std::move(surfaceZ));
+    return {std::max(0.001, std::abs(median(std::move(cameraZ)) - surfaceHeight) * meanArcPerPixel), meanImageSize};
+}
+
+MeshDensity measureMeshDensity(const std::vector<surface_model> &surfaces, size_t maxPointsPerTriangle,
+                               double minDistanceVariance)
+{
+    MeshDensity density;
+    for (const auto &surface : surfaces)
+    {
+        if (surface.mesh.size_nodes() == 0)
+            continue;
+        for (const auto &[key, stats] : countPointsPerTriangle(surface.mesh, surface.cloud))
+        {
+            density.triangles++;
+            density.maxPointsPerTriangle = std::max(density.maxPointsPerTriangle, stats.count);
+            if (stats.count > maxPointsPerTriangle && stats.distanceVariance > minDistanceVariance)
+                density.trianglesAboveThreshold++;
+        }
+    }
+    return density;
+}
+
+size_t refineDenseTriangles(std::vector<surface_model> &surfaces, size_t maxPointsPerTriangle,
+                            double minDistanceVariance, double minTriangleSize)
+{
+    size_t refined = 0;
+    for (auto &surface : surfaces)
+        if (surface.mesh.size_nodes() > 0)
+            refined += refineByPointDensity(surface.mesh, surface.cloud, maxPointsPerTriangle,
+                                                             minDistanceVariance, 1, minTriangleSize);
+    return refined;
+}
+
+size_t countVertices(const std::vector<surface_model> &surfaces)
+{
+    size_t vertices = 0;
+    for (const auto &surface : surfaces)
+        vertices += surface.mesh.size_nodes();
+    return vertices;
 }
 
 } // namespace opencalibration

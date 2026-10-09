@@ -1,4 +1,5 @@
 #include <opencalibration/ortho/color_balance.hpp>
+#include <opencalibration/geometry/utils.hpp>
 #include <opencalibration/ortho/radiometric_cost.hpp>
 
 #include <opencalibration/relax/padded_autodiff_cost_function.hpp>
@@ -41,15 +42,6 @@ double exposureValueOf(const ankerl::unordered_dense::map<size_t, double> &exif_
 double priorWeight(size_t num_correspondences)
 {
     return PRIOR_WEIGHT_PER_SQRT_CORRESPONDENCE * std::sqrt(static_cast<double>(num_correspondences));
-}
-
-double median(std::vector<double> values)
-{
-    if (values.empty())
-        return std::numeric_limits<double>::quiet_NaN();
-    const auto middle = values.begin() + values.size() / 2;
-    std::nth_element(values.begin(), middle, values.end());
-    return *middle;
 }
 
 } // namespace

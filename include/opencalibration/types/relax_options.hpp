@@ -143,6 +143,7 @@ struct RelaxConfig
 {
     RelaxOptionSet options;
     double ground_mesh_grid_fraction = 0.1;
+    double function_tolerance = 1e-6;
 
     RelaxConfig() = default;
     RelaxConfig(std::initializer_list<Option> list) : options(list)

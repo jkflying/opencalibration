@@ -1,3 +1,4 @@
+#include <opencalibration/geometry/utils.hpp>
 #include <opencalibration/io/serialize.hpp>
 #include <opencalibration/surface/expand_mesh.hpp>
 #include <opencalibration/surface/intersect.hpp>
@@ -1545,4 +1546,54 @@ TEST(refine_mesh, rebuild_with_too_few_cameras_is_not_degenerate)
         for (auto it = mesh.cnodebegin(); it != mesh.cnodeend(); ++it)
             EXPECT_TRUE(it->second.payload.location.allFinite());
     }
+}
+
+namespace
+{
+std::vector<surface_model> denseRippledSurface()
+{
+    const MeshGraph mesh = buildMinimalMesh({Eigen::Vector3d(0, 0, 10), Eigen::Vector3d(10, 10, 10)}, {});
+    point_cloud points;
+    for (double x = 1; x < 10; x += 0.5)
+        for (double y = 1; y < 10; y += 0.5)
+            points.push_back(Eigen::Vector3d(x, y, std::sin(x) * std::cos(y) * 2.0));
+    return {surface_model{{points}, mesh}};
+}
+} // namespace
+
+TEST(mesh_helpers, median_of_values_and_empty)
+{
+    // GIVEN: an unsorted list and an empty list
+    // WHEN: taking medians
+    // THEN: the list gives its middle value and the empty list gives NaN
+    EXPECT_EQ(median({5, 1, 3}), 3);
+    EXPECT_TRUE(std::isnan(median({})));
+}
+
+TEST(mesh_helpers, measure_and_refine_dense_triangles)
+{
+    // GIVEN: a minimal mesh with many varied-height points
+    auto surfaces = denseRippledSurface();
+    const size_t verticesBefore = countVertices(surfaces);
+
+    // WHEN: measuring density with a low threshold, then refining
+    const MeshDensity before = measureMeshDensity(surfaces, 20, 0.0);
+    const size_t refined = refineDenseTriangles(surfaces, 20, 0.0, 0.0);
+
+    // THEN: dense triangles were reported, refined, and the mesh gained vertices
+    EXPECT_GT(before.trianglesAboveThreshold, 0);
+    EXPECT_GE(before.maxPointsPerTriangle, 20);
+    EXPECT_GT(refined, 0);
+    EXPECT_GT(countVertices(surfaces), verticesBefore);
+}
+
+TEST(mesh_helpers, estimate_mesh_scale_without_cameras_uses_default)
+{
+    // GIVEN: an empty measurement graph
+    // WHEN: estimating the mesh scale
+    const MeshScale scale = estimateMeshScale(MeasurementGraph{}, denseRippledSurface());
+
+    // THEN: the default ground sample distance is returned
+    EXPECT_EQ(scale.gsd, MeshScale{}.gsd);
+    EXPECT_EQ(scale.meanImageSize, 0);
 }

@@ -255,6 +255,9 @@ class RelaxProblem
 
 void fitMeshHeights(MeshGraph &mesh, const std::vector<point_cloud> &cloud, double pointSigma,
                     size_t samplesPerRegion = 250000);
+
+void refitMeshHeights(std::vector<surface_model> &surfaces);
+
 void relaxUnobservedHeights(MeshGraph &mesh, const ankerl::unordered_dense::set<size_t> &observed);
 
 } // namespace opencalibration
