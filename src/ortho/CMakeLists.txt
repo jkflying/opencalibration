@@ -1,4 +1,4 @@
-add_library(oc_ortho ortho.cpp image_cache.cpp color_balance.cpp blending.cpp)
+add_library(oc_ortho ortho.cpp image_prefetcher.cpp color_balance.cpp blending.cpp)
 target_include_directories(oc_ortho PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)

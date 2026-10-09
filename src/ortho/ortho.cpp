@@ -17,7 +17,7 @@
 #include <opencalibration/geometry/utils.hpp>
 #include <opencalibration/io/serialize.hpp>
 #include <opencalibration/ortho/gdal_dataset.hpp>
-#include <opencalibration/ortho/image_cache.hpp>
+#include <opencalibration/ortho/image_prefetcher.hpp>
 #include <opencalibration/performance/performance.hpp>
 #include <opencalibration/surface/intersect.hpp>
 
@@ -27,9 +27,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
-#include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <fstream>
 #include <functional>
 #include <future>
@@ -922,109 +920,6 @@ ankerl::unordered_dense::set<size_t> findTileCameras(int tile_x, int tile_y, int
 namespace
 {
 
-void loadImages(const ankerl::unordered_dense::set<size_t> &camera_ids, const opencalibration::MeasurementGraph &graph,
-                opencalibration::orthomosaic::FullResolutionImageCache &image_cache)
-{
-    PerformanceMeasure thread_perf("Ortho Stage 1 - read");
-
-    std::vector<size_t> ids(camera_ids.begin(), camera_ids.end());
-#pragma omp parallel for schedule(dynamic)
-    for (size_t i = 0; i < ids.size(); i++) // NOLINT(modernize-loop-convert)
-    {
-        const auto *node = graph.getNode(ids[i]);
-        if (node)
-            image_cache.getImage(ids[i], node->payload.path);
-    }
-}
-
-class LookaheadPrefetcher
-{
-  public:
-    LookaheadPrefetcher(const std::vector<std::pair<int, int>> &tile_order,
-                        const opencalibration::TileCameraMap &tile_cameras, int num_tiles_x,
-                        const opencalibration::MeasurementGraph &graph,
-                        opencalibration::orthomosaic::FullResolutionImageCache &image_cache)
-        : graph_(graph), image_cache_(image_cache)
-    {
-        tile_offsets_.reserve(tile_order.size());
-        for (const auto &[tile_x, tile_y] : tile_order)
-        {
-            tile_offsets_.push_back(cameras_.size());
-            const auto &cameras = tile_cameras.at(static_cast<size_t>(tile_y) * num_tiles_x + tile_x);
-            cameras_.insert(cameras_.end(), cameras.begin(), cameras.end());
-        }
-        next_ = cameras_.size();
-
-        const size_t num_threads = std::max(1u, std::thread::hardware_concurrency());
-        for (size_t i = 0; i < num_threads; i++)
-            threads_.emplace_back([this] { run(); });
-    }
-
-    LookaheadPrefetcher(const LookaheadPrefetcher &) = delete;
-    LookaheadPrefetcher &operator=(const LookaheadPrefetcher &) = delete;
-
-    ~LookaheadPrefetcher()
-    {
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            stop_ = true;
-        }
-        cv_.notify_all();
-        for (auto &thread : threads_)
-            thread.join();
-    }
-
-    void startFrom(size_t position)
-    {
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            next_ = tile_offsets_[position];
-            blocked_ = false;
-            generation_++;
-        }
-        cv_.notify_all();
-    }
-
-  private:
-    void run()
-    {
-        std::unique_lock<std::mutex> lock(mutex_);
-        while (true)
-        {
-            cv_.wait(lock, [&] { return stop_ || (!blocked_ && next_ < cameras_.size()); });
-            if (stop_)
-                return;
-            const size_t cam = cameras_[next_++];
-            const size_t generation = generation_;
-            lock.unlock();
-
-            bool cached = true;
-            if (const auto *node = graph_.getNode(cam))
-            {
-                PerformanceMeasure thread_perf("Ortho Stage 1 - prefetch");
-                cached = image_cache_.tryPrefetch(cam, node->payload.path);
-            }
-
-            lock.lock();
-            if (!cached && generation == generation_)
-                blocked_ = true;
-        }
-    }
-
-    const opencalibration::MeasurementGraph &graph_;
-    opencalibration::orthomosaic::FullResolutionImageCache &image_cache_;
-    std::vector<size_t> cameras_;
-    std::vector<size_t> tile_offsets_;
-
-    std::mutex mutex_;
-    std::condition_variable cv_;
-    bool stop_ = false;
-    bool blocked_ = false;
-    size_t next_;
-    size_t generation_ = 0;
-    std::vector<std::thread> threads_;
-};
-
 struct BlockCamera
 {
     size_t id = 0;
@@ -1426,15 +1321,29 @@ void generateGeoTIFF(const std::vector<surface_model> &surfaces, const Measureme
                                                         context.imageGPSLocations, kPixelCandidates);
         }
 
-    const size_t image_cache_size = computeImageCacheSize(tile_camera_map);
-    FullResolutionImageCache image_cache(image_cache_size);
     const auto tile_order = hilbertTileOrder(num_tiles_x, num_tiles_y);
-
-    const ImageUseSchedule image_schedule(tile_order, tile_camera_map, num_tiles_x);
-    std::atomic<size_t> current_tile_position{0};
-    image_cache.setNextUse([&](size_t node_id) { return image_schedule.nextUse(node_id, current_tile_position); });
-
-    LookaheadPrefetcher prefetcher(tile_order, tile_camera_map, num_tiles_x, graph, image_cache);
+    std::vector<std::vector<size_t>> tile_images(tile_order.size());
+    if (output_ds)
+        for (size_t i = 0; i < tile_order.size(); i++)
+        {
+            const auto &cameras =
+                tile_camera_map.at(static_cast<size_t>(tile_order[i].second) * num_tiles_x + tile_order[i].first);
+            tile_images[i].assign(cameras.begin(), cameras.end());
+        }
+    const auto cache_settings = computeImageCacheSettings(tile_camera_map);
+    auto load_plan = planImageLoads(tile_images, cache_settings.capacity, cache_settings.lookahead);
+    spdlog::info("Image load plan: {} loads for {} tiles, cache {} images, lookahead {} tiles", load_plan.size(),
+                 tile_images.size(), cache_settings.capacity, cache_settings.lookahead);
+    ImagePrefetcher images(std::move(load_plan),
+                           [&graph](size_t node_id) {
+                               PerformanceMeasure thread_perf("Ortho Stage 1 - prefetch");
+                               const auto *node = graph.getNode(node_id);
+                               cv::Mat image = node ? cv::imread(node->payload.path) : cv::Mat();
+                               if (image.empty())
+                                   spdlog::warn("Failed to load image {}", node_id);
+                               return image;
+                           },
+                           std::thread::hardware_concurrency());
 
     std::future<void> write_future;
 
@@ -1449,8 +1358,6 @@ void generateGeoTIFF(const std::vector<surface_model> &surfaces, const Measureme
     {
         const auto tile_x = tile_order[i].first;
         const auto tile_y = tile_order[i].second;
-        current_tile_position = i;
-        prefetcher.startFrom(i);
 
         std::vector<float> dsm_tile = computeDSMTile(tile_x, tile_y, tile_size, bounds, gsd, width, height, surfaces,
                                                      context.mean_camera_z, graph, context.imageGPSLocations);
@@ -1459,13 +1366,14 @@ void generateGeoTIFF(const std::vector<surface_model> &surfaces, const Measureme
         std::vector<uint8_t> rgba_tile;
         if (output_ds)
         {
-            loadImages(tile_camera_map.at(static_cast<size_t>(tile_y) * num_tiles_x + tile_x), graph, image_cache);
+            for (size_t image : tile_images[i])
+                images.get(image);
             lap(load_s);
             rgba_tile =
                 renderTile(
                     tile_x, tile_y, tile_size, bounds, gsd, width, height, dsm_tile, sightlines, graph,
                     context.imageGPSLocations, inv_rotation_cache,
-                    [&](size_t node_id, const std::string &path) { return image_cache.getImage(node_id, path); },
+                    [&](size_t node_id, const std::string &) { return images.get(node_id); },
                     color_balance, feather_distance, false)
                     .rgba;
         }
@@ -1494,6 +1402,7 @@ void generateGeoTIFF(const std::vector<surface_model> &surfaces, const Measureme
                 writeInterleavedWindow(dsm_ds.get(), x_off, y_off, tw, th, *dsm_tile_ptr);
         });
 
+        images.finishTile();
         completed_tiles++;
         auto now = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - start_time).count();

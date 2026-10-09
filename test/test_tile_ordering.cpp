@@ -47,7 +47,7 @@ TEST(TileOrdering, ordering_covers_all_tiles)
     verifyCompleteOrdering(order, nx, ny);
 }
 
-TEST(TileOrdering, image_cache_size_scales_with_median_and_is_bounded)
+TEST(TileOrdering, image_cache_settings_scale_with_median_and_are_bounded)
 {
     // GIVEN: tiles mostly seeing 8 cameras, one seeing 17
     TileCameraMap typical;
@@ -57,42 +57,72 @@ TEST(TileOrdering, image_cache_size_scales_with_median_and_is_bounded)
     for (size_t c = 0; c < 17; c++)
         typical[10].insert(1000 + c);
 
-    // GIVEN: tiles seeing few cameras, but one outlier seeing many
-    TileCameraMap outlier;
-    for (size_t t = 0; t < 10; t++)
-        outlier[t] = {t};
-    for (size_t c = 0; c < 20; c++)
-        outlier[10].insert(1000 + c);
-
     // GIVEN: tiles seeing a huge number of cameras
     TileCameraMap dense;
     for (size_t c = 0; c < 100; c++)
         dense[0].insert(c);
 
-    // WHEN: we compute the cache size
-    // THEN: it is 7x the median, floored by 2x the max, and capped
-    EXPECT_EQ(computeImageCacheSize(typical), 56u);
-    EXPECT_EQ(computeImageCacheSize(outlier), 40u);
-    EXPECT_EQ(computeImageCacheSize(dense), 96u);
-    EXPECT_EQ(computeImageCacheSize({}), 10u);
+    // WHEN: we compute the cache settings
+    const auto typical_settings = computeImageCacheSettings(typical);
+    const auto dense_settings = computeImageCacheSettings(dense);
+    const auto empty_settings = computeImageCacheSettings({});
+
+    // THEN: capacity is 4x the median within bounds, and lookahead is half the median
+    EXPECT_EQ(typical_settings.capacity, 32u);
+    EXPECT_EQ(typical_settings.lookahead, 4u);
+    EXPECT_EQ(dense_settings.capacity, 96u);
+    EXPECT_EQ(empty_settings.capacity, 10u);
+    EXPECT_EQ(empty_settings.lookahead, 1u);
 }
 
-TEST(TileOrdering, image_use_schedule_next_use)
+TEST(TileOrdering, plan_evicts_image_needed_furthest_away_at_time_of_use)
 {
-    // GIVEN: a 3x1 grid visited right to left, camera 7 seen in tiles 0 and 2, camera 8 only in tile 1
-    TileCameraMap tile_cameras;
-    tile_cameras[0] = {7};
-    tile_cameras[1] = {8};
-    tile_cameras[2] = {7};
-    std::vector<std::pair<int, int>> order{{2, 0}, {1, 0}, {0, 0}};
+    // GIVEN: room for 2 images, where image 1 is needed at tiles 0-1 and image 3 at tiles 0 and 3
+    const std::vector<std::vector<size_t>> tile_images{{1, 3}, {1}, {2}, {3}};
 
-    // WHEN: we build the schedule
-    ImageUseSchedule schedule(order, tile_cameras, 3);
+    // WHEN: planning the loads
+    const auto plan = planImageLoads(tile_images, 2, 0);
 
-    // THEN: next use is the first order position at or after the query position
-    EXPECT_EQ(schedule.nextUse(7, 0), 0u);
-    EXPECT_EQ(schedule.nextUse(7, 1), 2u);
-    EXPECT_EQ(schedule.nextUse(8, 0), 1u);
-    EXPECT_EQ(schedule.nextUse(8, 2), SIZE_MAX);
-    EXPECT_EQ(schedule.nextUse(99, 0), SIZE_MAX);
+    // THEN: image 2 replaces image 1 once tile 1 is done, so image 3 is never reloaded
+    ASSERT_EQ(plan.size(), 3u);
+    EXPECT_EQ(plan[2].tile, 2u);
+    EXPECT_EQ(plan[2].image, 2u);
+    EXPECT_EQ(plan[2].evict, 1u);
+    EXPECT_EQ(plan[2].tiles_done_before_start, 2u);
+    EXPECT_EQ(plan[0].evict, NO_IMAGE);
+    EXPECT_EQ(plan[1].evict, NO_IMAGE);
+}
+
+TEST(TileOrdering, plan_reloads_when_capacity_is_exceeded_and_grows_for_large_tiles)
+{
+    // GIVEN: room for 1 image, alternating between two images, then a tile needing three
+    const std::vector<std::vector<size_t>> tile_images{{1}, {2}, {1}, {4, 5, 6}};
+
+    // WHEN: planning the loads
+    const auto plan = planImageLoads(tile_images, 1, 0);
+
+    // THEN: every tile change reloads, and the large tile grows the cache instead of evicting its own images
+    ASSERT_EQ(plan.size(), 6u);
+    EXPECT_EQ(plan[1].evict, 1u);
+    EXPECT_EQ(plan[2].evict, 2u);
+    EXPECT_EQ(plan[3].evict, NO_IMAGE);
+    EXPECT_EQ(plan[4].evict, NO_IMAGE);
+    EXPECT_EQ(plan[5].evict, 1u);
+}
+
+TEST(TileOrdering, plan_lookahead_evicts_an_image_unused_in_the_window_so_loads_start_early)
+{
+    // GIVEN: the same tiles as the Belady case, but with one tile of lookahead
+    const std::vector<std::vector<size_t>> tile_images{{1, 3}, {1}, {2}, {3}};
+
+    // WHEN: planning the loads
+    const auto plan = planImageLoads(tile_images, 2, 1);
+
+    // THEN: image 3 is evicted instead of image 1 (still needed at tile 1), so image 2 can load during tile 1,
+    // at the cost of reloading image 3
+    ASSERT_EQ(plan.size(), 4u);
+    EXPECT_EQ(plan[2].image, 2u);
+    EXPECT_EQ(plan[2].evict, 3u);
+    EXPECT_EQ(plan[2].tiles_done_before_start, 1u);
+    EXPECT_EQ(plan[3].image, 3u);
 }

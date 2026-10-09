@@ -2,6 +2,7 @@
 
 #include <ankerl/unordered_dense.h>
 #include <cstddef>
+#include <cstdint>
 #include <utility>
 #include <vector>
 
@@ -12,20 +13,25 @@ using TileCameraMap = ankerl::unordered_dense::map<size_t, ankerl::unordered_den
 
 std::vector<std::pair<int, int>> hilbertTileOrder(int num_tiles_x, int num_tiles_y);
 
-class ImageUseSchedule
+constexpr size_t NO_IMAGE = SIZE_MAX;
+
+struct ImageLoad
 {
-  public:
-    ImageUseSchedule(const std::vector<std::pair<int, int>> &tile_order, const TileCameraMap &tile_cameras,
-                     int num_tiles_x);
-
-    [[nodiscard]] size_t nextUse(size_t cam, size_t position) const;
-    [[nodiscard]] size_t tileIndex(const std::pair<int, int> &tile) const;
-
-  private:
-    ankerl::unordered_dense::map<size_t, std::vector<size_t>> uses_;
-    int num_tiles_x_;
+    size_t tile;
+    size_t image;
+    size_t evict = NO_IMAGE;
+    size_t tiles_done_before_start = 0;
 };
 
-size_t computeImageCacheSize(const TileCameraMap &tile_cameras);
+std::vector<ImageLoad> planImageLoads(const std::vector<std::vector<size_t>> &tile_images, size_t capacity,
+                                      size_t lookahead);
+
+struct ImageCacheSettings
+{
+    size_t capacity;
+    size_t lookahead;
+};
+
+ImageCacheSettings computeImageCacheSettings(const TileCameraMap &tile_cameras);
 
 } // namespace opencalibration

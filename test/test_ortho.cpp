@@ -1,7 +1,7 @@
 #include <jk/KDTree.h>
 #include <opencalibration/distort/distort_keypoints.hpp>
 #include <opencalibration/geo_coord/geo_coord.hpp>
-#include <opencalibration/ortho/image_cache.hpp>
+#include <opencalibration/ortho/image_prefetcher.hpp>
 #include <opencalibration/ortho/ortho.hpp>
 #include <opencalibration/ortho/patch_sampler.hpp>
 #include <opencalibration/relax/relax.hpp>
@@ -16,6 +16,7 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <random>
@@ -861,4 +862,55 @@ TEST_F(ortho, thumbnail_does_not_see_through_the_mesh)
         for (double x = -6; x <= -2; x += 0.5)
             EXPECT_EQ(sourceAt(x, y), static_cast<uint32_t>(camera_ids[0])) << x << " " << y;
     }
+}
+
+TEST(ImagePrefetcher, loads_plan_and_waits_for_evicted_images_to_be_finished)
+{
+    // GIVEN: a plan with room for one image over tiles needing images 1, 2, 1
+    const auto plan = planImageLoads({{1}, {2}, {1}}, 1, 0);
+    std::atomic<size_t> tiles_finished{0};
+    std::mutex mutex;
+    std::vector<std::pair<size_t, size_t>> loads;
+    ImagePrefetcher prefetcher(
+        plan,
+        [&](size_t image) {
+            std::lock_guard<std::mutex> lock(mutex);
+            loads.emplace_back(image, tiles_finished.load());
+            return cv::Mat(1, 1, CV_8UC1, cv::Scalar(static_cast<double>(image)));
+        },
+        4);
+
+    // WHEN: rendering each tile in order
+    for (size_t image : {1, 2, 1})
+    {
+        EXPECT_EQ(prefetcher.get(image).at<uint8_t>(0, 0), image);
+        tiles_finished++;
+        prefetcher.finishTile();
+    }
+
+    // THEN: each planned load ran once, never before the image it evicts was finished with
+    std::lock_guard<std::mutex> lock(mutex);
+    ASSERT_EQ(loads.size(), plan.size());
+    for (size_t i = 0; i < plan.size(); i++)
+    {
+        EXPECT_EQ(loads[i].first, plan[i].image);
+        EXPECT_GE(loads[i].second, plan[i].tiles_done_before_start);
+    }
+}
+
+TEST(ImagePrefetcher, unplanned_image_is_loaded_directly)
+{
+    // GIVEN: a prefetcher with an empty plan
+    std::atomic<int> load_count{0};
+    ImagePrefetcher prefetcher({}, [&](size_t) {
+        load_count++;
+        return cv::Mat();
+    }, 2);
+
+    // WHEN: an image is requested twice
+    prefetcher.get(7);
+    prefetcher.get(7);
+
+    // THEN: it is loaded on each request without being kept
+    EXPECT_EQ(load_count, 2);
 }

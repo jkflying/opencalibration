@@ -32,39 +32,62 @@ std::vector<std::pair<int, int>> hilbertTileOrder(int num_tiles_x, int num_tiles
     return result;
 }
 
-ImageUseSchedule::ImageUseSchedule(const std::vector<std::pair<int, int>> &tile_order,
-                                   const TileCameraMap &tile_cameras, int num_tiles_x)
-    : num_tiles_x_(num_tiles_x)
+std::vector<ImageLoad> planImageLoads(const std::vector<std::vector<size_t>> &tile_images, size_t capacity,
+                                      size_t lookahead)
 {
-    for (size_t i = 0; i < tile_order.size(); i++)
+    ankerl::unordered_dense::map<size_t, std::vector<size_t>> uses;
+    for (size_t tile = 0; tile < tile_images.size(); tile++)
+        for (size_t image : tile_images[tile])
+            uses[image].push_back(tile);
+    auto next_use = [&](size_t image, size_t from) {
+        const auto &image_uses = uses.at(image);
+        auto it = std::lower_bound(image_uses.begin(), image_uses.end(), from);
+        return it == image_uses.end() ? NO_IMAGE : *it;
+    };
+
+    ankerl::unordered_dense::map<size_t, size_t> last_use;
+    auto pick_victim = [&](size_t tile) {
+        for (size_t window_start = tile - std::min(tile, lookahead);; window_start++)
+        {
+            auto victim = std::max_element(last_use.begin(), last_use.end(), [&](const auto &a, const auto &b) {
+                return next_use(a.first, window_start) < next_use(b.first, window_start);
+            });
+            if (next_use(victim->first, window_start) > tile)
+                return victim;
+        }
+    };
+
+    std::vector<ImageLoad> loads;
+    for (size_t tile = 0; tile < tile_images.size(); tile++)
     {
-        auto it = tile_cameras.find(tileIndex(tile_order[i]));
-        if (it == tile_cameras.end())
-            continue;
-        for (size_t cam : it->second)
-            uses_[cam].push_back(i);
+        const size_t resident_limit = std::max(capacity, tile_images[tile].size());
+        for (size_t image : tile_images[tile])
+        {
+            if (!last_use.contains(image))
+            {
+                ImageLoad load{tile, image};
+                if (last_use.size() >= resident_limit)
+                {
+                    const auto victim = pick_victim(tile);
+                    load.evict = victim->first;
+                    load.tiles_done_before_start = victim->second + 1;
+                    last_use.erase(victim);
+                }
+                loads.push_back(load);
+            }
+            last_use[image] = tile;
+        }
     }
+    return loads;
 }
 
-size_t ImageUseSchedule::nextUse(size_t cam, size_t position) const
+ImageCacheSettings computeImageCacheSettings(const TileCameraMap &tile_cameras)
 {
-    auto it = uses_.find(cam);
-    if (it == uses_.end())
-        return SIZE_MAX;
-    auto next = std::lower_bound(it->second.begin(), it->second.end(), position);
-    return next == it->second.end() ? SIZE_MAX : *next;
-}
-
-size_t ImageUseSchedule::tileIndex(const std::pair<int, int> &tile) const
-{
-    return static_cast<size_t>(tile.second) * num_tiles_x_ + tile.first;
-}
-
-size_t computeImageCacheSize(const TileCameraMap &tile_cameras)
-{
-    constexpr size_t kMedianMultiple = 7;
+    constexpr size_t kMedianMultiple = 4;
+    constexpr size_t kLookaheadDivisor = 2;
     constexpr size_t kMinSize = 10;
     constexpr size_t kMaxSize = 96;
+    constexpr size_t kMinLookahead = 1;
 
     std::vector<size_t> counts;
     counts.reserve(tile_cameras.size());
@@ -72,14 +95,11 @@ size_t computeImageCacheSize(const TileCameraMap &tile_cameras)
         if (!cams.empty())
             counts.push_back(cams.size());
     if (counts.empty())
-        return kMinSize;
+        return {kMinSize, kMinLookahead};
 
     auto mid = counts.begin() + static_cast<std::ptrdiff_t>(counts.size() / 2);
     std::nth_element(counts.begin(), mid, counts.end());
-    size_t max_count = *std::max_element(counts.begin(), counts.end());
-
-    size_t size = std::max({kMedianMultiple * *mid, 2 * max_count, kMinSize});
-    return std::min(size, kMaxSize);
+    return {std::clamp(kMedianMultiple * *mid, kMinSize, kMaxSize), std::max(kMinLookahead, *mid / kLookaheadDivisor)};
 }
 
 } // namespace opencalibration
